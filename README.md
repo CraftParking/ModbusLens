@@ -120,7 +120,47 @@ python main.py --help
 
 ---
 
-## 🖥️ Application Architecture
+## �️ **Roadmap & Progress**
+
+### ✅ **Completed (v1.0 - April 2026)**
+
+- **🎨 Modern Dark UI**: Complete interface redesign with professional appearance
+- **🔴🟢 Status Indicators**: Animated color-coded connection status (Red=Disconnected, Green=Connected)
+- **📊 Real-time Monitoring**: Live data table with timestamps and configurable polling
+- **🔧 Complete Modbus Operations**: All function codes (FC01-FC16) implemented
+- **💾 Connection History**: Quick access to last 10 connections with persistence
+- **📋 Tabbed Interface**: Organized read/write/monitoring sections
+- **📝 Comprehensive Logging**: Timestamped operations and error reporting
+- **⚙️ Settings Management**: Connection history and preferences persistence
+- **📚 Professional Documentation**: Complete README with usage guides
+
+### 🚧 **In Development**
+
+- **🐍 Scripting Console**: Python REPL for automation and custom operations
+- **🔍 Network Diagnostics**: Built-in ping, port scanning, and connectivity tests
+- **📤 Data Export**: CSV, JSON, and XML export capabilities
+- **💾 Session Management**: Save/load complete monitoring configurations
+- **📋 Data Templates**: Predefined register layouts for common PLCs/devices
+- **🎯 Connection Profiles**: Advanced profile management with device templates
+
+### 🔮 **Future Enhancements**
+
+- **📊 Advanced Visualization**: Charts and graphs for data trends
+- **🔄 Auto-reconnect**: Configurable automatic reconnection on failure
+- **🌐 Multi-device Monitoring**: Monitor multiple Modbus devices simultaneously
+- **📱 Mobile Companion**: Remote monitoring via web interface
+- **🤖 Automation Scripts**: Built-in script library for common tasks
+- **📊 Historical Data**: Data logging and playback capabilities
+- **🔐 Security Features**: Authentication and encrypted connections
+- **📦 Standalone Executable**: Packaged .exe for Windows deployment
+
+### 🎯 **Current Status**
+
+**ModbusLens v1.0** is now a **production-ready professional Modbus diagnostic tool** that competes with commercial offerings. The core functionality is complete and stable, with advanced features in active development.
+
+---
+
+## �🖥️ Application Architecture
 
 ### Core Components
 
