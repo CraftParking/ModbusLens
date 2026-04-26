@@ -6,16 +6,18 @@ logger = logging.getLogger(__name__)
 
 
 class ModbusClient:
-    def __init__(self, ip="127.0.0.1", port=502, unit_id=1):
+    def __init__(self, ip="127.0.0.1", port=502, unit_id=1, timeout=1.5, retries=1):
         self.ip = ip
         self.port = port
         self.unit_id = unit_id
+        self.timeout = timeout
+        self.retries = retries
         self.client: Optional[ModbusTcpClient] = None
         self._connected = False
 
     def connect(self):
         try:
-            self.client = ModbusTcpClient(host=self.ip, port=self.port)
+            self.client = ModbusTcpClient(host=self.ip, port=self.port, timeout=self.timeout, retries=self.retries)
             self._connected = self.client.connect()
             if self._connected:
                 logger.info(f"Connected to Modbus server at {self.ip}:{self.port}")
