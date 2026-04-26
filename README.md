@@ -22,23 +22,54 @@ Unlike full-scale SCADA systems, ModbusLens focuses purely on **testing, validat
 
 ---
 
-## ✨ Key Capabilities (Planned & In Progress)
+## 📦 Installation
 
-ModbusLens is being developed to support all major Modbus TCP function codes:
+1. Clone or download the repository
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+---
+
+## 🎯 Usage
+
+ModbusLens supports both Command Line Interface (CLI) and Graphical User Interface (GUI) modes.
+
+### CLI Mode (Default)
+```bash
+python main.py
+```
+
+### GUI Mode
+```bash
+python main.py --gui
+```
+
+### Help
+```bash
+python main.py --help
+```
+
+---
+
+## ✨ Key Capabilities
+
+ModbusLens supports all major Modbus TCP function codes:
 
 ### 🔹 Read Operations
 
-* Read Coils (FC01)
-* Read Discrete Inputs (FC02)
-* Read Holding Registers (FC03)
-* Read Input Registers (FC04)
+* Read Coils (FC01) - Digital outputs
+* Read Discrete Inputs (FC02) - Digital inputs
+* Read Holding Registers (FC03) - Read/write registers
+* Read Input Registers (FC04) - Read-only registers
 
 ### 🔹 Write Operations
 
-* Write Single Coil (FC05)
-* Write Single Register (FC06)
-* Write Multiple Coils (FC15)
-* Write Multiple Registers (FC16)
+* Write Single Coil (FC05) - Set digital output
+* Write Single Register (FC06) - Set register value
+* Write Multiple Coils (FC15) - Set multiple digital outputs
+* Write Multiple Registers (FC16) - Set multiple register values
 
 ### 🔹 Core Features
 
@@ -47,6 +78,7 @@ ModbusLens is being developed to support all major Modbus TCP function codes:
 * Connection status handling
 * Error detection and reporting
 * Lightweight execution
+* Cross-platform compatibility
 
 ---
 
