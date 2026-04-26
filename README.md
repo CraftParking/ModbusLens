@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="ModScope Banner" width="100%">
+  <img src="assets/modscope_banner.png" alt="ModScope Banner" width="100%">
 </p>
 
 <h1 align="center">ModScope</h1>
