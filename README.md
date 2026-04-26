@@ -1,6 +1,9 @@
-# ModScope
+<p align="center">
+  <img src="assets/banner.png" alt="ModScope Banner" width="100%">
+</p>
 
-Lightweight and powerful Modbus diagnostic tool for reading and writing standard Modbus functions.
+<h1 align="center">ModScope</h1>
+<p align="center">Lightweight and powerful Modbus diagnostic tool</p>
 
 ---
 
@@ -73,7 +76,7 @@ A packaged executable (`.exe`) will be provided for end users, allowing the appl
 
 ## 🧱 Project Structure
 
-```id="m1xk9c"
+```
 modscope/
 ├── assets/        # UI resources (icons, images)
 ├── config/        # Device configuration files
@@ -91,14 +94,14 @@ modscope/
 
 Clone the repository:
 
-```id="9d8x2f"
+```
 git clone https://github.com/CraftParking/ModScope.git
 cd ModScope
 ```
 
 Install dependencies:
 
-```id="0y6v3k"
+```
 pip install -r requirements.txt
 ```
 
@@ -108,9 +111,7 @@ pip install -r requirements.txt
 
 At the current stage, ModScope is in core development.
 
-Run the test script:
-
-```id="l7p2h5"
+```
 python tests/test_modbus.py
 ```
 
@@ -166,8 +167,6 @@ Update the IP address and unit ID inside the script according to your Modbus dev
 
 ## 🔮 Future Implementations
 
-The following features are planned for long-term expansion of ModScope:
-
 ### 📊 Data & Visualization
 
 * Data logging (CSV / file-based logging)
@@ -216,7 +215,7 @@ The following features are planned for long-term expansion of ModScope:
 
 ## 📌 Project Status
 
-ModScope is currently under active development. Core communication features are implemented and being refined, with UI and advanced features under active development.
+ModScope is currently under active development. Core communication features are implemented and being refined, with UI and advanced features under development.
 
 The project is being built incrementally with a focus on:
 
@@ -235,6 +234,5 @@ Apache License 2.0
 ## 👤 Author
 
 Alvin (CraftParking)
-
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
