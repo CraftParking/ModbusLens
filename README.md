@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="ModbusLens Banner" width="100%">
+  <img src="assets/modbuslens_banner.png" alt="ModbusLens Banner" width="100%">
 </p>
 
 <h1 align="center">ModbusLens</h1>

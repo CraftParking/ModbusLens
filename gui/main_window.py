@@ -80,17 +80,26 @@ class MonitoringResultsWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Monitoring Results")
-        self.resize(900, 520)
+        self.resize(1100, 560)
 
         central_widget = QWidget()
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(10, 10, 10, 10)
 
+        actions_layout = QHBoxLayout()
+        self.write_selected_btn = QPushButton("Write Selected")
+        self.write_selected_btn.clicked.connect(parent._write_results_window_selected)
+        actions_layout.addWidget(self.write_selected_btn)
+        actions_layout.addStretch()
+        layout.addLayout(actions_layout)
+
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Tag Name", "Type", "Address", "Value", "Timestamp"])
+        self.table.setColumnCount(8)
+        self.table.setHorizontalHeaderLabels([
+            "Tag Name", "Mode", "Type", "Address", "Read Value", "Write Value", "Comment", "Timestamp"
+        ])
         self.table.setAlternatingRowColors(True)
-        self.table.setSortingEnabled(True)
+        self.table.setSortingEnabled(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(True)
@@ -113,28 +122,78 @@ class MonitoringResultsWindow(QMainWindow):
         layout.addWidget(self.table)
         self.setCentralWidget(central_widget)
 
-    def update_row(self, tag_name, data_type, address, value, timestamp):
+    def update_row(self, tag_name, mode, data_type, address, read_value="", write_value="", comment="", timestamp=""):
         row = self._find_row(tag_name, data_type, address)
         if row is None:
             row = self.table.rowCount()
             self.table.insertRow(row)
 
-        self.table.setSortingEnabled(False)
-        self.table.setItem(row, 0, QTableWidgetItem(tag_name))
-        self.table.setItem(row, 1, QTableWidgetItem(data_type))
-        self.table.setItem(row, 2, QTableWidgetItem(str(address)))
-        self.table.setItem(row, 3, QTableWidgetItem(value))
-        self.table.setItem(row, 4, QTableWidgetItem(timestamp))
-        self.table.setSortingEnabled(True)
+        current_write_item = self.table.item(row, 5)
+        current_write_value = current_write_item.text() if current_write_item else ""
+        if current_write_value and not write_value:
+            write_value = current_write_value
+
+        current_read_item = self.table.item(row, 4)
+        current_read_value = current_read_item.text() if current_read_item else ""
+        if current_read_value and not read_value:
+            read_value = current_read_value
+
+        values = [
+            tag_name, mode, data_type, str(address), read_value, write_value, comment, timestamp
+        ]
+        can_write = mode == "Write"
+        for column, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            if column != 5 or not can_write:
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            if column == 5 and not can_write:
+                item.setBackground(QColor("#F0F0F0"))
+                item.setForeground(QColor("#777777"))
+            self.table.setItem(row, column, item)
 
     def clear(self):
         self.table.setRowCount(0)
 
+    def current_values(self):
+        values = {}
+        for row in range(self.table.rowCount()):
+            key = (self._item_text(row, 0), self._item_text(row, 2), self._item_text(row, 3))
+            values[key] = {
+                "read_value": self._item_text(row, 4),
+                "write_value": self._item_text(row, 5),
+                "timestamp": self._item_text(row, 7),
+            }
+        return values
+
+    def selected_write_rows(self):
+        rows = sorted({index.row() for index in self.table.selectedIndexes()})
+        current_row = self.table.currentRow()
+        if current_row >= 0 and current_row not in rows:
+            rows.append(current_row)
+
+        selected = []
+        for row in rows:
+            mode = self._item_text(row, 1)
+            if mode != "Write":
+                continue
+            selected.append({
+                "name": self._item_text(row, 0),
+                "mode": mode,
+                "type": self._item_text(row, 2),
+                "address": self._item_text(row, 3),
+                "write_value": self._item_text(row, 5),
+            })
+        return selected
+
+    def _item_text(self, row, column):
+        item = self.table.item(row, column)
+        return item.text().strip() if item else ""
+
     def _find_row(self, tag_name, data_type, address):
         for row in range(self.table.rowCount()):
             name_item = self.table.item(row, 0)
-            type_item = self.table.item(row, 1)
-            address_item = self.table.item(row, 2)
+            type_item = self.table.item(row, 2)
+            address_item = self.table.item(row, 3)
             if (
                 name_item and type_item and address_item
                 and name_item.text() == tag_name
@@ -152,6 +211,8 @@ class ModbusGUI(QMainWindow):
         self.modbus = None
         self.connection_history = []
         self.results_window = None
+        self._modbus_busy = False
+        self._active_ranges = []
         self.monitoring_active = False
         self.monitoring_timer = QTimer(self)
         self.monitoring_timer.timeout.connect(self._update_monitored_data)
@@ -569,11 +630,6 @@ class ModbusGUI(QMainWindow):
         self.stop_monitoring_btn.setEnabled(False)
         control_layout.addWidget(self.stop_monitoring_btn)
 
-        self.write_selected_tags_btn = QPushButton("Write Selected Tags")
-        self.write_selected_tags_btn.setStyleSheet(self._get_button_style())
-        self.write_selected_tags_btn.setEnabled(False)
-        control_layout.addWidget(self.write_selected_tags_btn)
-
         self.open_results_btn = QPushButton("Open Results Window")
         self.open_results_btn.setStyleSheet(self._get_button_style())
         control_layout.addWidget(self.open_results_btn)
@@ -608,7 +664,7 @@ class ModbusGUI(QMainWindow):
 
         self.monitoring_tag_table = QTableWidget()
         self.monitoring_tag_table.setColumnCount(6)
-        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Write Value"])
+        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Comment"])
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.monitoring_tag_table.setStyleSheet("""
@@ -674,8 +730,10 @@ class ModbusGUI(QMainWindow):
 
         # Monitoring results
         self.monitoring_table = QTableWidget()
-        self.monitoring_table.setColumnCount(5)
-        self.monitoring_table.setHorizontalHeaderLabels(["Tag Name", "Type", "Address", "Value", "Timestamp"])
+        self.monitoring_table.setColumnCount(8)
+        self.monitoring_table.setHorizontalHeaderLabels([
+            "Tag Name", "Mode", "Type", "Address", "Read Value", "Write Value", "Comment", "Timestamp"
+        ])
         self.monitoring_table.setAlternatingRowColors(True)
         self.monitoring_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.monitoring_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -799,7 +857,7 @@ class ModbusGUI(QMainWindow):
             return w
         return None
 
-    def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=0, count=1, write_value=""):
+    def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=0, count=1, comment=""):
         row = self.monitoring_tag_table.rowCount()
         self.monitoring_tag_table.insertRow(row)
 
@@ -814,7 +872,7 @@ class ModbusGUI(QMainWindow):
         count_widget.setRange(1, 125)
         self.monitoring_tag_table.setCellWidget(row, 4, count_widget)
 
-        self.monitoring_tag_table.setCellWidget(row, 5, self._create_monitoring_tag_widget("lineedit", write_value))
+        self.monitoring_tag_table.setCellWidget(row, 5, self._create_monitoring_tag_widget("lineedit", comment))
 
     def _remove_monitoring_tag(self):
         selected_rows = sorted(self._get_selected_tag_rows(), reverse=True)
@@ -825,7 +883,6 @@ class ModbusGUI(QMainWindow):
     def _update_tag_buttons_state(self):
         selected = bool(self._get_selected_tag_rows())
         self.remove_tag_btn.setEnabled(selected)
-        self.write_selected_tags_btn.setEnabled(selected)
 
     def _get_selected_tag_rows(self):
         selected_rows = {index.row() for index in self.monitoring_tag_table.selectedIndexes()}
@@ -842,9 +899,9 @@ class ModbusGUI(QMainWindow):
             type_widget = self.monitoring_tag_table.cellWidget(row, 2)
             address_widget = self.monitoring_tag_table.cellWidget(row, 3)
             count_widget = self.monitoring_tag_table.cellWidget(row, 4)
-            value_widget = self.monitoring_tag_table.cellWidget(row, 5)
+            comment_widget = self.monitoring_tag_table.cellWidget(row, 5)
 
-            if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, value_widget)):
+            if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, comment_widget)):
                 continue
 
             name = name_widget.text().strip() or f"Tag {row + 1}"
@@ -852,7 +909,7 @@ class ModbusGUI(QMainWindow):
             tag_type = type_widget.currentText()
             address = address_widget.value()
             count = count_widget.value()
-            write_value = value_widget.text().strip()
+            comment = comment_widget.text().strip()
             tags.append({
                 "row": row,
                 "name": name,
@@ -860,7 +917,7 @@ class ModbusGUI(QMainWindow):
                 "type": tag_type,
                 "address": address,
                 "count": count,
-                "write_value": write_value,
+                "comment": comment,
             })
 
         return tags
@@ -893,7 +950,6 @@ class ModbusGUI(QMainWindow):
         # Monitoring signals
         self.start_monitoring_btn.clicked.connect(self._start_monitoring)
         self.stop_monitoring_btn.clicked.connect(self._stop_monitoring)
-        self.write_selected_tags_btn.clicked.connect(self._write_selected_tags)
         self.open_results_btn.clicked.connect(self._show_results_window)
 
     def _connect(self):
@@ -973,10 +1029,17 @@ class ModbusGUI(QMainWindow):
         """Handle read operations."""
         if not self._check_connection():
             return
+        if self._modbus_busy:
+            self._log("Safety interlock: another Modbus request is active")
+            return
 
         try:
+            self._modbus_busy = True
             start_addr = self.read_start_addr.value()
             count = self.read_count.value()
+            if start_addr + count - 1 > 65535:
+                self._log("Read operation blocked: address range exceeds 65535")
+                return
 
             if operation_type == "coils":
                 data = self.modbus.read_coils(start_addr, count)
@@ -1012,13 +1075,25 @@ class ModbusGUI(QMainWindow):
 
         except Exception as e:
             self._log(f"Read operation error: {e}")
+        finally:
+            self._modbus_busy = False
 
     def _write_operation(self, operation_type):
         """Handle write operations."""
         if not self._check_connection():
             return
+        if self._modbus_busy:
+            self._log("Safety interlock: another Modbus request is active")
+            return
+
+        was_monitoring = self.monitoring_active
+        monitor_interval = self.monitoring_interval.value()
+        if was_monitoring:
+            self.monitoring_timer.stop()
+            self._log("Safety interlock: monitoring paused while write request is active")
 
         try:
+            self._modbus_busy = True
             addr = self.write_addr.value()
 
             if operation_type == "coil":
@@ -1073,45 +1148,86 @@ class ModbusGUI(QMainWindow):
             self._log(f"Invalid value format: {e}")
         except Exception as e:
             self._log(f"Write operation error: {e}")
+        finally:
+            self._modbus_busy = False
+            if was_monitoring and self.monitoring_active:
+                self.monitoring_timer.start(monitor_interval)
+                self._log("Safety interlock: monitoring resumed after write request")
 
-    def _write_selected_tags(self):
-        """Write selected tag rows that are configured for Write mode."""
+    def _write_results_window_selected(self):
+        """Write selected rows from the detached results window."""
         if not self._check_connection():
             return
 
-        selected_rows = sorted(self._get_selected_tag_rows())
-        if not selected_rows:
-            QMessageBox.warning(self, "No Tag Selected", "Please select at least one write-mode tag.")
+        if self.results_window is None:
+            QMessageBox.warning(self, "Results Window Closed", "Open the results window before writing tag values.")
             return
 
-        tags_by_row = {tag["row"]: tag for tag in self._get_monitoring_tags()}
+        selected_rows = self.results_window.selected_write_rows()
+        if not selected_rows:
+            QMessageBox.warning(self, "No Result Selected", "Please select at least one write-mode result row.")
+            return
+
+        tags_by_key = {self._tag_key(tag): tag for tag in self._get_monitoring_tags()}
         wrote_any = False
+        was_monitoring = self.monitoring_active
+        monitor_interval = self.monitoring_interval.value()
 
-        for row in selected_rows:
-            tag = tags_by_row.get(row)
-            if not tag:
-                continue
+        if was_monitoring:
+            self.monitoring_timer.stop()
+            self._log("Safety interlock: monitoring paused while write request is active")
 
-            if tag["mode"] != "Write":
-                self._log(f"Skipped {tag['name']}: tag mode is Read")
-                continue
+        try:
+            for result_row in selected_rows:
+                tag = tags_by_key.get(self._result_key(result_row))
+                if not tag:
+                    continue
 
-            try:
-                success, written_value = self._write_tag(tag)
-                if success:
-                    wrote_any = True
-                    timestamp = time.strftime("%H:%M:%S")
-                    self._add_monitoring_row(tag["name"], tag["type"], tag["address"], str(written_value), timestamp)
-                    self._log(f"Wrote {tag['name']} at {tag['address']} = {written_value}")
-                else:
-                    self._log(f"Failed to write {tag['name']}")
-            except ValueError as e:
-                self._log(f"Invalid write value for {tag['name']}: {e}")
-            except Exception as e:
-                self._log(f"Write error for {tag['name']}: {e}")
+                if tag["mode"] != "Write":
+                    self._log(f"Skipped {tag['name']}: result row is Read mode")
+                    continue
+
+                tag = dict(tag)
+                tag["write_value"] = result_row["write_value"]
+
+                try:
+                    self._validate_tag_request(tag, "write")
+                    if not self._begin_modbus_operation(tag, "write"):
+                        self._log(f"Safety interlock: skipped write for {tag['name']} because the range is busy")
+                        continue
+
+                    try:
+                        success, written_value, write_status = self._write_tag(tag)
+                    finally:
+                        self._end_modbus_operation(tag, "write")
+
+                    if success:
+                        wrote_any = True
+                        timestamp = time.strftime("%H:%M:%S")
+                        self._add_monitoring_row(
+                            tag["name"], tag["mode"], tag["type"], tag["address"], "", str(written_value),
+                            tag["comment"], timestamp
+                        )
+                        self._log(f"{write_status}: {tag['name']} at {tag['address']} = {written_value}")
+                    else:
+                        self._log(f"{write_status}: {tag['name']}")
+                except ValueError as e:
+                    self._log(f"Invalid write value for {tag['name']}: {e}")
+                except Exception as e:
+                    self._log(f"Write error for {tag['name']}: {e}")
+        finally:
+            if was_monitoring and self.monitoring_active:
+                self.monitoring_timer.start(monitor_interval)
+                self._log("Safety interlock: monitoring resumed after write request")
 
         if wrote_any:
             self.output_tabs.setCurrentWidget(self.monitoring_table)
+
+    def _tag_key(self, tag):
+        return (tag["name"], tag["type"], str(tag["address"]))
+
+    def _result_key(self, result_row):
+        return (result_row["name"], result_row["type"], str(result_row["address"]))
 
     def _write_tag(self, tag):
         if tag["type"] in ("Discrete Input", "Input Register"):
@@ -1123,17 +1239,75 @@ class ModbusGUI(QMainWindow):
         if tag["type"] == "Coil":
             values = self._parse_coil_values(tag["write_value"])
             if tag["count"] == 1:
-                value = values[0]
-                return self.modbus.write_coil(tag["address"], value), value
+                desired_value = values[0]
+                current_value = self._read_tag_value(tag)
+                if current_value == desired_value:
+                    return True, desired_value, "Skipped write; value already matches"
+
+                if not self.modbus.write_coil(tag["address"], desired_value):
+                    return False, desired_value, "Write failed"
+
+                verified_value = self._read_tag_value(tag)
+                if verified_value != desired_value:
+                    return False, desired_value, f"Write verification failed; read back {verified_value}"
+                return True, desired_value, "Write verified"
+
             values = self._fit_write_values(values, tag["count"])
-            return self.modbus.write_coils(tag["address"], values), values
+            current_values = self._read_tag_value(tag)
+            if current_values == values:
+                return True, values, "Skipped write; values already match"
+
+            if not self.modbus.write_coils(tag["address"], values):
+                return False, values, "Write failed"
+
+            verified_values = self._read_tag_value(tag)
+            if verified_values != values:
+                return False, values, f"Write verification failed; read back {verified_values}"
+            return True, values, "Write verified"
 
         values = self._parse_register_values(tag["write_value"])
         if tag["count"] == 1:
-            value = values[0]
-            return self.modbus.write_register(tag["address"], value), value
+            desired_value = values[0]
+            current_value = self._read_tag_value(tag)
+            if current_value == desired_value:
+                return True, desired_value, "Skipped write; value already matches"
+
+            if not self.modbus.write_register(tag["address"], desired_value):
+                return False, desired_value, "Write failed"
+
+            verified_value = self._read_tag_value(tag)
+            if verified_value != desired_value:
+                return False, desired_value, f"Write verification failed; read back {verified_value}"
+            return True, desired_value, "Write verified"
+
         values = self._fit_write_values(values, tag["count"])
-        return self.modbus.write_registers(tag["address"], values), values
+        current_values = self._read_tag_value(tag)
+        if current_values == values:
+            return True, values, "Skipped write; values already match"
+
+        if not self.modbus.write_registers(tag["address"], values):
+            return False, values, "Write failed"
+
+        verified_values = self._read_tag_value(tag)
+        if verified_values != values:
+            return False, values, f"Write verification failed; read back {verified_values}"
+        return True, values, "Write verified"
+
+    def _read_tag_value(self, tag):
+        if tag["type"] == "Coil":
+            value = self.modbus.read_coils(tag["address"], tag["count"])
+        elif tag["type"] == "Holding Register":
+            value = self.modbus.read_registers(tag["address"], tag["count"])
+        else:
+            raise ValueError(f"{tag['type']} cannot be written")
+
+        if value is None:
+            raise ValueError("pre-read failed; write blocked")
+
+        value = value[:tag["count"]] if isinstance(value, list) else value
+        if tag["count"] == 1 and isinstance(value, list):
+            return value[0]
+        return value
 
     def _parse_coil_values(self, value_text):
         values = []
@@ -1159,6 +1333,62 @@ class ModbusGUI(QMainWindow):
         if len(values) != count:
             raise ValueError(f"expected {count} value(s), got {len(values)}")
         return values
+
+    def _validate_tag_request(self, tag, operation):
+        if tag["address"] < 0 or tag["address"] > 65535:
+            raise ValueError("address must be between 0 and 65535")
+        if tag["count"] < 1:
+            raise ValueError("count must be at least 1")
+        if tag["address"] + tag["count"] - 1 > 65535:
+            raise ValueError("address range exceeds 65535")
+
+        if operation == "read":
+            if tag["type"] in ("Holding Register", "Input Register") and tag["count"] > 125:
+                raise ValueError("register reads are limited to 125 values")
+            if tag["type"] in ("Coil", "Discrete Input") and tag["count"] > 2000:
+                raise ValueError("coil/input reads are limited to 2000 values")
+            return
+
+        if tag["type"] in ("Discrete Input", "Input Register"):
+            raise ValueError(f"{tag['type']} is read-only")
+        if tag["type"] == "Coil" and tag["count"] > 1968:
+            raise ValueError("multiple-coil writes are limited to 1968 values")
+        if tag["type"] == "Holding Register" and tag["count"] > 123:
+            raise ValueError("multiple-register writes are limited to 123 values")
+
+    def _begin_modbus_operation(self, tag, operation):
+        request_range = self._operation_range(tag, operation)
+        if self._modbus_busy:
+            return False
+        for active_range in self._active_ranges:
+            if self._ranges_overlap(request_range, active_range):
+                return False
+
+        self._modbus_busy = True
+        self._active_ranges.append(request_range)
+        return True
+
+    def _end_modbus_operation(self, tag, operation):
+        request_range = self._operation_range(tag, operation)
+        self._active_ranges = [
+            active_range for active_range in self._active_ranges
+            if active_range != request_range
+        ]
+        self._modbus_busy = False
+
+    def _operation_range(self, tag, operation):
+        return {
+            "operation": operation,
+            "space": tag["type"],
+            "start": tag["address"],
+            "end": tag["address"] + tag["count"] - 1,
+            "tag": tag["name"],
+        }
+
+    def _ranges_overlap(self, left, right):
+        if left["space"] != right["space"]:
+            return False
+        return left["start"] <= right["end"] and right["start"] <= left["end"]
 
     def _start_monitoring(self):
         """Start real-time data monitoring."""
@@ -1193,7 +1423,7 @@ class ModbusGUI(QMainWindow):
     def _clear_monitoring_results(self):
         self.monitoring_table.setRowCount(0)
         if self.results_window is not None:
-            self.results_window.clear()
+            self._sync_results_window()
 
     def _show_results_window(self):
         """Open the detached monitoring results table."""
@@ -1206,17 +1436,46 @@ class ModbusGUI(QMainWindow):
         self.results_window.activateWindow()
 
     def _sync_results_window(self):
-        """Copy the current embedded results into the detached results window."""
+        """Copy configured tags and current values into the detached results window."""
         if self.results_window is None:
             return
 
+        window_values = self.results_window.current_values()
+        current_values = self._current_result_values()
         self.results_window.clear()
+        for tag in self._get_monitoring_tags():
+            key = self._tag_key(tag)
+            values = current_values.get(key, {})
+            window_row = window_values.get(key, {})
+            self.results_window.update_row(
+                tag["name"],
+                tag["mode"],
+                tag["type"],
+                tag["address"],
+                values.get("read_value", window_row.get("read_value", "")),
+                values.get("write_value", window_row.get("write_value", "")),
+                tag["comment"],
+                values.get("timestamp", window_row.get("timestamp", "")),
+            )
+
+    def _current_result_values(self):
+        values = {}
         for row in range(self.monitoring_table.rowCount()):
-            values = []
-            for column in range(self.monitoring_table.columnCount()):
-                item = self.monitoring_table.item(row, column)
-                values.append(item.text() if item else "")
-            self.results_window.update_row(*values)
+            key = (
+                self._table_item_text(self.monitoring_table, row, 0),
+                self._table_item_text(self.monitoring_table, row, 2),
+                self._table_item_text(self.monitoring_table, row, 3),
+            )
+            values[key] = {
+                "read_value": self._table_item_text(self.monitoring_table, row, 4),
+                "write_value": self._table_item_text(self.monitoring_table, row, 5),
+                "timestamp": self._table_item_text(self.monitoring_table, row, 7),
+            }
+        return values
+
+    def _table_item_text(self, table, row, column):
+        item = table.item(row, column)
+        return item.text() if item else ""
 
     def _update_monitored_data(self):
         """Update monitored data in the table."""
@@ -1230,17 +1489,37 @@ class ModbusGUI(QMainWindow):
         timestamp = time.strftime("%H:%M:%S")
         for tag in tags:
             try:
+                self._validate_tag_request(tag, "read")
+                if not self._begin_modbus_operation(tag, "read"):
+                    self._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
+                    continue
+
                 if tag["type"] == "Coil":
-                    value = self.modbus.read_coils(tag["address"], tag["count"])
+                    try:
+                        value = self.modbus.read_coils(tag["address"], tag["count"])
+                    finally:
+                        self._end_modbus_operation(tag, "read")
                 elif tag["type"] == "Discrete Input":
-                    value = self.modbus.read_discrete_inputs(tag["address"], tag["count"])
+                    try:
+                        value = self.modbus.read_discrete_inputs(tag["address"], tag["count"])
+                    finally:
+                        self._end_modbus_operation(tag, "read")
                 elif tag["type"] == "Holding Register":
-                    value = self.modbus.read_registers(tag["address"], tag["count"])
+                    try:
+                        value = self.modbus.read_registers(tag["address"], tag["count"])
+                    finally:
+                        self._end_modbus_operation(tag, "read")
                 else:
-                    value = self.modbus.read_input_registers(tag["address"], tag["count"])
+                    try:
+                        value = self.modbus.read_input_registers(tag["address"], tag["count"])
+                    finally:
+                        self._end_modbus_operation(tag, "read")
 
                 display_value = self._format_monitoring_value(value, tag["count"])
-                self._add_monitoring_row(tag["name"], tag["type"], tag["address"], display_value, timestamp)
+                self._add_monitoring_row(
+                    tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
+                    tag["comment"], timestamp
+                )
             except Exception as e:
                 self._log(f"Monitoring error for {tag['name']}: {e}")
 
@@ -1254,36 +1533,46 @@ class ModbusGUI(QMainWindow):
             return ", ".join(str(v) for v in visible_values)
         return str(value)
 
-    def _add_monitoring_row(self, tag_name, data_type, address, value, timestamp):
+    def _add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp):
         """Add or update a tag row in the monitoring results table."""
         row_count = self.monitoring_table.rowCount()
 
         for row in range(row_count):
             name_item = self.monitoring_table.item(row, 0)
-            type_item = self.monitoring_table.item(row, 1)
-            address_item = self.monitoring_table.item(row, 2)
+            type_item = self.monitoring_table.item(row, 2)
+            address_item = self.monitoring_table.item(row, 3)
             if (
                 name_item and type_item and address_item
                 and name_item.text() == tag_name
                 and type_item.text() == data_type
                 and address_item.text() == str(address)
             ):
-                self.monitoring_table.setItem(row, 2, QTableWidgetItem(str(address)))
-                self.monitoring_table.setItem(row, 3, QTableWidgetItem(value))
-                self.monitoring_table.setItem(row, 4, QTableWidgetItem(timestamp))
+                self.monitoring_table.setItem(row, 1, QTableWidgetItem(mode))
+                self.monitoring_table.setItem(row, 3, QTableWidgetItem(str(address)))
+                if read_value:
+                    self.monitoring_table.setItem(row, 4, QTableWidgetItem(read_value))
+                if write_value:
+                    self.monitoring_table.setItem(row, 5, QTableWidgetItem(write_value))
+                self.monitoring_table.setItem(row, 6, QTableWidgetItem(comment))
+                self.monitoring_table.setItem(row, 7, QTableWidgetItem(timestamp))
                 if self.results_window is not None:
-                    self.results_window.update_row(tag_name, data_type, address, value, timestamp)
+                    self.results_window.update_row(
+                        tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
+                    )
                 return
 
         self.monitoring_table.insertRow(row_count)
         self.monitoring_table.setItem(row_count, 0, QTableWidgetItem(tag_name))
-        self.monitoring_table.setItem(row_count, 1, QTableWidgetItem(data_type))
-        self.monitoring_table.setItem(row_count, 2, QTableWidgetItem(str(address)))
-        self.monitoring_table.setItem(row_count, 3, QTableWidgetItem(value))
-        self.monitoring_table.setItem(row_count, 4, QTableWidgetItem(timestamp))
+        self.monitoring_table.setItem(row_count, 1, QTableWidgetItem(mode))
+        self.monitoring_table.setItem(row_count, 2, QTableWidgetItem(data_type))
+        self.monitoring_table.setItem(row_count, 3, QTableWidgetItem(str(address)))
+        self.monitoring_table.setItem(row_count, 4, QTableWidgetItem(read_value))
+        self.monitoring_table.setItem(row_count, 5, QTableWidgetItem(write_value))
+        self.monitoring_table.setItem(row_count, 6, QTableWidgetItem(comment))
+        self.monitoring_table.setItem(row_count, 7, QTableWidgetItem(timestamp))
 
         if self.results_window is not None:
-            self.results_window.update_row(tag_name, data_type, address, value, timestamp)
+            self.results_window.update_row(tag_name, mode, data_type, address, read_value, write_value, comment, timestamp)
 
     def _check_connection(self):
         """Check if connected to Modbus server."""
