@@ -1,5 +1,6 @@
 import sys
 import logging
+import math
 import time
 from pathlib import Path
 from typing import List, Dict, Any
@@ -56,7 +57,7 @@ class StatusIndicator(QWidget):
             color = QColor("#FF9800")  # Orange
             # Animated pulsing effect
             self._animation_angle = (self._animation_angle + 10) % 360
-            intensity = (1 + 0.3 * (self._animation_angle / 180.0 * 3.14159).sin()) / 1.3
+            intensity = (1 + 0.3 * math.sin(self._animation_angle / 180.0 * math.pi)) / 1.3
             color.setAlphaF(intensity)
         elif self._status == "error":
             color = QColor("#F44336")  # Red
@@ -73,12 +74,84 @@ class StatusIndicator(QWidget):
         painter.drawEllipse(center, radius, radius)
 
 
+class MonitoringResultsWindow(QMainWindow):
+    """Detached Excel-style view for live monitoring results."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Monitoring Results")
+        self.resize(900, 520)
+
+        central_widget = QWidget()
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Tag Name", "Type", "Address", "Value", "Timestamp"])
+        self.table.setAlternatingRowColors(True)
+        self.table.setSortingEnabled(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(True)
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: #FFFFFF;
+                color: #000000;
+                gridline-color: #D0D0D0;
+                border: 1px solid #CCCCCC;
+            }
+            QHeaderView::section {
+                background-color: #E9E9E9;
+                color: #000000;
+                border: 1px solid #CCCCCC;
+                padding: 6px;
+                font-weight: bold;
+            }
+        """)
+
+        layout.addWidget(self.table)
+        self.setCentralWidget(central_widget)
+
+    def update_row(self, tag_name, data_type, address, value, timestamp):
+        row = self._find_row(tag_name, data_type, address)
+        if row is None:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+
+        self.table.setSortingEnabled(False)
+        self.table.setItem(row, 0, QTableWidgetItem(tag_name))
+        self.table.setItem(row, 1, QTableWidgetItem(data_type))
+        self.table.setItem(row, 2, QTableWidgetItem(str(address)))
+        self.table.setItem(row, 3, QTableWidgetItem(value))
+        self.table.setItem(row, 4, QTableWidgetItem(timestamp))
+        self.table.setSortingEnabled(True)
+
+    def clear(self):
+        self.table.setRowCount(0)
+
+    def _find_row(self, tag_name, data_type, address):
+        for row in range(self.table.rowCount()):
+            name_item = self.table.item(row, 0)
+            type_item = self.table.item(row, 1)
+            address_item = self.table.item(row, 2)
+            if (
+                name_item and type_item and address_item
+                and name_item.text() == tag_name
+                and type_item.text() == data_type
+                and address_item.text() == str(address)
+            ):
+                return row
+        return None
+
+
 class ModbusGUI(QMainWindow):
     def __init__(self):
         super().__init__()
 
         self.modbus = None
         self.connection_history = []
+        self.results_window = None
         self.monitoring_active = False
         self.monitoring_timer = QTimer(self)
         self.monitoring_timer.timeout.connect(self._update_monitored_data)
@@ -117,9 +190,8 @@ class ModbusGUI(QMainWindow):
 
         # View menu
         view_menu = menubar.addMenu("&View")
-        self.theme_action = view_menu.addAction("Dark Theme", self._toggle_theme)
-        self.theme_action.setCheckable(True)
-        self.theme_action.setChecked(True)  # Default to dark theme
+        theme_label = view_menu.addAction("Light Theme (fixed)")
+        theme_label.setEnabled(False)
 
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
@@ -165,8 +237,8 @@ class ModbusGUI(QMainWindow):
         connection_frame.setFrameStyle(QFrame.StyledPanel)
         connection_frame.setStyleSheet("""
             QFrame {
-                background-color: #2D2D30;
-                border: 1px solid #3E3E42;
+                background-color: #F7F7F7;
+                border: 1px solid #CCCCCC;
                 border-radius: 8px;
             }
         """)
@@ -180,14 +252,14 @@ class ModbusGUI(QMainWindow):
         status_layout.setAlignment(Qt.AlignCenter)
 
         status_label = QLabel("Status")
-        status_label.setStyleSheet("color: #CCCCCC; font-weight: bold;")
+        status_label.setStyleSheet("color: #333333; font-weight: bold;")
         status_layout.addWidget(status_label)
 
         self.status_indicator = StatusIndicator()
         status_layout.addWidget(self.status_indicator)
 
         self.status_text = QLabel("Disconnected")
-        self.status_text.setStyleSheet("color: #CCCCCC;")
+        self.status_text.setStyleSheet("color: #333333;")
         status_layout.addWidget(self.status_text)
 
         layout.addLayout(status_layout)
@@ -198,15 +270,15 @@ class ModbusGUI(QMainWindow):
 
         # IP input
         ip_label = QLabel("IP Address:")
-        ip_label.setStyleSheet("color: #CCCCCC;")
+        ip_label.setStyleSheet("color: #333333;")
         inputs_layout.addWidget(ip_label, 0, 0)
 
         self.ip_input = QLineEdit("127.0.0.1")
         self.ip_input.setStyleSheet("""
             QLineEdit {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                border: 1px solid #3E3E42;
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #CCCCCC;
                 border-radius: 4px;
                 padding: 5px;
             }
@@ -215,7 +287,7 @@ class ModbusGUI(QMainWindow):
 
         # Port input
         port_label = QLabel("Port:")
-        port_label.setStyleSheet("color: #CCCCCC;")
+        port_label.setStyleSheet("color: #333333;")
         inputs_layout.addWidget(port_label, 1, 0)
 
         self.port_input = QSpinBox()
@@ -223,9 +295,9 @@ class ModbusGUI(QMainWindow):
         self.port_input.setValue(502)
         self.port_input.setStyleSheet("""
             QSpinBox {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                border: 1px solid #3E3E42;
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #CCCCCC;
                 border-radius: 4px;
                 padding: 5px;
             }
@@ -234,7 +306,7 @@ class ModbusGUI(QMainWindow):
 
         # Unit ID input
         unit_label = QLabel("Unit ID:")
-        unit_label.setStyleSheet("color: #CCCCCC;")
+        unit_label.setStyleSheet("color: #333333;")
         inputs_layout.addWidget(unit_label, 0, 2)
 
         self.unit_input = QSpinBox()
@@ -242,9 +314,9 @@ class ModbusGUI(QMainWindow):
         self.unit_input.setValue(1)
         self.unit_input.setStyleSheet("""
             QSpinBox {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                border: 1px solid #3E3E42;
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #CCCCCC;
                 border-radius: 4px;
                 padding: 5px;
             }
@@ -253,15 +325,15 @@ class ModbusGUI(QMainWindow):
 
         # Connection history
         history_label = QLabel("Recent:")
-        history_label.setStyleSheet("color: #CCCCCC;")
+        history_label.setStyleSheet("color: #333333;")
         inputs_layout.addWidget(history_label, 1, 2)
 
         self.connection_history_combo = QComboBox()
         self.connection_history_combo.setStyleSheet("""
             QComboBox {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                border: 1px solid #3E3E42;
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #CCCCCC;
                 border-radius: 4px;
                 padding: 5px;
             }
@@ -274,42 +346,42 @@ class ModbusGUI(QMainWindow):
         buttons_layout = QVBoxLayout()
         buttons_layout.setSpacing(10)
 
-        self.connect_btn = QPushButton("🔗 Connect")
+        self.connect_btn = QPushButton("Connect")
         self.connect_btn.setStyleSheet("""
             QPushButton {
-                background-color: #0E639C;
-                color: white;
-                border: none;
+                background-color: #E0E0E0;
+                color: #000000;
+                border: 1px solid #B0B0B0;
                 border-radius: 6px;
                 padding: 10px 20px;
                 font-weight: bold;
                 font-size: 12px;
             }
             QPushButton:hover {
-                background-color: #1177BB;
+                background-color: #D5D5D5;
             }
             QPushButton:pressed {
-                background-color: #0D5A8A;
+                background-color: #C0C0C0;
             }
         """)
         buttons_layout.addWidget(self.connect_btn)
 
-        self.disconnect_btn = QPushButton("❌ Disconnect")
+        self.disconnect_btn = QPushButton("Disconnect")
         self.disconnect_btn.setStyleSheet("""
             QPushButton {
-                background-color: #C42B1C;
-                color: white;
-                border: none;
+                background-color: #E0E0E0;
+                color: #000000;
+                border: 1px solid #B0B0B0;
                 border-radius: 6px;
                 padding: 10px 20px;
                 font-weight: bold;
                 font-size: 12px;
             }
             QPushButton:hover {
-                background-color: #E33B2C;
+                background-color: #D5D5D5;
             }
             QPushButton:pressed {
-                background-color: #A8251A;
+                background-color: #C0C0C0;
             }
         """)
         self.disconnect_btn.setEnabled(False)
@@ -328,15 +400,15 @@ class ModbusGUI(QMainWindow):
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
-                border: 1px solid #3E3E42;
-                background-color: #2D2D30;
+                border: 1px solid #CCCCCC;
+                background-color: #F7F7F7;
                 border-radius: 8px;
             }
             QTabBar::tab {
-                background-color: #2D2D30;
-                color: #CCCCCC;
+                background-color: #E9E9E9;
+                color: #333333;
                 padding: 8px 16px;
-                border: 1px solid #3E3E42;
+                border: 1px solid #CCCCCC;
                 border-bottom: none;
                 border-radius: 8px 8px 0 0;
                 margin-right: 2px;
@@ -346,7 +418,7 @@ class ModbusGUI(QMainWindow):
                 color: white;
             }
             QTabBar::tab:hover {
-                background-color: #3E3E42;
+                background-color: #DADADA;
             }
         """)
 
@@ -372,10 +444,11 @@ class ModbusGUI(QMainWindow):
         addr_group.setStyleSheet("""
             QGroupBox {
                 font-weight: bold;
-                color: #CCCCCC;
-                border: 1px solid #3E3E42;
+                color: #222222;
+                border: 1px solid #CCCCCC;
                 border-radius: 8px;
                 margin-top: 1ex;
+                background-color: #F8F8F8;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -418,7 +491,7 @@ class ModbusGUI(QMainWindow):
 
         layout.addWidget(buttons_group)
 
-        self.tab_widget.addTab(read_widget, "📖 Read")
+        self.tab_widget.addTab(read_widget, "Read")
 
     def _setup_write_tab(self):
         """Setup write operations tab."""
@@ -477,7 +550,7 @@ class ModbusGUI(QMainWindow):
 
         layout.addWidget(buttons_group)
 
-        self.tab_widget.addTab(write_widget, "✏️ Write")
+        self.tab_widget.addTab(write_widget, "Write")
 
     def _setup_monitoring_tab(self):
         """Setup monitoring tab with real-time data display."""
@@ -487,14 +560,23 @@ class ModbusGUI(QMainWindow):
         # Control buttons
         control_layout = QHBoxLayout()
 
-        self.start_monitoring_btn = QPushButton("▶️ Start Monitoring")
-        self.start_monitoring_btn.setStyleSheet(self._get_button_style("#4CAF50"))
+        self.start_monitoring_btn = QPushButton("Start Monitoring")
+        self.start_monitoring_btn.setStyleSheet(self._get_button_style())
         control_layout.addWidget(self.start_monitoring_btn)
 
-        self.stop_monitoring_btn = QPushButton("⏹️ Stop Monitoring")
-        self.stop_monitoring_btn.setStyleSheet(self._get_button_style("#F44336"))
+        self.stop_monitoring_btn = QPushButton("Stop Monitoring")
+        self.stop_monitoring_btn.setStyleSheet(self._get_button_style())
         self.stop_monitoring_btn.setEnabled(False)
         control_layout.addWidget(self.stop_monitoring_btn)
+
+        self.write_selected_tags_btn = QPushButton("Write Selected Tags")
+        self.write_selected_tags_btn.setStyleSheet(self._get_button_style())
+        self.write_selected_tags_btn.setEnabled(False)
+        control_layout.addWidget(self.write_selected_tags_btn)
+
+        self.open_results_btn = QPushButton("Open Results Window")
+        self.open_results_btn.setStyleSheet(self._get_button_style())
+        control_layout.addWidget(self.open_results_btn)
 
         control_layout.addWidget(QLabel("Interval (ms):"))
         self.monitoring_interval = QSpinBox()
@@ -505,28 +587,66 @@ class ModbusGUI(QMainWindow):
 
         layout.addLayout(control_layout)
 
-        # Data table
-        self.monitoring_table = QTableWidget()
-        self.monitoring_table.setColumnCount(4)
-        self.monitoring_table.setHorizontalHeaderLabels(["Address", "Type", "Value", "Timestamp"])
-        self.monitoring_table.horizontalHeader().setStretchLastSection(True)
-        self.monitoring_table.setStyleSheet("""
+        # Tag manager table (Excel-style)
+        tag_group = QGroupBox("Tags")
+        tag_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                color: #222222;
+                border: 1px solid #CCCCCC;
+                border-radius: 8px;
+                margin-top: 1ex;
+                background-color: #F8F8F8;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 10px 0 10px;
+            }
+        """)
+        tag_layout = QVBoxLayout(tag_group)
+
+        self.monitoring_tag_table = QTableWidget()
+        self.monitoring_tag_table.setColumnCount(6)
+        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Write Value"])
+        self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
+        self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.monitoring_tag_table.setStyleSheet("""
             QTableWidget {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                border: 1px solid #3E3E42;
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #CCCCCC;
                 border-radius: 4px;
             }
             QHeaderView::section {
-                background-color: #2D2D30;
-                color: #CCCCCC;
-                border: 1px solid #3E3E42;
+                background-color: #E9E9E9;
+                color: #000000;
+                border: 1px solid #CCCCCC;
                 padding: 5px;
             }
         """)
-        layout.addWidget(self.monitoring_table)
+        tag_layout.addWidget(self.monitoring_tag_table)
 
-        self.tab_widget.addTab(monitor_widget, "📊 Monitor")
+        tag_buttons_layout = QHBoxLayout()
+        self.add_tag_btn = QPushButton("Add Tag")
+        self.add_tag_btn.setStyleSheet(self._get_button_style())
+        tag_buttons_layout.addWidget(self.add_tag_btn)
+
+        self.remove_tag_btn = QPushButton("Remove Selected Tag")
+        self.remove_tag_btn.setStyleSheet(self._get_button_style())
+        self.remove_tag_btn.setEnabled(False)
+        tag_buttons_layout.addWidget(self.remove_tag_btn)
+
+        tag_layout.addLayout(tag_buttons_layout)
+        layout.addWidget(tag_group)
+
+        self.monitoring_tag_table.itemSelectionChanged.connect(self._update_tag_buttons_state)
+        self.add_tag_btn.clicked.connect(self._add_monitoring_tag)
+        self.remove_tag_btn.clicked.connect(self._remove_monitoring_tag)
+
+        self._add_monitoring_tag()
+
+        self.tab_widget.addTab(monitor_widget, "Tags")
 
     def _setup_bottom_section(self, splitter):
         """Setup bottom section with output and logs."""
@@ -537,14 +657,14 @@ class ModbusGUI(QMainWindow):
         self.output_tabs = QTabWidget()
         self.output_tabs.setStyleSheet("""
             QTabWidget::pane {
-                border: 1px solid #3E3E42;
-                background-color: #1E1E1E;
+                border: 1px solid #CCCCCC;
+                background-color: #FFFFFF;
             }
             QTabBar::tab {
-                background-color: #2D2D30;
-                color: #CCCCCC;
+                background-color: #E9E9E9;
+                color: #333333;
                 padding: 5px 10px;
-                border: 1px solid #3E3E42;
+                border: 1px solid #CCCCCC;
             }
             QTabBar::tab:selected {
                 background-color: #007ACC;
@@ -552,33 +672,56 @@ class ModbusGUI(QMainWindow):
             }
         """)
 
+        # Monitoring results
+        self.monitoring_table = QTableWidget()
+        self.monitoring_table.setColumnCount(5)
+        self.monitoring_table.setHorizontalHeaderLabels(["Tag Name", "Type", "Address", "Value", "Timestamp"])
+        self.monitoring_table.setAlternatingRowColors(True)
+        self.monitoring_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.monitoring_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.monitoring_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #FFFFFF;
+                color: #000000;
+                border: none;
+                gridline-color: #D0D0D0;
+            }
+            QHeaderView::section {
+                background-color: #E9E9E9;
+                color: #000000;
+                border: 1px solid #CCCCCC;
+                padding: 5px;
+            }
+        """)
+        self.output_tabs.addTab(self.monitoring_table, "Results")
+
         # Log output
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setStyleSheet("""
             QTextEdit {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
+                background-color: #FFFFFF;
+                color: #000000;
                 border: none;
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 10px;
             }
         """)
-        self.output_tabs.addTab(self.log_output, "📝 Logs")
+        self.output_tabs.addTab(self.log_output, "Logs")
 
         # Raw data output
         self.data_output = QTextEdit()
         self.data_output.setReadOnly(True)
         self.data_output.setStyleSheet("""
             QTextEdit {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
+                background-color: #FFFFFF;
+                color: #000000;
                 border: none;
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 10px;
             }
         """)
-        self.output_tabs.addTab(self.data_output, "📄 Raw Data")
+        self.output_tabs.addTab(self.data_output, "Raw Data")
 
         bottom_layout.addWidget(self.output_tabs)
         splitter.addWidget(bottom_widget)
@@ -596,9 +739,9 @@ class ModbusGUI(QMainWindow):
         """Get consistent input widget style."""
         return """
             QSpinBox, QLineEdit {
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                border: 1px solid #3E3E42;
+                background-color: #FFFFFF;
+                color: #000000;
+                border: 1px solid #CCCCCC;
                 border-radius: 4px;
                 padding: 5px;
             }
@@ -607,47 +750,126 @@ class ModbusGUI(QMainWindow):
             }
         """
 
-    def _get_button_style(self, color="#007ACC"):
+    def _get_button_style(self, color=None):
         """Get consistent button style."""
-        return f"""
-            QPushButton {{
-                background-color: {color};
-                color: white;
-                border: none;
+        return """
+            QPushButton {
+                background-color: #E0E0E0;
+                color: #000000;
+                border: 1px solid #B0B0B0;
                 border-radius: 6px;
                 padding: 8px 16px;
                 font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {color}DD;
-            }}
-            QPushButton:pressed {{
-                background-color: {color}BB;
-            }}
-            QPushButton:disabled {{
-                background-color: #666666;
+            }
+            QPushButton:hover {
+                background-color: #D5D5D5;
+            }
+            QPushButton:pressed {
+                background-color: #C0C0C0;
+            }
+            QPushButton:disabled {
+                background-color: #F0F0F0;
                 color: #999999;
-            }}
+            }
         """
+
+    def _create_monitoring_tag_widget(self, widget_type, value=None):
+        if widget_type == "lineedit":
+            w = QLineEdit()
+            w.setText(value or "")
+            w.setStyleSheet(self._get_input_style())
+            return w
+        if widget_type == "mode_combo":
+            w = QComboBox()
+            w.addItems(["Read", "Write"])
+            if value:
+                w.setCurrentText(value)
+            return w
+        if widget_type == "type_combo":
+            w = QComboBox()
+            w.addItems(["Coil", "Discrete Input", "Holding Register", "Input Register"])
+            if value:
+                w.setCurrentText(value)
+            return w
+        if widget_type == "spinbox":
+            w = QSpinBox()
+            w.setRange(0, 65535)
+            w.setValue(value if value is not None else 0)
+            w.setStyleSheet(self._get_input_style())
+            return w
+        return None
+
+    def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=0, count=1, write_value=""):
+        row = self.monitoring_tag_table.rowCount()
+        self.monitoring_tag_table.insertRow(row)
+
+        self.monitoring_tag_table.setCellWidget(row, 0, self._create_monitoring_tag_widget("lineedit", tag_name))
+        self.monitoring_tag_table.setCellWidget(row, 1, self._create_monitoring_tag_widget("mode_combo", mode))
+        self.monitoring_tag_table.setCellWidget(row, 2, self._create_monitoring_tag_widget("type_combo", tag_type))
+
+        address_widget = self._create_monitoring_tag_widget("spinbox", address)
+        self.monitoring_tag_table.setCellWidget(row, 3, address_widget)
+
+        count_widget = self._create_monitoring_tag_widget("spinbox", count)
+        count_widget.setRange(1, 125)
+        self.monitoring_tag_table.setCellWidget(row, 4, count_widget)
+
+        self.monitoring_tag_table.setCellWidget(row, 5, self._create_monitoring_tag_widget("lineedit", write_value))
+
+    def _remove_monitoring_tag(self):
+        selected_rows = sorted(self._get_selected_tag_rows(), reverse=True)
+        for row in selected_rows:
+            self.monitoring_tag_table.removeRow(row)
+        self._update_tag_buttons_state()
+
+    def _update_tag_buttons_state(self):
+        selected = bool(self._get_selected_tag_rows())
+        self.remove_tag_btn.setEnabled(selected)
+        self.write_selected_tags_btn.setEnabled(selected)
+
+    def _get_selected_tag_rows(self):
+        selected_rows = {index.row() for index in self.monitoring_tag_table.selectedIndexes()}
+        current_row = self.monitoring_tag_table.currentRow()
+        if current_row >= 0:
+            selected_rows.add(current_row)
+        return selected_rows
+
+    def _get_monitoring_tags(self):
+        tags = []
+        for row in range(self.monitoring_tag_table.rowCount()):
+            name_widget = self.monitoring_tag_table.cellWidget(row, 0)
+            mode_widget = self.monitoring_tag_table.cellWidget(row, 1)
+            type_widget = self.monitoring_tag_table.cellWidget(row, 2)
+            address_widget = self.monitoring_tag_table.cellWidget(row, 3)
+            count_widget = self.monitoring_tag_table.cellWidget(row, 4)
+            value_widget = self.monitoring_tag_table.cellWidget(row, 5)
+
+            if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, value_widget)):
+                continue
+
+            name = name_widget.text().strip() or f"Tag {row + 1}"
+            mode = mode_widget.currentText()
+            tag_type = type_widget.currentText()
+            address = address_widget.value()
+            count = count_widget.value()
+            write_value = value_widget.text().strip()
+            tags.append({
+                "row": row,
+                "name": name,
+                "mode": mode,
+                "type": tag_type,
+                "address": address,
+                "count": count,
+                "write_value": write_value,
+            })
+
+        return tags
 
     def _create_operation_button(self, text, color):
         """Create a styled operation button."""
         btn = QPushButton(text)
         btn.setStyleSheet(self._get_button_style(color))
         return btn
-
-    def _connect_signals(self):
-        self.connect_btn.clicked.connect(self.toggle_connection)
-
-        self.read_coils_btn.clicked.connect(self.read_coils)
-        self.read_discrete_inputs_btn.clicked.connect(self.read_discrete_inputs)
-        self.read_holding_registers_btn.clicked.connect(self.read_holding_registers)
-        self.read_input_registers_btn.clicked.connect(self.read_input_registers)
-
-        self.write_coil_btn.clicked.connect(self.write_coil)
-        self.write_register_btn.clicked.connect(self.write_register)
-        self.write_coils_btn.clicked.connect(self.write_coils)
-        self.write_registers_btn.clicked.connect(self.write_registers)
 
     def _connect_signals(self):
         """Connect all UI signals to their handlers."""
@@ -671,6 +893,8 @@ class ModbusGUI(QMainWindow):
         # Monitoring signals
         self.start_monitoring_btn.clicked.connect(self._start_monitoring)
         self.stop_monitoring_btn.clicked.connect(self._stop_monitoring)
+        self.write_selected_tags_btn.clicked.connect(self._write_selected_tags)
+        self.open_results_btn.clicked.connect(self._show_results_window)
 
     def _connect(self):
         """Connect to Modbus server."""
@@ -700,18 +924,18 @@ class ModbusGUI(QMainWindow):
                     self.connection_history_combo.clear()
                     self.connection_history_combo.addItems(self.connection_history[:10])  # Keep last 10
 
-                self._log(f"✅ Connected to Modbus server at {ip}:{port} (Unit ID: {unit_id})")
+                self._log(f"Connected to Modbus server at {ip}:{port} (Unit ID: {unit_id})")
             else:
                 self.status_indicator.set_status("error")
                 self.status_text.setText("Connection Failed")
                 self.connect_btn.setEnabled(True)
-                self._log("❌ Failed to connect to Modbus server")
+                self._log("Failed to connect to Modbus server")
 
         except Exception as e:
             self.status_indicator.set_status("error")
             self.status_text.setText("Connection Error")
             self.connect_btn.setEnabled(True)
-            self._log(f"❌ Connection error: {e}")
+            self._log(f"Connection error: {e}")
 
     def _disconnect(self):
         """Disconnect from Modbus server."""
@@ -757,37 +981,37 @@ class ModbusGUI(QMainWindow):
             if operation_type == "coils":
                 data = self.modbus.read_coils(start_addr, count)
                 if data is not None:
-                    self._log(f"📖 Read {len(data)} coils from {start_addr}: {data}")
+                    self._log(f"Read {len(data)} coils from {start_addr}: {data}")
                     self._display_raw_data(f"Coils[{start_addr}:{start_addr+count-1}]", data)
                 else:
-                    self._log("❌ Failed to read coils")
+                    self._log("Failed to read coils")
 
             elif operation_type == "discrete_inputs":
                 data = self.modbus.read_discrete_inputs(start_addr, count)
                 if data is not None:
-                    self._log(f"📖 Read {len(data)} discrete inputs from {start_addr}: {data}")
+                    self._log(f"Read {len(data)} discrete inputs from {start_addr}: {data}")
                     self._display_raw_data(f"DiscreteInputs[{start_addr}:{start_addr+count-1}]", data)
                 else:
-                    self._log("❌ Failed to read discrete inputs")
+                    self._log("Failed to read discrete inputs")
 
             elif operation_type == "holding_registers":
                 data = self.modbus.read_registers(start_addr, count)
                 if data is not None:
-                    self._log(f"📖 Read {len(data)} holding registers from {start_addr}: {data}")
+                    self._log(f"Read {len(data)} holding registers from {start_addr}: {data}")
                     self._display_raw_data(f"HoldingRegisters[{start_addr}:{start_addr+count-1}]", data)
                 else:
-                    self._log("❌ Failed to read holding registers")
+                    self._log("Failed to read holding registers")
 
             elif operation_type == "input_registers":
                 data = self.modbus.read_input_registers(start_addr, count)
                 if data is not None:
-                    self._log(f"📖 Read {len(data)} input registers from {start_addr}: {data}")
+                    self._log(f"Read {len(data)} input registers from {start_addr}: {data}")
                     self._display_raw_data(f"InputRegisters[{start_addr}:{start_addr+count-1}]", data)
                 else:
-                    self._log("❌ Failed to read input registers")
+                    self._log("Failed to read input registers")
 
         except Exception as e:
-            self._log(f"❌ Read operation error: {e}")
+            self._log(f"Read operation error: {e}")
 
     def _write_operation(self, operation_type):
         """Handle write operations."""
@@ -800,61 +1024,153 @@ class ModbusGUI(QMainWindow):
             if operation_type == "coil":
                 value_text = self.write_single_value.text().strip()
                 if not value_text:
-                    self._log("❌ Please enter a value for coil")
+                    self._log("Please enter a value for coil")
                     return
                 value = bool(int(value_text))
                 success = self.modbus.write_coil(addr, value)
                 if success:
-                    self._log(f"✏️ Wrote coil {addr} = {value}")
+                    self._log(f"Wrote coil {addr} = {value}")
                 else:
-                    self._log("❌ Failed to write coil")
+                    self._log("Failed to write coil")
 
             elif operation_type == "register":
                 value_text = self.write_single_value.text().strip()
                 if not value_text:
-                    self._log("❌ Please enter a value for register")
+                    self._log("Please enter a value for register")
                     return
                 value = int(value_text)
                 success = self.modbus.write_register(addr, value)
                 if success:
-                    self._log(f"✏️ Wrote register {addr} = {value}")
+                    self._log(f"Wrote register {addr} = {value}")
                 else:
-                    self._log("❌ Failed to write register")
+                    self._log("Failed to write register")
 
             elif operation_type == "coils":
                 values_text = self.write_multi_values.text().strip()
                 if not values_text:
-                    self._log("❌ Please enter values for coils")
+                    self._log("Please enter values for coils")
                     return
                 values = [bool(int(v.strip())) for v in values_text.split(",")]
                 success = self.modbus.write_coils(addr, values)
                 if success:
-                    self._log(f"✏️ Wrote {len(values)} coils starting at {addr}: {values}")
+                    self._log(f"Wrote {len(values)} coils starting at {addr}: {values}")
                 else:
-                    self._log("❌ Failed to write coils")
+                    self._log("Failed to write coils")
 
             elif operation_type == "registers":
                 values_text = self.write_multi_values.text().strip()
                 if not values_text:
-                    self._log("❌ Please enter values for registers")
+                    self._log("Please enter values for registers")
                     return
                 values = [int(v.strip()) for v in values_text.split(",")]
                 success = self.modbus.write_registers(addr, values)
                 if success:
-                    self._log(f"✏️ Wrote {len(values)} registers starting at {addr}: {values}")
+                    self._log(f"Wrote {len(values)} registers starting at {addr}: {values}")
                 else:
-                    self._log("❌ Failed to write registers")
+                    self._log("Failed to write registers")
 
         except ValueError as e:
-            self._log(f"❌ Invalid value format: {e}")
+            self._log(f"Invalid value format: {e}")
         except Exception as e:
-            self._log(f"❌ Write operation error: {e}")
+            self._log(f"Write operation error: {e}")
+
+    def _write_selected_tags(self):
+        """Write selected tag rows that are configured for Write mode."""
+        if not self._check_connection():
+            return
+
+        selected_rows = sorted(self._get_selected_tag_rows())
+        if not selected_rows:
+            QMessageBox.warning(self, "No Tag Selected", "Please select at least one write-mode tag.")
+            return
+
+        tags_by_row = {tag["row"]: tag for tag in self._get_monitoring_tags()}
+        wrote_any = False
+
+        for row in selected_rows:
+            tag = tags_by_row.get(row)
+            if not tag:
+                continue
+
+            if tag["mode"] != "Write":
+                self._log(f"Skipped {tag['name']}: tag mode is Read")
+                continue
+
+            try:
+                success, written_value = self._write_tag(tag)
+                if success:
+                    wrote_any = True
+                    timestamp = time.strftime("%H:%M:%S")
+                    self._add_monitoring_row(tag["name"], tag["type"], tag["address"], str(written_value), timestamp)
+                    self._log(f"Wrote {tag['name']} at {tag['address']} = {written_value}")
+                else:
+                    self._log(f"Failed to write {tag['name']}")
+            except ValueError as e:
+                self._log(f"Invalid write value for {tag['name']}: {e}")
+            except Exception as e:
+                self._log(f"Write error for {tag['name']}: {e}")
+
+        if wrote_any:
+            self.output_tabs.setCurrentWidget(self.monitoring_table)
+
+    def _write_tag(self, tag):
+        if tag["type"] in ("Discrete Input", "Input Register"):
+            raise ValueError(f"{tag['type']} is read-only")
+
+        if not tag["write_value"]:
+            raise ValueError("write value is empty")
+
+        if tag["type"] == "Coil":
+            values = self._parse_coil_values(tag["write_value"])
+            if tag["count"] == 1:
+                value = values[0]
+                return self.modbus.write_coil(tag["address"], value), value
+            values = self._fit_write_values(values, tag["count"])
+            return self.modbus.write_coils(tag["address"], values), values
+
+        values = self._parse_register_values(tag["write_value"])
+        if tag["count"] == 1:
+            value = values[0]
+            return self.modbus.write_register(tag["address"], value), value
+        values = self._fit_write_values(values, tag["count"])
+        return self.modbus.write_registers(tag["address"], values), values
+
+    def _parse_coil_values(self, value_text):
+        values = []
+        for raw_value in value_text.split(","):
+            value = raw_value.strip().lower()
+            if value in ("1", "true", "on"):
+                values.append(True)
+            elif value in ("0", "false", "off"):
+                values.append(False)
+            else:
+                raise ValueError("coil values must be 0/1, true/false, or on/off")
+        if not values:
+            raise ValueError("write value is empty")
+        return values
+
+    def _parse_register_values(self, value_text):
+        values = [int(value.strip()) for value in value_text.split(",") if value.strip()]
+        if not values:
+            raise ValueError("write value is empty")
+        return values
+
+    def _fit_write_values(self, values, count):
+        if len(values) != count:
+            raise ValueError(f"expected {count} value(s), got {len(values)}")
+        return values
 
     def _start_monitoring(self):
         """Start real-time data monitoring."""
         if not self._check_connection():
             return
 
+        tags = [tag for tag in self._get_monitoring_tags() if tag["mode"] == "Read"]
+        if not tags:
+            QMessageBox.warning(self, "No Read Tags", "Please add at least one read-mode tag before starting monitoring.")
+            return
+
+        self._clear_monitoring_results()
         self.monitoring_active = True
         interval = self.monitoring_interval.value()
         self.monitoring_timer.start(interval)
@@ -862,7 +1178,7 @@ class ModbusGUI(QMainWindow):
         self.start_monitoring_btn.setEnabled(False)
         self.stop_monitoring_btn.setEnabled(True)
 
-        self._log(f"▶️ Started monitoring with {interval}ms interval")
+        self._log(f"Started monitoring with {interval}ms interval")
 
     def _stop_monitoring(self):
         """Stop real-time data monitoring."""
@@ -872,49 +1188,102 @@ class ModbusGUI(QMainWindow):
         self.start_monitoring_btn.setEnabled(True)
         self.stop_monitoring_btn.setEnabled(False)
 
-        self._log("⏹️ Stopped monitoring")
+        self._log("Stopped monitoring")
+
+    def _clear_monitoring_results(self):
+        self.monitoring_table.setRowCount(0)
+        if self.results_window is not None:
+            self.results_window.clear()
+
+    def _show_results_window(self):
+        """Open the detached monitoring results table."""
+        if self.results_window is None:
+            self.results_window = MonitoringResultsWindow(self)
+
+        self._sync_results_window()
+        self.results_window.show()
+        self.results_window.raise_()
+        self.results_window.activateWindow()
+
+    def _sync_results_window(self):
+        """Copy the current embedded results into the detached results window."""
+        if self.results_window is None:
+            return
+
+        self.results_window.clear()
+        for row in range(self.monitoring_table.rowCount()):
+            values = []
+            for column in range(self.monitoring_table.columnCount()):
+                item = self.monitoring_table.item(row, column)
+                values.append(item.text() if item else "")
+            self.results_window.update_row(*values)
 
     def _update_monitored_data(self):
         """Update monitored data in the table."""
         if not self.modbus or not self.monitoring_active:
             return
 
-        try:
-            # Read some sample data for demonstration
-            timestamp = time.strftime("%H:%M:%S")
+        tags = [tag for tag in self._get_monitoring_tags() if tag["mode"] == "Read"]
+        if not tags:
+            return
 
-            # Read coils
-            coils = self.modbus.read_coils(0, 8)
-            if coils:
-                for i, value in enumerate(coils):
-                    self._add_monitoring_row(0 + i, "Coil", str(value), timestamp)
+        timestamp = time.strftime("%H:%M:%S")
+        for tag in tags:
+            try:
+                if tag["type"] == "Coil":
+                    value = self.modbus.read_coils(tag["address"], tag["count"])
+                elif tag["type"] == "Discrete Input":
+                    value = self.modbus.read_discrete_inputs(tag["address"], tag["count"])
+                elif tag["type"] == "Holding Register":
+                    value = self.modbus.read_registers(tag["address"], tag["count"])
+                else:
+                    value = self.modbus.read_input_registers(tag["address"], tag["count"])
 
-            # Read holding registers
-            registers = self.modbus.read_registers(0, 8)
-            if registers:
-                for i, value in enumerate(registers):
-                    self._add_monitoring_row(40000 + i, "Holding Reg", str(value), timestamp)
+                display_value = self._format_monitoring_value(value, tag["count"])
+                self._add_monitoring_row(tag["name"], tag["type"], tag["address"], display_value, timestamp)
+            except Exception as e:
+                self._log(f"Monitoring error for {tag['name']}: {e}")
 
-        except Exception as e:
-            self._log(f"⚠️ Monitoring error: {e}")
+    def _format_monitoring_value(self, value, count):
+        if value is None:
+            return "ERROR"
+        if isinstance(value, list):
+            visible_values = value[:count]
+            if count == 1 and visible_values:
+                return str(visible_values[0])
+            return ", ".join(str(v) for v in visible_values)
+        return str(value)
 
-    def _add_monitoring_row(self, address, data_type, value, timestamp):
-        """Add a row to the monitoring table."""
+    def _add_monitoring_row(self, tag_name, data_type, address, value, timestamp):
+        """Add or update a tag row in the monitoring results table."""
         row_count = self.monitoring_table.rowCount()
 
-        # Check if address already exists, update if so
         for row in range(row_count):
-            if self.monitoring_table.item(row, 0) and self.monitoring_table.item(row, 0).text() == str(address):
-                self.monitoring_table.setItem(row, 2, QTableWidgetItem(value))
-                self.monitoring_table.setItem(row, 3, QTableWidgetItem(timestamp))
+            name_item = self.monitoring_table.item(row, 0)
+            type_item = self.monitoring_table.item(row, 1)
+            address_item = self.monitoring_table.item(row, 2)
+            if (
+                name_item and type_item and address_item
+                and name_item.text() == tag_name
+                and type_item.text() == data_type
+                and address_item.text() == str(address)
+            ):
+                self.monitoring_table.setItem(row, 2, QTableWidgetItem(str(address)))
+                self.monitoring_table.setItem(row, 3, QTableWidgetItem(value))
+                self.monitoring_table.setItem(row, 4, QTableWidgetItem(timestamp))
+                if self.results_window is not None:
+                    self.results_window.update_row(tag_name, data_type, address, value, timestamp)
                 return
 
-        # Add new row
         self.monitoring_table.insertRow(row_count)
-        self.monitoring_table.setItem(row_count, 0, QTableWidgetItem(str(address)))
+        self.monitoring_table.setItem(row_count, 0, QTableWidgetItem(tag_name))
         self.monitoring_table.setItem(row_count, 1, QTableWidgetItem(data_type))
-        self.monitoring_table.setItem(row_count, 2, QTableWidgetItem(value))
-        self.monitoring_table.setItem(row_count, 3, QTableWidgetItem(timestamp))
+        self.monitoring_table.setItem(row_count, 2, QTableWidgetItem(str(address)))
+        self.monitoring_table.setItem(row_count, 3, QTableWidgetItem(value))
+        self.monitoring_table.setItem(row_count, 4, QTableWidgetItem(timestamp))
+
+        if self.results_window is not None:
+            self.results_window.update_row(tag_name, data_type, address, value, timestamp)
 
     def _check_connection(self):
         """Check if connected to Modbus server."""
@@ -975,7 +1344,7 @@ class ModbusGUI(QMainWindow):
             self._stop_monitoring()
         if self.modbus:
             self._disconnect()
-        self.monitoring_table.setRowCount(0)
+        self._clear_monitoring_results()
         self.log_output.clear()
         self.data_output.clear()
         self._log("🆕 New session started")
@@ -1028,14 +1397,16 @@ class ModbusGUI(QMainWindow):
     def _show_about(self):
         """Show about dialog."""
         QMessageBox.about(self, "About ModbusLens",
-                         "ModbusLens v1.0\n\n"
-                         "Professional Modbus TCP Client\n\n"
-                         "Features:\n"
-                         "• Real-time data monitoring\n"
-                         "• Advanced read/write operations\n"
-                         "• Connection profiles\n"
-                         "• Data visualization\n"
-                         "• Scripting support\n\n"
+                         "<b>ModbusLens v1.0</b><br><br>"
+                         "Professional Modbus TCP Client<br>"
+                         "Made by Alvin A D<br><br>"
+                         "Features:<br>"
+                         "• Real-time data monitoring<br>"
+                         "• Advanced read/write operations<br>"
+                         "• Connection profiles<br>"
+                         "• Data visualization<br>"
+                         "• Scripting support<br><br>"
+                         "GitHub: <a href=\"https://github.com/CraftParking/ModbusLens\">https://github.com/CraftParking/ModbusLens</a><br><br>"
                          "© 2026 ModbusLens Team")
 
     def closeEvent(self, event):
