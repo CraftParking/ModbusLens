@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="assets/modscope_banner.png" alt="ModScope Banner" width="100%">
+  <img src="assets/modbuslens_banner.png" alt="ModbusLens Banner" width="100%">
 </p>
 
-<h1 align="center">ModScope</h1>
+<h1 align="center">ModbusLens</h1>
 <p align="center">Lightweight and powerful Modbus diagnostic tool</p>
 
 ---
 
 ## 🚀 Overview
 
-ModScope is a Modbus communication and diagnostic utility designed for engineers, technicians, and students working with industrial automation systems.
+ModbusLens is a Modbus communication and diagnostic utility designed for engineers, technicians, and students working with industrial automation systems.
 
 The tool enables **direct, low-level interaction** with Modbus-enabled devices such as PLCs, RTUs, and controllers. It provides a fast and reliable way to:
 
@@ -18,13 +18,13 @@ The tool enables **direct, low-level interaction** with Modbus-enabled devices s
 * Verify communication between systems
 * Diagnose and debug Modbus-related issues
 
-Unlike full-scale SCADA systems, ModScope focuses purely on **testing, validation, and diagnostics**, keeping the application lightweight and efficient.
+Unlike full-scale SCADA systems, ModbusLens focuses purely on **testing, validation, and diagnostics**, keeping the application lightweight and efficient.
 
 ---
 
 ## ✨ Key Capabilities (Planned & In Progress)
 
-ModScope is being developed to support all major Modbus TCP function codes:
+ModbusLens is being developed to support all major Modbus TCP function codes:
 
 ### 🔹 Read Operations
 
@@ -52,7 +52,7 @@ ModScope is being developed to support all major Modbus TCP function codes:
 
 ## 🖥️ Application Design
 
-ModScope follows a modular architecture:
+ModbusLens follows a modular architecture:
 
 ### 1. Core Engine (Python)
 
@@ -77,7 +77,7 @@ A packaged executable (`.exe`) will be provided for end users, allowing the appl
 ## 🧱 Project Structure
 
 ```
-modscope/
+modbuslens/
 ├── assets/        # UI resources (icons, images)
 ├── config/        # Device configuration files
 ├── core/          # Modbus communication logic
@@ -95,8 +95,8 @@ modscope/
 Clone the repository:
 
 ```
-git clone https://github.com/CraftParking/ModScope.git
-cd ModScope
+git clone https://github.com/CraftParking/ModbusLens.git
+cd ModbusLens
 ```
 
 Install dependencies:
@@ -109,7 +109,7 @@ pip install -r requirements.txt
 
 ## ▶️ Current Usage
 
-At the current stage, ModScope is in core development.
+At the current stage, ModbusLens is in core development.
 
 ```
 python tests/test_modbus.py
@@ -215,7 +215,7 @@ Update the IP address and unit ID inside the script according to your Modbus dev
 
 ## 📌 Project Status
 
-ModScope is currently under active development. Core communication features are implemented and being refined, with UI and advanced features under development.
+ModbusLens is currently under active development. Core communication features are implemented and being refined, with UI and advanced features under development.
 
 The project is being built incrementally with a focus on:
 
