@@ -214,8 +214,14 @@ class ModbusGUI(QMainWindow):
         self._modbus_busy = False
         self._active_ranges = []
         self.monitoring_active = False
+        self._monitoring_poll_in_progress = False
+        self._monitoring_failure_count = 0
+        self._monitoring_max_failures = 3
+        self._write_poll_in_progress = False
         self.monitoring_timer = QTimer(self)
         self.monitoring_timer.timeout.connect(self._update_monitored_data)
+        self.write_poll_timer = QTimer(self)
+        self.write_poll_timer.timeout.connect(self._update_write_tag_values)
 
         self._setup_window()
         self._setup_menu()
@@ -400,6 +406,10 @@ class ModbusGUI(QMainWindow):
             }
         """)
         inputs_layout.addWidget(self.connection_history_combo, 1, 3)
+
+        self.delete_history_btn = QPushButton("Delete History")
+        self.delete_history_btn.setStyleSheet(self._get_button_style())
+        inputs_layout.addWidget(self.delete_history_btn, 1, 4)
 
         layout.addLayout(inputs_layout)
 
@@ -934,6 +944,7 @@ class ModbusGUI(QMainWindow):
         self.connect_btn.clicked.connect(self._connect)
         self.disconnect_btn.clicked.connect(self._disconnect)
         self.connection_history_combo.currentTextChanged.connect(self._load_connection_from_history)
+        self.delete_history_btn.clicked.connect(self._delete_selected_history)
 
         # Read operation signals
         self.read_coils_btn.clicked.connect(lambda: self._read_operation("coils"))
@@ -977,8 +988,8 @@ class ModbusGUI(QMainWindow):
                 connection_string = f"{ip}:{port}:{unit_id}"
                 if connection_string not in self.connection_history:
                     self.connection_history.insert(0, connection_string)
-                    self.connection_history_combo.clear()
-                    self.connection_history_combo.addItems(self.connection_history[:10])  # Keep last 10
+                    self._refresh_connection_history_combo()
+                    self._save_settings()
 
                 self._log(f"Connected to Modbus server at {ip}:{port} (Unit ID: {unit_id})")
             else:
@@ -1024,6 +1035,29 @@ class ModbusGUI(QMainWindow):
                 self.unit_input.setValue(int(parts[2]))
         except (ValueError, IndexError):
             pass
+
+    def _delete_selected_history(self):
+        """Delete the currently selected connection history entry."""
+        connection_string = self.connection_history_combo.currentText().strip()
+        if not connection_string:
+            return
+
+        self.connection_history = [
+            connection for connection in self.connection_history
+            if connection != connection_string
+        ]
+        self._refresh_connection_history_combo()
+        self._save_settings()
+        self._log(f"Deleted connection history entry: {connection_string}")
+
+    def _refresh_connection_history_combo(self):
+        current_text = self.connection_history_combo.currentText()
+        self.connection_history_combo.blockSignals(True)
+        self.connection_history_combo.clear()
+        self.connection_history_combo.addItems(self.connection_history[:10])
+        if current_text in self.connection_history:
+            self.connection_history_combo.setCurrentText(current_text)
+        self.connection_history_combo.blockSignals(False)
 
     def _read_operation(self, operation_type):
         """Handle read operations."""
@@ -1090,6 +1124,7 @@ class ModbusGUI(QMainWindow):
         monitor_interval = self.monitoring_interval.value()
         if was_monitoring:
             self.monitoring_timer.stop()
+            self.write_poll_timer.stop()
             self._log("Safety interlock: monitoring paused while write request is active")
 
         try:
@@ -1151,7 +1186,7 @@ class ModbusGUI(QMainWindow):
         finally:
             self._modbus_busy = False
             if was_monitoring and self.monitoring_active:
-                self.monitoring_timer.start(monitor_interval)
+                self._restart_monitoring_timers(monitor_interval)
                 self._log("Safety interlock: monitoring resumed after write request")
 
     def _write_results_window_selected(self):
@@ -1395,18 +1430,24 @@ class ModbusGUI(QMainWindow):
         if not self._check_connection():
             return
 
-        tags = [tag for tag in self._get_monitoring_tags() if tag["mode"] == "Read"]
-        if not tags:
-            QMessageBox.warning(self, "No Read Tags", "Please add at least one read-mode tag before starting monitoring.")
+        tags = self._get_monitoring_tags()
+        read_tags = [tag for tag in tags if tag["mode"] == "Read"]
+        write_tags = [tag for tag in tags if tag["mode"] == "Write"]
+        if not read_tags and not write_tags:
+            QMessageBox.warning(self, "No Tags", "Please add at least one read or write tag before starting monitoring.")
             return
 
         self._clear_monitoring_results()
         self.monitoring_active = True
+        self._monitoring_failure_count = 0
+        self._monitoring_poll_in_progress = False
+        self._write_poll_in_progress = False
         interval = self.monitoring_interval.value()
-        self.monitoring_timer.start(interval)
+        self._restart_monitoring_timers(interval)
 
         self.start_monitoring_btn.setEnabled(False)
         self.stop_monitoring_btn.setEnabled(True)
+        self._set_tag_editor_enabled(False)
 
         self._log(f"Started monitoring with {interval}ms interval")
 
@@ -1414,11 +1455,27 @@ class ModbusGUI(QMainWindow):
         """Stop real-time data monitoring."""
         self.monitoring_active = False
         self.monitoring_timer.stop()
+        self.write_poll_timer.stop()
+        self._monitoring_poll_in_progress = False
+        self._write_poll_in_progress = False
 
         self.start_monitoring_btn.setEnabled(True)
         self.stop_monitoring_btn.setEnabled(False)
+        self._set_tag_editor_enabled(True)
 
         self._log("Stopped monitoring")
+
+    def _set_tag_editor_enabled(self, enabled):
+        self.monitoring_tag_table.setEnabled(enabled)
+        self.add_tag_btn.setEnabled(enabled)
+        self.remove_tag_btn.setEnabled(enabled and bool(self._get_selected_tag_rows()))
+
+    def _restart_monitoring_timers(self, read_interval):
+        tags = self._get_monitoring_tags()
+        if any(tag["mode"] == "Read" for tag in tags):
+            self.monitoring_timer.start(read_interval)
+        if any(tag["mode"] == "Write" for tag in tags):
+            self.write_poll_timer.start(1000)
 
     def _clear_monitoring_results(self):
         self.monitoring_table.setRowCount(0)
@@ -1481,47 +1538,137 @@ class ModbusGUI(QMainWindow):
         """Update monitored data in the table."""
         if not self.modbus or not self.monitoring_active:
             return
+        if self._monitoring_poll_in_progress:
+            self._log("Safety interlock: skipped monitor tick because previous poll is still running")
+            return
 
         tags = [tag for tag in self._get_monitoring_tags() if tag["mode"] == "Read"]
         if not tags:
             return
 
+        self._monitoring_poll_in_progress = True
+        self.monitoring_timer.stop()
+        poll_failed = False
         timestamp = time.strftime("%H:%M:%S")
-        for tag in tags:
-            try:
-                self._validate_tag_request(tag, "read")
-                if not self._begin_modbus_operation(tag, "read"):
-                    self._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
-                    continue
+        try:
+            for tag in tags:
+                try:
+                    self._validate_tag_request(tag, "read")
+                    if not self._begin_modbus_operation(tag, "read"):
+                        self._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
+                        continue
 
-                if tag["type"] == "Coil":
                     try:
-                        value = self.modbus.read_coils(tag["address"], tag["count"])
-                    finally:
-                        self._end_modbus_operation(tag, "read")
-                elif tag["type"] == "Discrete Input":
-                    try:
-                        value = self.modbus.read_discrete_inputs(tag["address"], tag["count"])
-                    finally:
-                        self._end_modbus_operation(tag, "read")
-                elif tag["type"] == "Holding Register":
-                    try:
-                        value = self.modbus.read_registers(tag["address"], tag["count"])
-                    finally:
-                        self._end_modbus_operation(tag, "read")
-                else:
-                    try:
-                        value = self.modbus.read_input_registers(tag["address"], tag["count"])
+                        value = self._read_tag_for_monitoring(tag)
                     finally:
                         self._end_modbus_operation(tag, "read")
 
-                display_value = self._format_monitoring_value(value, tag["count"])
-                self._add_monitoring_row(
-                    tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                    tag["comment"], timestamp
-                )
-            except Exception as e:
-                self._log(f"Monitoring error for {tag['name']}: {e}")
+                    if value is None:
+                        poll_failed = True
+                        self._add_monitoring_row(
+                            tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "",
+                            tag["comment"], timestamp
+                        )
+                        self._log(f"Monitoring read failed for {tag['name']} at {tag['address']}")
+                        break
+
+                    display_value = self._format_monitoring_value(value, tag["count"])
+                    self._add_monitoring_row(
+                        tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
+                        tag["comment"], timestamp
+                    )
+                except Exception as e:
+                    poll_failed = True
+                    self._log(f"Monitoring error for {tag['name']}: {e}")
+                    break
+
+            if poll_failed:
+                self._monitoring_failure_count += 1
+                if self._monitoring_failure_count >= self._monitoring_max_failures:
+                    self._log(
+                        f"Monitoring stopped after {self._monitoring_failure_count} consecutive failed poll(s)"
+                    )
+                    self._stop_monitoring()
+                    QMessageBox.warning(
+                        self,
+                        "Monitoring Stopped",
+                        "Monitoring was stopped after repeated Modbus failures. Check tag type, address, unit ID, and server status.",
+                    )
+            else:
+                self._monitoring_failure_count = 0
+        finally:
+            self._monitoring_poll_in_progress = False
+            if self.monitoring_active:
+                self.monitoring_timer.start(self.monitoring_interval.value())
+
+    def _update_write_tag_values(self):
+        """Poll write-mode tags at a fixed 1000ms interval for their current device values."""
+        if not self.modbus or not self.monitoring_active:
+            return
+        if self._write_poll_in_progress:
+            self._log("Safety interlock: skipped write-tag poll because previous poll is still running")
+            return
+        if self._modbus_busy:
+            return
+
+        tags = [tag for tag in self._get_monitoring_tags() if tag["mode"] == "Write"]
+        if not tags:
+            return
+
+        self._write_poll_in_progress = True
+        self.write_poll_timer.stop()
+        poll_failed = False
+        timestamp = time.strftime("%H:%M:%S")
+        try:
+            for tag in tags:
+                try:
+                    self._validate_tag_request(tag, "write")
+                    if not self._begin_modbus_operation(tag, "read"):
+                        self._log(f"Safety interlock: skipped write-tag read for {tag['name']} because the range is busy")
+                        continue
+
+                    try:
+                        value = self._read_tag_value(tag)
+                    finally:
+                        self._end_modbus_operation(tag, "read")
+
+                    display_value = self._format_monitoring_value(value, tag["count"])
+                    self._add_monitoring_row(
+                        tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
+                        tag["comment"], timestamp
+                    )
+                except Exception as e:
+                    poll_failed = True
+                    self._log(f"Write-tag value polling error for {tag['name']}: {e}")
+                    break
+
+            if poll_failed:
+                self._monitoring_failure_count += 1
+                if self._monitoring_failure_count >= self._monitoring_max_failures:
+                    self._log(
+                        f"Monitoring stopped after {self._monitoring_failure_count} consecutive failed poll(s)"
+                    )
+                    self._stop_monitoring()
+                    QMessageBox.warning(
+                        self,
+                        "Monitoring Stopped",
+                        "Monitoring was stopped after repeated Modbus failures. Check write tag type, address, unit ID, and server status.",
+                    )
+            else:
+                self._monitoring_failure_count = 0
+        finally:
+            self._write_poll_in_progress = False
+            if self.monitoring_active:
+                self.write_poll_timer.start(1000)
+
+    def _read_tag_for_monitoring(self, tag):
+        if tag["type"] == "Coil":
+            return self.modbus.read_coils(tag["address"], tag["count"])
+        if tag["type"] == "Discrete Input":
+            return self.modbus.read_discrete_inputs(tag["address"], tag["count"])
+        if tag["type"] == "Holding Register":
+            return self.modbus.read_registers(tag["address"], tag["count"])
+        return self.modbus.read_input_registers(tag["address"], tag["count"])
 
     def _format_monitoring_value(self, value, count):
         if value is None:
@@ -1610,7 +1757,7 @@ class ModbusGUI(QMainWindow):
             if history_file.exists():
                 with open(history_file, 'r') as f:
                     self.connection_history = [line.strip() for line in f.readlines() if line.strip()]
-                self.connection_history_combo.addItems(self.connection_history[:10])
+                self._refresh_connection_history_combo()
         except Exception:
             pass
 
