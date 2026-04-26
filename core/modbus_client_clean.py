@@ -10,7 +10,7 @@ class ModbusClient:
         self.ip = ip
         self.port = port
         self.unit_id = unit_id
-        self.client: Optional[ModbusTcpClient] = None
+        self.client = None
         self._connected = False
 
     def connect(self):

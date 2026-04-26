@@ -8,8 +8,8 @@ logging.basicConfig(level=logging.ERROR, format='%(levelname)s: %(message)s')
 def run_cli():
     def get_connection():
         ip = input("Enter IP (default 127.0.0.1): ") or "127.0.0.1"
-        port = int(input("Enter Port (default 502): ") or "502")
-        unit = int(input("Enter Unit ID (default 1): ") or "1")
+        port = int(input("Enter Port (default 502): ") or "502"
+        unit = int(input("Enter Unit ID (default 1): ") or "1"
         return ModbusClient(ip, port, unit)
 
     def menu():
