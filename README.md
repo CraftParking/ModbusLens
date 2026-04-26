@@ -8,7 +8,7 @@ Lightweight and powerful Modbus diagnostic tool for reading and writing standard
 
 ModScope is a Modbus communication and diagnostic utility designed for engineers, technicians, and students working with industrial automation systems.
 
-The tool enables **direct, low-level interaction** with Modbus-enabled devices such as PLCs, RTUs, and controllers. It is built to provide a fast and reliable way to:
+The tool enables **direct, low-level interaction** with Modbus-enabled devices such as PLCs, RTUs, and controllers. It provides a fast and reliable way to:
 
 * Read register values in real time
 * Write values for testing and validation
@@ -73,7 +73,7 @@ A packaged executable (`.exe`) will be provided for end users, allowing the appl
 
 ## 🧱 Project Structure
 
-```id="c8q2b1"
+```id="m1xk9c"
 modscope/
 ├── assets/        # UI resources (icons, images)
 ├── config/        # Device configuration files
@@ -91,14 +91,14 @@ modscope/
 
 Clone the repository:
 
-```id="y9t3k7"
+```id="9d8x2f"
 git clone https://github.com/CraftParking/ModScope.git
 cd ModScope
 ```
 
 Install dependencies:
 
-```id="m3p6d2"
+```id="0y6v3k"
 pip install -r requirements.txt
 ```
 
@@ -110,7 +110,7 @@ At the current stage, ModScope is in core development.
 
 Run the test script:
 
-```id="h1z8q4"
+```id="l7p2h5"
 python tests/test_modbus.py
 ```
 
@@ -148,75 +148,75 @@ Update the IP address and unit ID inside the script according to your Modbus dev
 
 ---
 
+## 🛣️ Roadmap
+
+* ✅ Project structure setup
+* ✅ Basic Modbus TCP communication (read/write testing)
+* ❌ Modular core implementation
+* ❌ Support for all Modbus function codes
+* ❌ Continuous monitoring mode
+* ❌ GUI completion and integration
+* ❌ Packaged executable (.exe)
+* ❌ Device configuration profiles
+* ❌ Logging and export features
+* ❌ Modbus RTU (Serial) support
+* ❌ Advanced diagnostics and error handling
+
+---
+
 ## 🔮 Future Implementations
 
 The following features are planned for long-term expansion of ModScope:
 
 ### 📊 Data & Visualization
 
-* [ ] Data logging (CSV / file-based logging)
-* [ ] Database logging (SQL integration)
-* [ ] Graphical representation of register values (live trends)
-* [ ] Historical data analysis
+* Data logging (CSV / file-based logging)
+* Database logging (SQL integration)
+* Graphical representation of register values (live trends)
+* Historical data analysis
 
 ### 📡 Communication & Protocols
 
-* [ ] Modbus RTU (Serial RS-232 / RS-485) support
-* [ ] Multi-device communication
-* [ ] MQTT bridge integration (Modbus → MQTT)
-* [ ] OPC UA compatibility layer
+* Modbus RTU (Serial RS-232 / RS-485) support
+* Multi-device communication
+* MQTT bridge integration (Modbus → MQTT)
+* OPC UA compatibility layer
 
 ### 🖥️ UI/UX Enhancements
 
-* [ ] Advanced table view with sorting and filtering
-* [ ] Tag-based system (user-defined names for registers)
-* [ ] Dark/light theme support
-* [ ] Custom dashboards for selected registers
+* Advanced table view with sorting and filtering
+* Tag-based system (user-defined names for registers)
+* Dark/light theme support
+* Custom dashboards for selected registers
 
 ### ⚙️ Diagnostics & Tools
 
-* [ ] Modbus packet inspection (raw frame view)
-* [ ] Error decoding and detailed diagnostics
-* [ ] Connection stability monitoring
-* [ ] Register scan / auto-detection
+* Modbus packet inspection (raw frame view)
+* Error decoding and detailed diagnostics
+* Connection stability monitoring
+* Register scan / auto-detection
 
 ### 🧠 Smart Features
 
-* [ ] Threshold-based alerts and warnings
-* [ ] Auto polling scheduler
-* [ ] Profile-based device configurations
-* [ ] Scriptable test sequences (automation testing)
+* Threshold-based alerts and warnings
+* Auto polling scheduler
+* Profile-based device configurations
+* Scriptable test sequences (automation testing)
 
 ### 📦 Deployment & Integration
 
-* [ ] Windows executable (.exe) distribution
-* [ ] Linux support
-* [ ] Portable version (no installation required)
-* [ ] Web-based interface (browser-accessible tool)
-* [ ] Android companion application (monitoring/control)
-* [ ] Plugin/extension system
-
----
-
-## 🛣️ Roadmap
-
-* [x] Project structure setup
-* [x] Basic Modbus TCP communication (read/write testing)
-* [ ] Modular core implementation
-* [ ] Support for all Modbus function codes
-* [ ] Continuous monitoring mode
-* [ ] GUI completion and integration
-* [ ] Packaged executable (.exe)
-* [ ] Device configuration profiles
-* [ ] Logging and export features
-* [ ] Modbus RTU (Serial) support
-* [ ] Advanced diagnostics and error handling
+* Windows executable (.exe) distribution
+* Linux support
+* Portable version (no installation required)
+* Web-based interface (browser-accessible tool)
+* Android companion application (monitoring/control)
+* Plugin/extension system
 
 ---
 
 ## 📌 Project Status
 
-ModScope is currently under active development. Core communication features are being implemented and tested, with UI and advanced functionality being developed alongside.
+ModScope is currently under active development. Core communication features are implemented and being refined, with UI and advanced features under active development.
 
 The project is being built incrementally with a focus on:
 
