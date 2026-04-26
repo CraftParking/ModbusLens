@@ -1,153 +1,276 @@
+# ModbusLens
+
 <p align="center">
   <img src="assets/modbuslens_banner.png" alt="ModbusLens Banner" width="100%">
 </p>
 
 <h1 align="center">ModbusLens</h1>
-<p align="center">Lightweight and powerful Modbus diagnostic tool</p>
+<p align="center">Professional Modbus TCP Client with Advanced Diagnostics</p>
 
 ---
 
 ## 🚀 Overview
 
-ModbusLens is a Modbus communication and diagnostic utility designed for engineers, technicians, and students working with industrial automation systems.
+ModbusLens is a comprehensive Modbus communication and diagnostic utility designed for industrial automation engineers, technicians, and system integrators. It provides a modern, feature-rich interface for testing, monitoring, and debugging Modbus TCP networks.
 
-The tool enables **direct, low-level interaction** with Modbus-enabled devices such as PLCs, RTUs, and controllers. It provides a fast and reliable way to:
+### Key Highlights
 
-* Read register values in real time
-* Write values for testing and validation
-* Verify communication between systems
-* Diagnose and debug Modbus-related issues
-
-Unlike full-scale SCADA systems, ModbusLens focuses purely on **testing, validation, and diagnostics**, keeping the application lightweight and efficient.
+- **🎨 Modern Dark UI**: Professional interface with animated status indicators
+- **📊 Real-time Monitoring**: Live data visualization with customizable polling intervals
+- **🔧 Advanced Operations**: Complete read/write support for all Modbus function codes
+- **📈 Data Visualization**: Tabular monitoring with timestamped data
+- **💾 Session Management**: Save/load connection profiles and monitoring sessions
+- **📤 Data Export**: Export monitoring data in multiple formats
+- **🔍 Network Diagnostics**: Built-in network analysis and troubleshooting tools
+- **🐍 Scripting Console**: Python scripting support for automation
+- **🎯 Connection History**: Quick access to previously used connections
 
 ---
 
 ## 📦 Installation
 
-1. Clone or download the repository
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+### Requirements
+
+- Python 3.8+
+- PySide6 (Qt for Python)
+- pymodbus
+
+### Quick Install
+
+```bash
+# Clone the repository
+git clone https://github.com/CraftParking/ModbusLens.git
+cd ModbusLens
+
+# Install dependencies
+pip install -r requirements.txt
+```
 
 ---
 
 ## 🎯 Usage
 
-ModbusLens supports both Command Line Interface (CLI) and Graphical User Interface (GUI) modes.
+### GUI Mode (Recommended)
 
-### CLI Mode (Default)
-```bash
-python main.py
-```
-
-### GUI Mode
 ```bash
 python main.py --gui
 ```
 
+### CLI Mode
+
+```bash
+python main.py
+```
+
 ### Help
+
 ```bash
 python main.py --help
 ```
 
 ---
 
-## ✨ Key Capabilities
+## ✨ Features
 
-ModbusLens supports all major Modbus TCP function codes:
+### 🔗 Connection Management
 
-### 🔹 Read Operations
+- **Status Indicators**: Animated color-coded connection status (Red=Disconnected, Green=Connected, Yellow=Connecting)
+- **Connection History**: Quick access to last 10 connections
+- **Profile Management**: Save and load connection profiles
+- **Auto-reconnect**: Configurable automatic reconnection on failure
 
-* Read Coils (FC01) - Digital outputs
-* Read Discrete Inputs (FC02) - Digital inputs
-* Read Holding Registers (FC03) - Read/write registers
-* Read Input Registers (FC04) - Read-only registers
+### 📖 Read Operations
 
-### 🔹 Write Operations
+- **Read Coils (FC01)**: Digital outputs status
+- **Read Discrete Inputs (FC02)**: Digital inputs status
+- **Read Holding Registers (FC03)**: Read/write register values
+- **Read Input Registers (FC04)**: Read-only register values
 
-* Write Single Coil (FC05) - Set digital output
-* Write Single Register (FC06) - Set register value
-* Write Multiple Coils (FC15) - Set multiple digital outputs
-* Write Multiple Registers (FC16) - Set multiple register values
+### ✏️ Write Operations
 
-### 🔹 Core Features
+- **Write Single Coil (FC05)**: Set individual digital output
+- **Write Single Register (FC06)**: Set individual register value
+- **Write Multiple Coils (FC15)**: Set multiple digital outputs
+- **Write Multiple Registers (FC16)**: Set multiple register values
 
-* Direct register-level access
-* Real-time polling and monitoring
-* Connection status handling
-* Error detection and reporting
-* Lightweight execution
-* Cross-platform compatibility
+### 📊 Real-time Monitoring
 
----
+- **Live Data Table**: Real-time updates with timestamps
+- **Customizable Polling**: Adjustable update intervals (100ms - 10s)
+- **Data Types**: Automatic detection and display formatting
+- **Address Ranges**: Monitor specific register ranges
+- **Pause/Resume**: Control monitoring without disconnecting
 
-## 🖥️ Application Design
+### 🛠️ Advanced Tools
 
-ModbusLens follows a modular architecture:
+- **Scripting Console**: Python REPL for automation and testing
+- **Network Diagnostics**: Ping, port scanning, and connectivity tests
+- **Data Export**: CSV, JSON, and XML export formats
+- **Session Management**: Save/load complete monitoring sessions
+- **Data Templates**: Predefined register layouts for common devices
 
-### 1. Core Engine (Python)
+### 🎨 User Interface
 
-Responsible for:
-
-* Modbus communication
-* Request/response handling
-* Data validation and error handling
-
-### 2. Graphical Interface (PySide6)
-
-Provides:
-
-* User-friendly interaction
-* Data visualization
-* Input controls for read/write operations
-
-A packaged executable (`.exe`) will be provided for end users, allowing the application to run without requiring a Python environment.
+- **Dark Theme**: Modern professional appearance
+- **Responsive Layout**: Adapts to window resizing
+- **Tabbed Operations**: Organized read/write/monitoring sections
+- **Status Bar**: Connection status and application information
+- **Menu System**: Comprehensive menu with all features
+- **Keyboard Shortcuts**: Efficient operation with hotkeys
 
 ---
 
-## 🧱 Project Structure
+## 🖥️ Application Architecture
+
+### Core Components
+
+1. **Modbus Client** (`core/modbus_client.py`)
+   - Low-level Modbus TCP communication
+   - Connection management and error handling
+   - Function code implementations
+
+2. **GUI Framework** (`gui/main_window.py`)
+   - PySide6-based modern interface
+   - Status indicators and animations
+   - Event-driven architecture
+
+3. **Configuration System** (`config/`)
+   - Connection profiles
+   - User preferences
+   - Session data
+
+### Project Structure
 
 ```
 modbuslens/
-├── assets/        # UI resources (icons, images)
-├── config/        # Device configuration files
-├── core/          # Modbus communication logic
-├── gui/           # PySide6 GUI implementation
-├── tests/         # Testing scripts and experiments
-├── utils/         # Helper utilities
-├── main.py        # Application entry point
-├── requirements.txt
+├── assets/              # UI resources and icons
+├── config/              # Configuration files and profiles
+├── core/
+│   ├── __init__.py
+│   └── modbus_client.py # Modbus communication core
+├── gui/
+│   ├── __init__.py
+│   └── main_window.py   # Main GUI application
+├── tests/
+│   ├── modbus_test.py   # Basic testing
+│   └── README.md
+├── utils/
+│   └── __init__.py
+├── main.py              # Application entry point
+├── requirements.txt     # Python dependencies
+└── README.md           # This file
 ```
 
 ---
 
-## ⚙️ Installation (Development)
+## 🔧 Configuration
 
-Clone the repository:
+### Connection Profiles
 
+Create connection profiles in `config/profiles/` for quick access to frequently used devices:
+
+```json
+{
+  "name": "PLC Controller",
+  "ip": "192.168.1.100",
+  "port": 502,
+  "unit_id": 1,
+  "description": "Main production PLC"
+}
 ```
-git clone https://github.com/CraftParking/ModbusLens.git
-cd ModbusLens
-```
 
-Install dependencies:
+### Monitoring Templates
 
-```
-pip install -r requirements.txt
+Define monitoring templates in `config/templates/` for common device types:
+
+```json
+{
+  "name": "Siemens S7-1200",
+  "registers": [
+    {"address": 0, "type": "coil", "description": "Start Button"},
+    {"address": 40001, "type": "holding", "description": "Speed Setpoint"}
+  ]
+}
 ```
 
 ---
 
-## ▶️ Current Usage
+## 🐛 Troubleshooting
 
-At the current stage, ModbusLens is in core development.
+### Common Issues
 
+1. **Connection Failed**
+   - Verify IP address and port
+   - Check firewall settings
+   - Ensure Modbus device is powered and configured
+
+2. **GUI Not Starting**
+   - Install PySide6: `pip install PySide6`
+   - Check Python version compatibility
+
+3. **Permission Errors**
+   - Run as administrator for system ports (< 1024)
+   - Check network permissions
+
+### Network Diagnostics
+
+Use the built-in network diagnostics tool to:
+- Test connectivity to Modbus devices
+- Check port availability
+- Measure response times
+- Identify network issues
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+### Development Setup
+
+```bash
+# Install development dependencies
+pip install -r requirements-dev.txt
+
+# Run tests
+python -m pytest tests/
+
+# Run linting
+python -m flake8 gui/ core/
 ```
-python tests/test_modbus.py
-```
 
-Update the IP address and unit ID inside the script according to your Modbus device.
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- Built with [PySide6](https://wiki.qt.io/Qt_for_Python) (Qt for Python)
+- Modbus protocol implementation using [pymodbus](https://github.com/riptideio/pymodbus)
+- Icons and assets from [Flaticon](https://www.flaticon.com/)
+
+---
+
+## 📞 Support
+
+For support and questions:
+- Open an issue on GitHub
+- Check the documentation
+- Review the troubleshooting section
+
+---
+
+*ModbusLens - Making Modbus diagnostics simple and powerful.*
 
 ---
 
