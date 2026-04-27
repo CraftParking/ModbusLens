@@ -76,6 +76,51 @@ class ModbusGUI(QMainWindow):
         self._connect_signals()
         self.diagnostics_dialogs.setup_diagnostics_widgets()  # Initialize diagnostics widgets early
         self._load_settings()
+        
+        # Initialize network interface selection
+        self.selected_network_interface = None
+    
+    def on_network_interface_changed(self, display_name):
+        """Handle network interface selection change."""
+        try:
+            from .network.network_diagnostics import get_network_interfaces
+            interfaces = get_network_interfaces()
+            
+            for interface in interfaces:
+                if interface['display_name'] == display_name:
+                    self.selected_network_interface = interface
+                    # Auto-fill IP with interface's IPv4 address
+                    self.ip_input.setText(interface['ipv4'])
+                    self._log(f"Selected network interface: {interface['name']} - {interface['ipv4']}")
+                    break
+        except ImportError:
+            self._log("Network interface selection not available")
+    
+    def refresh_network_interfaces(self):
+        """Refresh the list of network interfaces in main window."""
+        try:
+            from .network.network_diagnostics import get_network_interfaces
+            
+            # Save current selection
+            current_name = self.network_interface_combo.currentText()
+            
+            # Refresh interfaces
+            interfaces = get_network_interfaces()
+            
+            # Update combo box
+            self.network_interface_combo.clear()
+            for interface in interfaces:
+                self.network_interface_combo.addItem(interface['display_name'], interface['name'])
+            
+            # Try to restore previous selection
+            index = self.network_interface_combo.findText(current_name)
+            if index >= 0:
+                self.network_interface_combo.setCurrentIndex(index)
+            
+            self._log(f"Network interfaces refreshed. Found {len(interfaces)} interfaces.")
+            
+        except ImportError:
+            self._log("Network interface refresh not available")
 
     def _setup_window(self):
         """Setup main window properties."""
@@ -260,6 +305,36 @@ class ModbusGUI(QMainWindow):
 
         layout.addLayout(inputs_layout)
 
+        # Network Interface Selection
+        interface_layout = QHBoxLayout()
+        interface_layout.addWidget(QLabel("Network Interface:"))
+        
+        self.network_interface_combo = QComboBox()
+        self.network_interface_combo.setMinimumWidth(250)
+        self.network_interface_combo.setStyleSheet(self._get_input_style())
+        
+        # Populate network interfaces
+        try:
+            from .network.network_diagnostics import get_network_interfaces
+            interfaces = get_network_interfaces()
+            for interface in interfaces:
+                self.network_interface_combo.addItem(interface['display_name'], interface['name'])
+        except ImportError:
+            # Fallback if network_diagnostics not available
+            self.network_interface_combo.addItem("Default Interface", "default")
+        
+        self.network_interface_combo.currentTextChanged.connect(self.on_network_interface_changed)
+        interface_layout.addWidget(self.network_interface_combo)
+        
+        # Refresh button
+        refresh_interface_btn = QPushButton("Refresh")
+        refresh_interface_btn.setStyleSheet(self._get_button_style())
+        refresh_interface_btn.clicked.connect(self.refresh_network_interfaces)
+        refresh_interface_btn.setMaximumWidth(80)
+        interface_layout.addWidget(refresh_interface_btn)
+        
+        layout.addLayout(interface_layout)
+
         # Control buttons
         buttons_layout = QVBoxLayout()
         buttons_layout.setSpacing(10)
@@ -350,6 +425,9 @@ class ModbusGUI(QMainWindow):
 
         # Monitoring tab
         self._setup_monitoring_tab()
+        
+        # Connect tab change signal for interlock
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
         parent_layout.addWidget(self.tab_widget)
 
@@ -369,6 +447,7 @@ class ModbusGUI(QMainWindow):
 
         self.tag_start_monitoring_btn = QPushButton("Start Monitoring")
         self.tag_start_monitoring_btn.setStyleSheet(self._get_button_style())
+        self.tag_start_monitoring_btn.setEnabled(False)  # Initially disabled until connection
         control_layout.addWidget(self.tag_start_monitoring_btn)
 
         self.tag_stop_monitoring_btn = QPushButton("Stop Monitoring")
@@ -987,20 +1066,106 @@ class ModbusGUI(QMainWindow):
             # STRICT: Always disable monitoring checkbox during connection
             if hasattr(self, 'address_table_widget'):
                 self.address_table_widget.monitoring_checkbox.setEnabled(False)
+                self.address_table_widget.interval_input.setEnabled(False)
+                # Disable all address table controls when connecting
+                self.address_table_widget.function_combo.setEnabled(False)
+                self.address_table_widget.address_input.setEnabled(False)
+                self.address_table_widget.count_input.setEnabled(False)
+                self.address_table_widget.create_btn.setEnabled(False)
             return
         
         self.connect_btn.setEnabled(not connected)
         self.disconnect_btn.setEnabled(connected)
         
-        # STRICT: Only enable monitoring checkbox when there's an active connection
+        # STRICT: Disable all functions when there is no Modbus connection
         if hasattr(self, 'address_table_widget'):
             self.address_table_widget.monitoring_checkbox.setEnabled(connected)
+            # Enable interval input only when connected and monitoring is checked
+            self.address_table_widget.interval_input.setEnabled(connected and self.address_table_widget.monitoring_checkbox.isChecked())
+            
+            # Disable/enable all address table controls based on connection
+            self.address_table_widget.function_combo.setEnabled(connected)
+            self.address_table_widget.address_input.setEnabled(connected)
+            self.address_table_widget.count_input.setEnabled(connected)
+            self.address_table_widget.create_btn.setEnabled(connected)
+            
             # If disconnected, uncheck and disable monitoring
             if not connected and self.address_table_widget.monitoring_checkbox.isChecked():
                 self.address_table_widget.monitoring_checkbox.setChecked(False)
+        
+        # Also disable tag monitoring controls when not connected
+        if hasattr(self, 'tag_start_monitoring_btn'):
+            self.tag_start_monitoring_btn.setEnabled(connected)
+        if hasattr(self, 'tag_stop_monitoring_btn'):
+            self.tag_stop_monitoring_btn.setEnabled(False)
 
+    def on_tab_changed(self, index):
+        """Handle tab change to implement smart monitoring interlock."""
+        try:
+            # Get the current tab text
+            tab_text = self.tab_widget.tabText(index)
+            self._log(f"Switched to tab: {tab_text}")
+            
+            # Smart interlock: auto-disable instead of stopping all monitoring
+            if tab_text == "Address Table":
+                # Auto-stop tag monitoring when going to address table
+                if hasattr(self, 'tag_start_monitoring_btn'):
+                    if not self.tag_start_monitoring_btn.isEnabled():
+                        # Tag monitoring is active, stop it
+                        self.tag_stop_monitoring_btn.click()
+                
+                # Enable address table monitoring controls if connected
+                if hasattr(self, 'address_table_widget'):
+                    if hasattr(self, 'modbus') and self.modbus and self.modbus.is_connected():
+                        self.address_table_widget.monitoring_checkbox.setEnabled(True)
+                        # Keep interval input state based on checkbox
+                        self.address_table_widget.interval_input.setEnabled(self.address_table_widget.monitoring_checkbox.isChecked())
+            
+            elif tab_text == "Monitoring":
+                # Auto-disable live monitoring when going to tags tab
+                if hasattr(self, 'address_table_widget'):
+                    if self.address_table_widget.monitoring_checkbox.isChecked():
+                        # Uncheck to disable live monitoring
+                        self.address_table_widget.monitoring_checkbox.setChecked(False)
+                    # Keep checkbox enabled but unchecked
+                    if hasattr(self, 'modbus') and self.modbus and self.modbus.is_connected():
+                        self.address_table_widget.monitoring_checkbox.setEnabled(True)
+                    else:
+                        self.address_table_widget.monitoring_checkbox.setEnabled(False)
+                    self.address_table_widget.interval_input.setEnabled(False)
+                
+                # Enable tag monitoring controls
+                if hasattr(self, 'tag_start_monitoring_btn'):
+                    if hasattr(self, 'modbus') and self.modbus and self.modbus.is_connected():
+                        self.tag_start_monitoring_btn.setEnabled(True)
+                
+        except Exception as e:
+            self._log(f"Error in tab change: {e}", "ERROR")
+    
+    def stop_all_monitoring(self):
+        """Stop all monitoring systems."""
+        try:
+            # Stop address table monitoring
+            if hasattr(self, 'address_table_widget'):
+                if self.address_table_widget.monitoring_checkbox.isChecked():
+                    self.address_table_widget.monitoring_checkbox.setChecked(False)
+                self.address_table_widget.monitoring_checkbox.setEnabled(False)
+                self.address_table_widget.interval_input.setEnabled(False)
+                self.address_table_widget.stop_monitoring()
+            
+            # Stop tag monitoring
+            if hasattr(self, 'tag_start_monitoring_btn'):
+                if self.tag_start_monitoring_btn.isEnabled():
+                    self.tag_start_monitoring_btn.click()
+            
+            # Stop main monitoring
+            if self.monitoring_active:
+                self._stop_monitoring()
+                
+        except Exception as e:
+            self.log(f"Error stopping all monitoring: {e}", "ERROR")
+    
     def _load_connection_from_history(self, connection_string):
-        """Load connection parameters from history."""
         if not connection_string or ":" not in connection_string:
             return
 
@@ -1606,9 +1771,16 @@ class ModbusGUI(QMainWindow):
         return left["start"] <= right["end"] and right["start"] <= left["end"]
 
     def _start_monitoring(self):
-        """Start real-time data monitoring."""
+        """Start real-time data monitoring with interlock."""
         if not self._check_connection():
             return
+
+        # Auto-turn off address table monitoring when starting tag monitoring
+        if hasattr(self, 'address_table_widget'):
+            if self.address_table_widget.monitoring_checkbox.isChecked():
+                # Address table monitoring is active, turn it off
+                self.address_table_widget.monitoring_checkbox.setChecked(False)
+                self._log("Auto-turned off address table monitoring")
 
         tags = self._get_monitoring_tags()
         read_tags = [tag for tag in tags if tag["mode"] == "Read"]
@@ -1734,9 +1906,6 @@ class ModbusGUI(QMainWindow):
         # Check if diagnostics results table exists
         if hasattr(self, 'diagnostics_results_table'):
             self.diagnostics_results_table.setRowCount(0)
-        # Check if main monitoring table exists (for backward compatibility)
-        if hasattr(self, 'monitoring_table'):
-            self.monitoring_table.setRowCount(0)
         if self.results_window is not None:
             self._sync_results_window()
 
