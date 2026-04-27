@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QCheckBox
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QCheckBox, QTableWidget, QHeaderView, QAbstractItemView
 from PySide6.QtCore import Qt
 
 
@@ -51,15 +51,40 @@ class DiagnosticsDialogs:
             
             layout = QVBoxLayout(self.diagnostics_dialog)
             
-            # Results table (using the existing diagnostics_results_table)
-            if hasattr(self.parent, 'diagnostics_results_table'):
-                layout.addWidget(self.parent.diagnostics_results_table)
+            # Create results table if it doesn't exist
+            if not hasattr(self.parent, 'diagnostics_results_table'):
+                self.parent.diagnostics_results_table = QTableWidget()
+                self.parent.diagnostics_results_table.setColumnCount(8)
+                self.parent.diagnostics_results_table.setHorizontalHeaderLabels([
+                    "Tag Name", "Mode", "Type", "Address", "Read Value", "Write Value", "Comment", "Timestamp"
+                ])
+                self.parent.diagnostics_results_table.setAlternatingRowColors(True)
+                self.parent.diagnostics_results_table.setSortingEnabled(False)
+                self.parent.diagnostics_results_table.setSelectionBehavior(QTableWidget.SelectRows)
+                self.parent.diagnostics_results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                self.parent.diagnostics_results_table.setStyleSheet("""
+                    QTableWidget {
+                        background-color: #FFFFFF;
+                        color: #000000;
+                        gridline-color: #D0D0D0;
+                        border: 1px solid #CCCCCC;
+                    }
+                    QHeaderView::section {
+                        background-color: #E9E9E9;
+                        color: #000000;
+                        border: 1px solid #CCCCCC;
+                        padding: 6px;
+                        font-weight: bold;
+                    }
+                """)
+            
+            layout.addWidget(self.parent.diagnostics_results_table)
             
             # Buttons
             button_layout = QHBoxLayout()
             clear_btn = QPushButton("Clear Results")
             clear_btn.setStyleSheet(self.parent._get_button_style())
-            clear_btn.clicked.connect(self.parent._clear_diagnostics_results)
+            clear_btn.clicked.connect(self.clear_diagnostics_results)
             button_layout.addWidget(clear_btn)
             
             close_btn = QPushButton("Close")
@@ -234,6 +259,12 @@ class DiagnosticsDialogs:
             self.parent.diagnostics_data_output.clear()
         if hasattr(self.parent, 'data_output'):
             self.parent.data_output.clear()
+
+    def clear_diagnostics_results(self):
+        """Clear diagnostics results."""
+        if hasattr(self.parent, 'diagnostics_results_table'):
+            self.parent.diagnostics_results_table.setRowCount(0)
+        self.parent._log("Diagnostics results cleared")
 
     def clear_all_diagnostics_logs(self):
         """Clear all diagnostics data."""
