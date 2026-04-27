@@ -239,6 +239,62 @@ class AdvancedDiagnostics:
             'exception_codes': {}
         }
 
+    def toggle_advanced_diagnostics(self, checked):
+        """Toggle advanced diagnostics mode."""
+        self.advanced_diagnostics = checked
+        mode = "enabled" if checked else "disabled"
+        
+    def show_statistics_dialog(self):
+        """Show statistics dialog."""
+        # This method will be called from the main window
+        # We need to create the dialog here since we don't have access to parent
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QHBoxLayout, QPushButton
+        
+        stats_dialog = QDialog()
+        stats_dialog.setWindowTitle("Modbus Communication Statistics")
+        stats_dialog.setGeometry(300, 300, 600, 500)
+        
+        layout = QVBoxLayout(stats_dialog)
+        
+        # Title
+        title = QLabel("Modbus Communication Statistics")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #333333; margin-bottom: 10px;")
+        layout.addWidget(title)
+        
+        # Statistics content
+        stats_text = QTextEdit()
+        stats_text.setReadOnly(True)
+        stats_text.setStyleSheet("""
+            QTextEdit {
+                background-color: #f8f9fa;
+                color: #333333;
+                border: 1px solid #dee2e6;
+                border-radius: 6px;
+                padding: 10px;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 12px;
+            }
+        """)
+        
+        # Generate statistics report
+        stats_report = self.generate_statistics_report()
+        stats_text.setPlainText(stats_report)
+        layout.addWidget(stats_text)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        reset_btn = QPushButton("Reset Statistics")
+        reset_btn.clicked.connect(self.reset_statistics)
+        button_layout.addWidget(reset_btn)
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(stats_dialog.close)
+        button_layout.addWidget(close_btn)
+        
+        layout.addLayout(button_layout)
+        stats_dialog.exec()
+
     def update_request_stats(self, success=True, response_time=None, function_code=None, exception_code=None):
         """Update statistics for a request."""
         self.modbus_stats['total_requests'] += 1
