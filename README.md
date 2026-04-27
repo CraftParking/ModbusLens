@@ -29,13 +29,12 @@ To provide industrial automation engineers with a reliable, feature-rich Modbus 
 ### 🔧 **Advanced Modbus Communication**
 - **Complete Modbus TCP Implementation**: Full support for all standard function codes
 - **Real-time Operations**: Immediate write operations without monitoring requirements
-- **Smart Interlock System**: Ensures only one monitoring system operates at a time
 - **Connection Management**: Robust connection handling with automatic reconnection
 - **Write Function Support**: All write operations work independently without live monitoring
 
 ### 🖥️ **Professional GUI Interface**
 - **Modern PySide6 Interface**: Clean, responsive, and professional design
-- **ModScan-like Address Table**: Familiar interface for industrial engineers
+- **Address Table**: Configurable address ranges and function selection
 - **Real-time Monitoring**: Live data updates with configurable intervals
 - **Tag Management System**: Excel-style tag configuration and management
 - **Network Interface Selection**: Choose specific network adapters for communication
@@ -100,7 +99,7 @@ python gui_main.py
 #### **Connection Section**
 - **Network Interface Selection**: Choose specific network adapter
 - **IP Configuration**: Target device IP address
-- **Port Configuration**: Modbus TCP port (default: 502)
+- **Port Configuration**: Modbus TCP port (default: 1700)
 - **Unit ID**: Modbus device identifier (1-247)
 - **Connection History**: Quick access to recent connections
 
@@ -141,7 +140,7 @@ ModbusLens/
 ├── 📁 gui/
 │   ├── 📁 main_window.py           # Main GUI application
 │   ├── 📁 widgets/
-│   │   ├── 📁 address_table.py     # ModScan-like interface
+│   │   ├── 📁 address_table.py     # Address table interface
 │   │   ├── 📁 monitoring_window.py # Results display
 │   │   └── 📁 status_indicator.py  # Connection status
 │   ├── 📁 monitoring/
@@ -175,8 +174,8 @@ ModbusLens/
 ### ✅ **Completed Features**
 - [x] Full Modbus TCP client implementation
 - [x] Professional GUI with modern design
-- [x] ModScan-like address table interface
-- [x] Real-time monitoring with interlock system
+- [x] Address table interface
+- [x] Real-time monitoring system
 - [x] Advanced network diagnostics
 - [x] Packet capture and analysis
 - [x] ARP device discovery with vendor lookup
@@ -198,90 +197,37 @@ ModbusLens/
 
 ## 🚀 Roadmap
 
-### 🎯 **Version 2.0 (Q2 2024)**
-- **Enhanced Data Management**
-  - CSV/Excel export capabilities
-  - Historical data logging
-  - Data visualization charts
-  - Custom report generation
+### 🎯 **Future Development**
 
-- **Advanced Scripting**
-  - Python scripting integration
-  - Automated test sequences
-  - Custom function development
-  - Batch operation support
+#### **Enhanced Data Management**
+- CSV/Excel export capabilities
+- Historical data logging
+- Data visualization charts
+- Custom report generation
 
-### 🎯 **Version 2.1 (Q3 2024)**
-- **Multi-Protocol Support**
-  - Modbus RTU (Serial)
-  - Modbus ASCII
-  - Multi-device management
-  - Device topology mapping
+#### **Advanced Scripting**
+- Python scripting integration
+- Automated test sequences
+- Custom function development
+- Batch operation support
 
-### 🎯 **Version 3.0 (Q4 2024)**
-- **Enterprise Features**
-  - User management and permissions
-  - Audit logging
-  - Remote monitoring capabilities
-  - API integration for third-party tools
+#### **Multi-Protocol Support**
+- Modbus RTU (Serial)
+- Modbus ASCII
+- Multi-device management
+- Device topology mapping
 
----
-
-## 🏭 Industrial Use Cases
-
-### 🏗️ **Manufacturing**
-- Production line monitoring and control
-- Equipment parameter adjustment
-- Quality control data collection
-- Preventive maintenance scheduling
-
-### ⚡ **Energy Management**
-- Power consumption monitoring
-- Substation equipment control
-- Renewable energy system integration
-- Load balancing optimization
-
-### 🏢 **Building Automation**
-- HVAC system control
-- Lighting management
-- Security system integration
-- Energy efficiency monitoring
-
-### 🔬 **Research & Education**
-- Industrial automation training
-- Protocol analysis and research
-- Student laboratory experiments
-- Technical demonstrations
-
----
-
-## ⚠️ Safety & Compliance
-
-### 🚨 **Critical Safety Notice**
-ModbusLens provides direct read/write access to industrial control systems. **Improper usage may cause:**
-- Unintended machine operation
-- Production line disruption
-- Equipment damage
-- Safety system interference
-- Financial losses
-
-### 🛡️ **Safety Guidelines**
-- **Test Environment**: Always test in non-production environments first
-- **Register Documentation**: Understand device register maps before writing
-- **Backup Systems**: Ensure proper backup and recovery procedures
-- **Authorization**: Use only with proper system authorization
-- **Professional Supervision**: Use under qualified personnel supervision
-
-### 📋 **Compliance**
-- **Industrial Standards**: Designed to comply with IEC 61131 standards
-- **Security Best Practices**: Implements secure communication practices
-- **Documentation**: Comprehensive logging for audit trails
+#### **Enterprise Features**
+- User management and permissions
+- Audit logging
+- Remote monitoring capabilities
+- API integration for third-party tools
 
 ---
 
 ## 🤝 Contributing
 
-We welcome contributions from the industrial automation community! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+We welcome contributions from the community! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
 ### 🐛 **Bug Reports**
 - Use GitHub Issues for bug reports
@@ -291,88 +237,28 @@ We welcome contributions from the industrial automation community! Please see ou
 ### 💡 **Feature Requests**
 - Submit feature requests via GitHub Issues
 - Provide use case descriptions
-- Consider industrial application scenarios
-
----
-
-## 📞 Support
-
-### 📧 **Technical Support**
-- **Documentation**: Comprehensive user manual and API reference
-- **Community**: GitHub Discussions for community support
-- **Issues**: GitHub Issues for bug reports and feature requests
-
-### 🏢 **Enterprise Support**
-- **Priority Support**: Available for enterprise customers
-- **Custom Development**: Tailored solutions for specific requirements
-- **Training**: On-site training and consultation services
 
 ---
 
 ## 📜 License
 
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
-
-### 📄 **License Summary**
-- ✅ Commercial use allowed
-- ✅ Modification allowed
-- ✅ Distribution allowed
-- ✅ Private use allowed
-- ❌ Liability and warranty disclaimed
+This project is licensed under **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
 
 ---
 
 ## 👥 Development Team
 
-### 🏭 **Lead Developer**
 **Alvin (CraftParking)**
-- Industrial Automation Specialist
-- Modbus Protocol Expert
-- GUI/UX Designer
+- Lead Developer
 
 ### 🤝 **Contributors**
-We thank all contributors who help make ModbusLens better for the industrial automation community.
+We thank all contributors who help make ModbusLens better for the community.
 
 ---
 
 ## 🙏 Acknowledgments
 
 - **Qt/PySide6 Team**: For the excellent GUI framework
-- **Industrial Automation Community**: For valuable feedback and suggestions
+- **Community**: For valuable feedback and suggestions
 - **Open Source Contributors**: For making this project possible
 - **Beta Testers**: For thorough testing and bug reports
-
----
-
-## 📈 Metrics & Statistics
-
-### 📊 **Project Health**
-- **Code Quality**: Maintained with strict coding standards
-- **Test Coverage**: Comprehensive test suite
-- **Documentation**: Complete API and user documentation
-- **Community**: Active user base and contributor community
-
-### 🏆 **Achievements**
-- **Professional Recognition**: Used by industrial automation professionals
-- **Educational Impact**: Adopted by technical institutions
-- **Global Usage**: Deployed in multiple countries
-- **Reliability**: Proven stability in industrial environments
-
----
-
-<div align="center">
-
-## 🏭 **Built for Industrial Automation Professionals**
-
-**ModbusLens** - Where Precision Meets Performance
-
-[![GitHub stars](https://img.shields.io/github/stars/your-username/ModbusLens?style=social)](https://github.com/your-username/ModbusLens/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/your-username/ModbusLens?style=social)](https://github.com/your-username/ModbusLens/network)
-[![GitHub issues](https://img.shields.io/github/issues/your-username/ModbusLens)](https://github.com/your-username/ModbusLens/issues)
-[![License](https://img.shields.io/github/license/your-username/ModbusLens)](https://github.com/your-username/ModbusLens/blob/main/LICENSE)
-
----
-
-*🔧 Empowering Industrial Automation Since 2024* 🏭
-
-</div>
