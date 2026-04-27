@@ -1,4 +1,5 @@
 import time
+from PySide6.QtWidgets import QTableWidget, QHeaderView, QAbstractItemView, QTableWidgetItem
 
 
 class MonitoringManager:
@@ -11,6 +12,7 @@ class MonitoringManager:
         self._monitoring_poll_in_progress = False
         self._monitoring_failure_count = 0
         self._monitoring_max_failures = 3
+        self._write_poll_in_progress = False
 
     def get_monitoring_tags(self):
         """Get all configured monitoring tags from the tag table."""
@@ -65,20 +67,37 @@ class MonitoringManager:
         cached_write_value = self._monitoring_write_value_cache.get(key, "")
         initial_write_value = write_value if write_value else cached_write_value
 
-        # Use diagnostics results table if main monitoring table doesn't exist
+        # Always use the diagnostics results table for monitoring data
         target_table = None
-        if hasattr(self.parent, 'monitoring_table'):
-            target_table = self.parent.monitoring_table
-        elif hasattr(self.parent, 'diagnostics_results_table'):
+        if hasattr(self.parent, 'diagnostics_results_table'):
             target_table = self.parent.diagnostics_results_table
-        
-        if target_table is None:
-            # For Tags monitoring, update the results window directly
-            if self.parent.results_window is not None:
-                self.parent.results_window.update_row(
-                    tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
-                )
-            return
+        else:
+            # Create the table if it doesn't exist
+            self.parent.diagnostics_results_table = QTableWidget()
+            self.parent.diagnostics_results_table.setColumnCount(8)
+            self.parent.diagnostics_results_table.setHorizontalHeaderLabels([
+                "Tag Name", "Mode", "Type", "Address", "Read Value", "Write Value", "Comment", "Timestamp"
+            ])
+            self.parent.diagnostics_results_table.setAlternatingRowColors(True)
+            self.parent.diagnostics_results_table.setSortingEnabled(False)
+            self.parent.diagnostics_results_table.setSelectionBehavior(QTableWidget.SelectRows)
+            self.parent.diagnostics_results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            self.parent.diagnostics_results_table.setStyleSheet("""
+                QTableWidget {
+                    background-color: #FFFFFF;
+                    color: #000000;
+                    gridline-color: #D0D0D0;
+                    border: 1px solid #CCCCCC;
+                }
+                QHeaderView::section {
+                    background-color: #E9E9E9;
+                    color: #000000;
+                    border: 1px solid #CCCCCC;
+                    padding: 6px;
+                    font-weight: bold;
+                }
+            """)
+            target_table = self.parent.diagnostics_results_table
             
         row_count = target_table.rowCount()
 
@@ -134,6 +153,7 @@ class MonitoringManager:
         finally:
             self.parent._updating_monitoring_table = False
 
+        # Also update the results window if it exists
         if self.parent.results_window is not None:
             self.parent.results_window.update_row(
                 tag_name, mode, data_type, address, read_value, write_value, comment, timestamp

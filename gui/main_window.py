@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QTableWidget, QHeaderView, QTableWidgetItem,
     QComboBox, QSpinBox, QTabWidget, QGroupBox, QStatusBar,
     QApplication, QMessageBox, QDialog, QTextEdit, QCheckBox,
-    QAbstractItemView, QFrame
+    QAbstractItemView, QFrame, QGridLayout
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QColor, QIcon
@@ -930,16 +930,7 @@ class ModbusGUI(QMainWindow):
 
     def _show_diagnostics_results(self):
         """Show diagnostics dialog with results data."""
-        if not hasattr(self, 'diagnostics_dialog'):
-            self.diagnostics_dialog = QDialog(self)
-            self.diagnostics_dialog.setWindowTitle("Diagnostics - Results Log")
-            self.diagnostics_dialog.setGeometry(200, 200, 800, 600)
-            
-            layout = QVBoxLayout(self.diagnostics_dialog)
-            
-            # Results table
-            self.diagnostics_results_table = QTableWidget()
-            self.diagnostics_results_table.setColumnCount(8)
+        self.diagnostics_dialogs.show_diagnostics_results()
 
     def _show_diagnostics_logs(self):
         """Show diagnostics dialog with communication logs."""
@@ -1205,44 +1196,9 @@ class ModbusGUI(QMainWindow):
             selected_rows.add(current_row)
         return selected_rows
 
-    def _get_monitoring_tags(self): 
-        tags = [] 
-        for row in range(self.monitoring_tag_table.rowCount()): 
-            name_widget = self.monitoring_tag_table.cellWidget(row, 0) 
-            mode_widget = self.monitoring_tag_table.cellWidget(row, 1) 
-            type_widget = self.monitoring_tag_table.cellWidget(row, 2) 
-            address_widget = self.monitoring_tag_table.cellWidget(row, 3) 
-            count_widget = self.monitoring_tag_table.cellWidget(row, 4) 
-            format_widget = self.monitoring_tag_table.cellWidget(row, 5)
-            comment_widget = self.monitoring_tag_table.cellWidget(row, 6) 
- 
-            if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, format_widget, comment_widget)): 
-                continue 
- 
-            name = name_widget.text().strip() or f"Tag {row + 1}" 
-            mode = mode_widget.currentText() 
-            tag_type = type_widget.currentText() 
-            address = address_widget.value() 
-            count = count_widget.value() 
-            value_format = format_widget.currentText() if hasattr(format_widget, "currentText") else "U16"
-            comment = comment_widget.text().strip() 
-            
-            # Skip empty rows - only include rows with a non-zero address or a name that's not the default
-            if address == 0 and name == f"Tag {row + 1}":
-                continue
-            
-            tags.append({ 
-                "row": row, 
-                "name": name, 
-                "mode": mode, 
-                "type": tag_type, 
-                "address": address, 
-                "count": count, 
-                "format": value_format,
-                "comment": comment, 
-            }) 
- 
-        return tags 
+    def _get_monitoring_tags(self):
+        """Get all configured monitoring tags from the tag table."""
+        return self.monitoring_manager.get_monitoring_tags() 
 
     def _create_operation_button(self, text, color):
         """Create a styled operation button."""
@@ -1286,7 +1242,7 @@ class ModbusGUI(QMainWindow):
         if not tag_name or not data_type or not address or mode != "Write":
             return
 
-        self._monitoring_write_value_cache[(tag_name, data_type, address)] = item.text()
+        self.monitoring_manager.update_write_value_cache((tag_name, data_type, address), item.text())
 
     def _on_read_data_type_changed(self, data_type):
         """Handle read data type selection change."""
@@ -2149,9 +2105,12 @@ class ModbusGUI(QMainWindow):
 
         self._clear_monitoring_results()
         self.monitoring_active = True
-        self._monitoring_failure_count = 0
-        self._monitoring_poll_in_progress = False
-        self._write_poll_in_progress = False
+        
+        # Initialize monitoring manager failure tracking
+        self.monitoring_manager._monitoring_failure_count = 0
+        self.monitoring_manager._monitoring_poll_in_progress = False
+        self.monitoring_manager._write_poll_in_progress = False
+        
         interval = self.tag_monitoring_interval.value() if hasattr(self, 'tag_monitoring_interval') else 1000
         self._restart_monitoring_timers(interval)
 
@@ -2209,8 +2168,10 @@ class ModbusGUI(QMainWindow):
         self.monitoring_active = False
         self.monitoring_timer.stop()
         self.write_poll_timer.stop()
-        self._monitoring_poll_in_progress = False
-        self._write_poll_in_progress = False
+        
+        # Reset monitoring manager state
+        self.monitoring_manager._monitoring_poll_in_progress = False
+        self.monitoring_manager._write_poll_in_progress = False
 
         # Update correct button references for Tags tab
         if hasattr(self, 'tag_start_monitoring_btn'):
@@ -2235,9 +2196,7 @@ class ModbusGUI(QMainWindow):
 
     def _clear_monitoring_results(self):
         """Clear monitoring results table."""
-        # Clear caches
-        self._monitoring_read_value_cache.clear()
-        self._monitoring_write_value_cache.clear()
+        self.monitoring_manager.clear_monitoring_results()
         
         # Check if diagnostics results table exists
         if hasattr(self, 'diagnostics_results_table'):
@@ -2285,56 +2244,7 @@ class ModbusGUI(QMainWindow):
 
     def _current_result_values(self):
         """Get current values from monitoring results."""
-        values = {}
-        # Check if main monitoring table exists
-        if hasattr(self, 'monitoring_table'):
-            for row in range(self.monitoring_table.rowCount()):
-                key = (
-                    self._table_item_text(self.monitoring_table, row, 0),
-                    self._table_item_text(self.monitoring_table, row, 1),
-                    self._table_item_text(self.monitoring_table, row, 2),
-                    self._table_item_text(self.monitoring_table, row, 3),
-                )
-                values[key] = {
-                    "read_value": self._table_item_text(self.monitoring_table, row, 4),
-                    "write_value": self._table_item_text(self.monitoring_table, row, 5),
-                    "timestamp": self._table_item_text(self.monitoring_table, row, 7),
-                }
-        # Check if diagnostics results table exists
-        elif hasattr(self, 'diagnostics_results_table'):
-            for row in range(self.diagnostics_results_table.rowCount()):
-                key = (
-                    self._table_item_text(self.diagnostics_results_table, row, 0),
-                    self._table_item_text(self.diagnostics_results_table, row, 1),
-                    self._table_item_text(self.diagnostics_results_table, row, 2),
-                    self._table_item_text(self.diagnostics_results_table, row, 3),
-                )
-                values[key] = {
-                    "read_value": self._table_item_text(self.diagnostics_results_table, row, 4),
-                    "write_value": self._table_item_text(self.diagnostics_results_table, row, 5),
-                    "timestamp": self._table_item_text(self.diagnostics_results_table, row, 7),
-                }
-        else:
-            # For Tags monitoring, use the cache
-            for key, read_value in self._monitoring_read_value_cache.items():
-                write_value = self._monitoring_write_value_cache.get(key, "")
-                # Convert key from (tag_name, data_type, address) to (tag_name, mode, data_type, address)
-                tag_name, data_type, address = key
-                # Find the tag mode from the monitoring tags
-                mode = "Read"  # Default to Read since we only cache read values
-                for tag in self._get_monitoring_tags():
-                    if tag["name"] == tag_name and str(tag["address"]) == address:
-                        mode = tag["mode"]
-                        break
-                
-                full_key = (tag_name, mode, data_type, address)
-                values[full_key] = {
-                    "read_value": read_value,
-                    "write_value": write_value,
-                    "timestamp": "",  # We don't store timestamps in cache
-                }
-        
-        return values
+        return self.monitoring_manager.get_current_result_values()
 
     def _table_item_text(self, table, row, column):
         item = table.item(row, column)
@@ -2342,78 +2252,7 @@ class ModbusGUI(QMainWindow):
 
     def _update_monitored_data(self):
         """Update monitored data in the table."""
-        if not self.modbus or not self.monitoring_active:
-            return
-        if self._monitoring_poll_in_progress:
-            self._log("Safety interlock: skipped monitor tick because previous poll is still running")
-            return
-
-        tags = [tag for tag in self._get_monitoring_tags() if tag["mode"] == "Read"]
-        if not tags:
-            return
-
-        self._monitoring_poll_in_progress = True
-        self.monitoring_timer.stop()
-        poll_failed = False
-        timestamp = time.strftime("%H:%M:%S")
-        try:
-            for tag in tags:
-                try:
-                    self._validate_tag_request(tag, "read")
-                    if not self._begin_modbus_operation(tag, "read"):
-                        self._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
-                        continue
-
-                    try:
-                        value = self._read_tag_for_monitoring(tag)
-                    finally:
-                        self._end_modbus_operation(tag, "read")
-
-                    if value is None:
-                        poll_failed = True
-                        self._add_monitoring_row(
-                            tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "",
-                            tag["comment"], timestamp
-                        )
-                        extra = ""
-                        if self.modbus is not None and getattr(self.modbus, "last_error", None):
-                            extra = f" ({self.modbus.last_error})"
-                        self._log(f"Monitoring read failed for {tag['name']} at {tag['address']}{extra}")
-                        break
-
-                    display_value = self._format_monitoring_value(tag, value)
-                    
-                    # Display raw data in diagnostics for Tags monitoring
-                    self._display_raw_data(f"Tag[{tag['name']}]", value)
-                    
-                    self._add_monitoring_row(
-                        tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                        tag["comment"], timestamp
-                    )
-                except Exception as e:
-                    poll_failed = True
-                    self._log(f"Monitoring error for {tag['name']}: {e}")
-                    break
-
-            if poll_failed:
-                self._monitoring_failure_count += 1
-                if self._monitoring_failure_count >= self._monitoring_max_failures:
-                    self._log(
-                        f"Monitoring stopped after {self._monitoring_failure_count} consecutive failed poll(s)"
-                    )
-                    self._stop_monitoring()
-                    QMessageBox.warning(
-                        self,
-                        "Monitoring Stopped",
-                        "Monitoring was stopped after repeated Modbus failures. Check tag type, address, unit ID, and server status.",
-                    )
-            else:
-                self._monitoring_failure_count = 0
-        finally:
-            self._monitoring_poll_in_progress = False
-            if self.monitoring_active:
-                interval = self.tag_monitoring_interval.value() if hasattr(self, 'tag_monitoring_interval') else 1000
-                self.monitoring_timer.start(interval)
+        self.monitoring_manager.update_monitored_data()
 
     def _update_write_tag_values(self):
         """Poll write-mode tags at a fixed 1000ms interval for their current device values."""
@@ -2556,91 +2395,8 @@ class ModbusGUI(QMainWindow):
 
     def _add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp):
         """Add or update a tag row in the monitoring results table."""
-        key = (tag_name, data_type, str(address))
-        
-        # Store read value in cache for Tags monitoring
-        if read_value:
-            self._monitoring_read_value_cache[key] = read_value
-        
-        if write_value:
-            self._monitoring_write_value_cache[key] = write_value
-
-        cached_write_value = self._monitoring_write_value_cache.get(key, "")
-        initial_write_value = write_value if write_value else cached_write_value
-
-        # Use diagnostics results table if main monitoring table doesn't exist
-        target_table = None
-        if hasattr(self, 'monitoring_table'):
-            target_table = self.monitoring_table
-        elif hasattr(self, 'diagnostics_results_table'):
-            target_table = self.diagnostics_results_table
-        
-        if target_table is None:
-            # For Tags monitoring, update the results window directly
-            if self.results_window is not None:
-                self.results_window.update_row(
-                    tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
-                )
-            return
-            
-        row_count = target_table.rowCount()
-
-        self._updating_monitoring_table = True
-        try:
-            for row in range(row_count):
-                name_item = target_table.item(row, 0)
-                type_item = target_table.item(row, 2)
-                address_item = target_table.item(row, 3)
-                if (
-                    name_item and type_item and address_item
-                    and name_item.text() == tag_name
-                    and type_item.text() == data_type
-                    and address_item.text() == str(address)
-                ):
-                    # Don't mutate the row while the user is typing a write value; it cancels the editor.
-                    if (
-                        target_table.state() == QAbstractItemView.EditingState
-                        and target_table.currentRow() == row
-                        and target_table.currentColumn() == 5
-                    ):
-                        return
-
-                    target_table.setItem(row, 1, QTableWidgetItem(mode))
-                    target_table.setItem(row, 3, QTableWidgetItem(str(address)))
-                    if read_value:
-                        target_table.setItem(row, 4, QTableWidgetItem(read_value))
-
-                    # Only set the write column if we have a meaningful value to show.
-                    # This avoids stomping on user edits during polling.
-                    if write_value:
-                        target_table.setItem(row, 5, QTableWidgetItem(write_value))
-                    elif initial_write_value and target_table.item(row, 5) is None:
-                        target_table.setItem(row, 5, QTableWidgetItem(initial_write_value))
-
-                    target_table.setItem(row, 6, QTableWidgetItem(comment))
-                    target_table.setItem(row, 7, QTableWidgetItem(timestamp))
-                    if self.results_window is not None:
-                        self.results_window.update_row(
-                            tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
-                        )
-                    return
-
-            target_table.insertRow(row_count)
-            target_table.setItem(row_count, 0, QTableWidgetItem(tag_name))
-            target_table.setItem(row_count, 1, QTableWidgetItem(mode))
-            target_table.setItem(row_count, 2, QTableWidgetItem(data_type))
-            target_table.setItem(row_count, 3, QTableWidgetItem(str(address)))
-            target_table.setItem(row_count, 4, QTableWidgetItem(read_value))
-            target_table.setItem(row_count, 5, QTableWidgetItem(initial_write_value))
-            target_table.setItem(row_count, 6, QTableWidgetItem(comment))
-            target_table.setItem(row_count, 7, QTableWidgetItem(timestamp))
-        finally:
-            self._updating_monitoring_table = False
-
-        if self.results_window is not None:
-            self.results_window.update_row(
-                tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
-            )
+        # Delegate to the monitoring manager
+        self.monitoring_manager.add_monitoring_row(tag_name, mode, data_type, address, read_value, write_value, comment, timestamp)
 
     def _check_connection(self):
         """Check if connected to Modbus server."""
