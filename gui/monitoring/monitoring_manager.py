@@ -159,6 +159,11 @@ class MonitoringManager:
                 tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
             )
 
+        if self.parent.results_window is not None:
+            self.parent.results_window.update_row(
+                tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
+            )
+
     def get_current_result_values(self):
         """Get current values from monitoring results."""
         values = {}
