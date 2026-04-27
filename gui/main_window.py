@@ -8,227 +8,38 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QMessageBox, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QTextEdit, QGroupBox, QGridLayout,
-    QSplitter, QFrame, QComboBox, QSpinBox, QCheckBox, QProgressBar,
-    QStatusBar, QMenuBar, QMenu, QTableWidget, QTableWidgetItem, QDialog,
-    QHeaderView, QTabWidget, QScrollArea, QSystemTrayIcon, QAbstractItemView
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QLineEdit, QPushButton, QTableWidget, QHeaderView, QTableWidgetItem,
+    QComboBox, QSpinBox, QTabWidget, QGroupBox, QStatusBar,
+    QApplication, QMessageBox, QDialog, QTextEdit, QCheckBox,
+    QAbstractItemView, QFrame
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QThread, QPropertyAnimation, QEasingCurve, QPoint
-from PySide6.QtGui import QFont, QPalette, QColor, QIcon, QPixmap, QPainter, QBrush
+from PySide6.QtCore import Qt, QTimer, Signal, QThread
+from PySide6.QtGui import QColor, QIcon
 
-from app_paths import app_data_dir, resource_path
+# Add the gui directory to the path for relative imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+# Import extracted components
+from widgets.status_indicator import StatusIndicator
+from widgets.monitoring_window import MonitoringResultsWindow
+from diagnostics.advanced_diagnostics import AdvancedDiagnostics
+from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
+from monitoring.monitoring_manager import MonitoringManager
+from network.network_diagnostics import NetworkDiagnosticsDialog
+
 from core.modbus_client import ModbusClient
+from app_paths import resource_path, app_data_dir
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
 
-logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
+class SafetyWarningDialog(QDialog):
+    def __init__(self):
+        super().__init__()
 
-
-class StatusIndicator(QWidget):
-    """Custom status indicator widget with colored circle."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(20, 20)
-        self._status = "disconnected"  # disconnected, connecting, connected, error
-        self._animation_timer = QTimer(self)
-        self._animation_timer.timeout.connect(self.update)
-        self._animation_angle = 0
-
-    def set_status(self, status: str):
-        """Set status: 'disconnected', 'connecting', 'connected', 'error'"""
-        self._status = status.lower()
-        if status == "connecting":
-            self._animation_timer.start(50)  # 20 FPS animation
-        else:
-            self._animation_timer.stop()
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        center = QPoint(self.width() // 2, self.height() // 2)
-        radius = min(self.width(), self.height()) // 2 - 2
-
-        # Choose color based on status
-        if self._status == "connected":
-            color = QColor("#4CAF50")  # Green
-        elif self._status == "connecting":
-            color = QColor("#FF9800")  # Orange
-            # Animated pulsing effect
-            self._animation_angle = (self._animation_angle + 10) % 360
-            intensity = (1 + 0.3 * math.sin(self._animation_angle / 180.0 * math.pi)) / 1.3
-            color.setAlphaF(intensity)
-        elif self._status == "error":
-            color = QColor("#F44336")  # Red
-        else:  # disconnected
-            color = QColor("#9E9E9E")  # Gray
-
-        painter.setBrush(QBrush(color))
-        painter.setPen(Qt.NoPen)
-        painter.drawEllipse(center, radius, radius)
-
-        # Add white border for better visibility
-        painter.setBrush(Qt.NoBrush)
-        painter.setPen(QColor("#FFFFFF"))
-        painter.drawEllipse(center, radius, radius)
-
-
-class MonitoringResultsWindow(QMainWindow):
-    """Detached Excel-style view for live monitoring results."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Monitoring Results")
-        self.resize(1100, 560)
-
-        central_widget = QWidget()
-        layout = QVBoxLayout(central_widget)
-        layout.setContentsMargins(10, 10, 10, 10)
-
-        actions_layout = QHBoxLayout()
-        self.write_selected_btn = QPushButton("Write Selected")
-        self.write_selected_btn.clicked.connect(parent._write_results_window_selected)
-        actions_layout.addWidget(self.write_selected_btn)
-        actions_layout.addStretch()
-        layout.addLayout(actions_layout)
-
-        self.table = QTableWidget()
-        self.table.setColumnCount(8)
-        self.table.setHorizontalHeaderLabels([
-            "Tag Name", "Mode", "Type", "Address", "Read Value", "Write Value", "Comment", "Timestamp"
-        ])
-        self.table.setAlternatingRowColors(True)
-        self.table.setSortingEnabled(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.verticalHeader().setVisible(True)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                background-color: #FFFFFF;
-                color: #000000;
-                gridline-color: #D0D0D0;
-                border: 1px solid #CCCCCC;
-            }
-            QHeaderView::section {
-                background-color: #E9E9E9;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                padding: 6px;
-                font-weight: bold;
-            }
-        """)
-
-        layout.addWidget(self.table)
-        self.setCentralWidget(central_widget)
-
-    def update_row(self, tag_name, mode, data_type, address, read_value="", write_value="", comment="", timestamp=""): 
-        row = self._find_row(tag_name, data_type, address) 
-        if row is None: 
-            row = self.table.rowCount() 
-            self.table.insertRow(row) 
-
-        # If the user is actively typing in the Write Value cell, do not refresh the row.
-        # Refreshing (setItem) cancels the editor and clears in-progress edits.
-        if (
-            self.table.state() == QAbstractItemView.EditingState
-            and self.table.currentRow() == row
-            and self.table.currentColumn() == 5
-        ):
-            return
- 
-        current_write_item = self.table.item(row, 5) 
-        current_write_value = current_write_item.text() if current_write_item else "" 
-        if current_write_value and not write_value: 
-            write_value = current_write_value 
-
-        current_read_item = self.table.item(row, 4)
-        current_read_value = current_read_item.text() if current_read_item else ""
-        if current_read_value and not read_value:
-            read_value = current_read_value
-
-        can_write = mode == "Write"
-        values_by_column = {
-            0: tag_name,
-            1: mode,
-            2: data_type,
-            3: str(address),
-            4: read_value,
-            5: write_value,
-            6: comment,
-            7: timestamp,
-        }
-
-        for column in range(8):
-            if column == 5 and can_write:
-                # Don't overwrite user's typed value with empty polling updates.
-                if not values_by_column[5] and self.table.item(row, 5) is not None:
-                    existing_item = self.table.item(row, 5)
-                    existing_item.setFlags(existing_item.flags() | Qt.ItemIsEditable)
-                    continue
-
-            item = QTableWidgetItem(values_by_column[column])
-            if column != 5 or not can_write:
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            if column == 5 and not can_write:
-                item.setBackground(QColor("#F0F0F0"))
-                item.setForeground(QColor("#777777"))
-            self.table.setItem(row, column, item)
-
-    def clear(self):
-        self.table.setRowCount(0)
-
-    def current_values(self):
-        values = {}
-        for row in range(self.table.rowCount()):
-            key = (self._item_text(row, 0), self._item_text(row, 2), self._item_text(row, 3))
-            values[key] = {
-                "read_value": self._item_text(row, 4),
-                "write_value": self._item_text(row, 5),
-                "timestamp": self._item_text(row, 7),
-            }
-        return values
-
-    def selected_write_rows(self):
-        rows = sorted({index.row() for index in self.table.selectedIndexes()})
-        current_row = self.table.currentRow()
-        if current_row >= 0 and current_row not in rows:
-            rows.append(current_row)
-
-        selected = []
-        for row in rows:
-            mode = self._item_text(row, 1)
-            if mode != "Write":
-                continue
-            selected.append({
-                "name": self._item_text(row, 0),
-                "mode": mode,
-                "type": self._item_text(row, 2),
-                "address": self._item_text(row, 3),
-                "write_value": self._item_text(row, 5),
-            })
-        return selected
-
-    def _item_text(self, row, column):
-        item = self.table.item(row, column)
-        return item.text().strip() if item else ""
-
-    def _find_row(self, tag_name, data_type, address):
-        for row in range(self.table.rowCount()):
-            name_item = self.table.item(row, 0)
-            type_item = self.table.item(row, 2)
-            address_item = self.table.item(row, 3)
-            if (
-                name_item and type_item and address_item
-                and name_item.text() == tag_name
-                and type_item.text() == data_type
-                and address_item.text() == str(address)
-            ):
-                return row
-        return None
+        self.modbus = None
+        self.connection_history = []
 
 
 class ModbusGUI(QMainWindow):
@@ -238,16 +49,20 @@ class ModbusGUI(QMainWindow):
         self.modbus = None
         self.connection_history = []
         self.results_window = None
-        self._monitoring_write_value_cache = {}
+        
+        # Initialize extracted components
+        self.advanced_diagnostics = AdvancedDiagnostics()
+        self.diagnostics_dialogs = DiagnosticsDialogs(self)
+        self.monitoring_manager = MonitoringManager(self)
+        self.network_diagnostics = NetworkDiagnosticsDialog(self)
+        
         self._updating_monitoring_table = False
         self._updating_tag_table = False
         self._modbus_busy = False
         self._active_ranges = []
         self.monitoring_active = False
-        self._monitoring_poll_in_progress = False
-        self._monitoring_failure_count = 0
-        self._monitoring_max_failures = 3
         self._write_poll_in_progress = False
+        
         self.monitoring_timer = QTimer(self)
         self.monitoring_timer.timeout.connect(self._update_monitored_data)
         self.write_poll_timer = QTimer(self)
@@ -258,6 +73,7 @@ class ModbusGUI(QMainWindow):
         self._setup_central_widget()
         self._setup_status_bar()
         self._connect_signals()
+        self.diagnostics_dialogs.setup_diagnostics_widgets()  # Initialize diagnostics widgets early
         self._load_settings()
 
     def _setup_window(self):
@@ -297,6 +113,14 @@ class ModbusGUI(QMainWindow):
         tools_menu.addAction("Scripting Console", self._show_scripting_console)
         tools_menu.addSeparator()
         tools_menu.addAction("Network Diagnostics", self._network_diagnostics)
+        
+        # Diagnostics menu
+        diagnostics_menu = menubar.addMenu("&Diagnostics")
+        diagnostics_menu.addAction("Results Log", self._show_diagnostics_results)
+        diagnostics_menu.addAction("Communication Log", self._show_diagnostics_logs)
+        diagnostics_menu.addAction("Raw Data", self._show_diagnostics_raw_data)
+        diagnostics_menu.addSeparator()
+        diagnostics_menu.addAction("Clear All Logs", self._clear_diagnostics_logs)
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -315,18 +139,8 @@ class ModbusGUI(QMainWindow):
         # Top section: Connection and status
         self._setup_connection_section(main_layout)
 
-        # Main content area with splitter
-        splitter = QSplitter(Qt.Vertical)
-        main_layout.addWidget(splitter)
-
-        # Operations section
-        self._setup_operations_section(splitter)
-
-        # Bottom section: Output and monitoring
-        self._setup_bottom_section(splitter)
-
-        # Set splitter proportions
-        splitter.setSizes([400, 300])
+        # Operations section (full height, no bottom section)
+        self._setup_operations_section(main_layout)
 
     def _setup_connection_section(self, parent_layout):
         """Setup connection section with modern design."""
@@ -347,6 +161,7 @@ class ModbusGUI(QMainWindow):
         # Status indicator
         status_layout = QVBoxLayout()
         status_layout.setAlignment(Qt.AlignCenter)
+        status_layout.setSpacing(5)
 
         status_label = QLabel("Status")
         status_label.setStyleSheet("color: #333333; font-weight: bold;")
@@ -364,6 +179,7 @@ class ModbusGUI(QMainWindow):
         # Connection inputs
         inputs_layout = QGridLayout()
         inputs_layout.setSpacing(10)
+        inputs_layout.setContentsMargins(0, 0, 0, 0)
 
         # IP input
         ip_label = QLabel("IP Address:")
@@ -502,166 +318,524 @@ class ModbusGUI(QMainWindow):
 
         parent_layout.addWidget(connection_frame)
 
-    def _setup_operations_section(self, splitter):
-        """Setup operations section with tabs."""
-        operations_widget = QWidget()
-        operations_layout = QVBoxLayout(operations_widget)
-
-        # Create tab widget
+    def _setup_operations_section(self, parent_layout):
+        """Setup operations section with full height for address tables."""
+        # Tab widget for operations
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
                 border: 1px solid #CCCCCC;
-                background-color: #F7F7F7;
-                border-radius: 8px;
+                background-color: #FFFFFF;
             }
             QTabBar::tab {
-                background-color: #E9E9E9;
+                background-color: #F5F5F5;
                 color: #333333;
                 padding: 8px 16px;
                 border: 1px solid #CCCCCC;
-                border-bottom: none;
-                border-radius: 8px 8px 0 0;
                 margin-right: 2px;
             }
             QTabBar::tab:selected {
-                background-color: #007ACC;
-                color: white;
+                background-color: #FFFFFF;
+                color: #333333;
+                border-bottom: 1px solid #FFFFFF;
             }
             QTabBar::tab:hover {
-                background-color: #DADADA;
+                background-color: #E8E8E8;
             }
         """)
 
-        # Read operations tab
-        self._setup_read_tab()
-
-        # Write operations tab
-        self._setup_write_tab()
+        # Modbus Address tab (unified read/write interface)
+        self._setup_modbus_address_tab()
 
         # Monitoring tab
         self._setup_monitoring_tab()
 
-        operations_layout.addWidget(self.tab_widget)
-        splitter.addWidget(operations_widget)
+        parent_layout.addWidget(self.tab_widget)
 
-    def _setup_read_tab(self):
-        """Setup read operations tab."""
-        read_widget = QWidget()
-        layout = QVBoxLayout(read_widget)
+    def _setup_modbus_address_tab(self):
+        """Setup unified Modbus Address tab with Excel-style spreadsheet."""
+        address_widget = QWidget()
+        layout = QVBoxLayout(address_widget)
+        layout.setSpacing(10)
+        layout.setContentsMargins(10, 10, 10, 10)
 
-        # Address inputs
-        addr_group = QGroupBox("Address Range")
-        addr_group.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                color: #222222;
+        # Monitoring controls (moved to top)
+        monitor_group = QGroupBox("Monitoring Controls")
+        monitor_layout = QHBoxLayout(monitor_group)
+        monitor_layout.setSpacing(10)
+        monitor_layout.setContentsMargins(10, 10, 10, 10)
+        
+        self.start_monitoring_btn = QPushButton("Start Monitoring")
+        self.start_monitoring_btn.setStyleSheet(self._get_button_style())
+        self.start_monitoring_btn.clicked.connect(self._start_address_monitoring)
+        monitor_layout.addWidget(self.start_monitoring_btn)
+        
+        self.stop_monitoring_btn = QPushButton("Stop Monitoring")
+        self.stop_monitoring_btn.setStyleSheet(self._get_button_style())
+        self.stop_monitoring_btn.clicked.connect(self._stop_address_monitoring)
+        self.stop_monitoring_btn.setEnabled(False)
+        monitor_layout.addWidget(self.stop_monitoring_btn)
+        
+        monitor_layout.addWidget(QLabel("Interval (ms):"))
+        self.monitoring_interval = QSpinBox()
+        self.monitoring_interval.setRange(100, 10000)
+        self.monitoring_interval.setValue(1000)
+        self.monitoring_interval.setStyleSheet(self._get_input_style())
+        monitor_layout.addWidget(self.monitoring_interval)
+        
+        monitor_layout.addStretch()
+        layout.addWidget(monitor_group)
+
+        # Excel-style address table
+        table_group = QGroupBox("Address Configuration")
+        table_layout = QVBoxLayout(table_group)
+        table_layout.setSpacing(5)
+        table_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Table toolbar
+        toolbar_layout = QHBoxLayout()
+        
+        self.add_address_btn = QPushButton("Add Row")
+        self.add_address_btn.setStyleSheet(self._get_button_style())
+        self.add_address_btn.clicked.connect(self._add_address_row)
+        toolbar_layout.addWidget(self.add_address_btn)
+        
+        self.remove_address_btn = QPushButton("Remove Selected")
+        self.remove_address_btn.setStyleSheet(self._get_button_style())
+        self.remove_address_btn.clicked.connect(self._remove_address_rows)
+        self.remove_address_btn.setEnabled(False)
+        toolbar_layout.addWidget(self.remove_address_btn)
+        
+        toolbar_layout.addStretch()
+        table_layout.addLayout(toolbar_layout)
+        
+        # Main address table
+        self.address_table = QTableWidget()
+        self.address_table.setColumnCount(8)
+        self.address_table.setHorizontalHeaderLabels([
+            "Description", "Address", "Type", "Byte Order", "Current Value", "Write Value", "Status", "Timestamp"
+        ])
+        
+        # Set column widths
+        header = self.address_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)  # Description
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Address
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Type
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Byte Order
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Current Value
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Write Value
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Status
+        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Timestamp
+        
+        # Excel-style appearance
+        self.address_table.setAlternatingRowColors(True)
+        self.address_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.address_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #FFFFFF;
+                color: #000000;
                 border: 1px solid #CCCCCC;
-                border-radius: 8px;
-                margin-top: 1ex;
-                background-color: #F8F8F8;
+                gridline-color: #E0E0E0;
+                font-size: 11px;
             }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 10px 0 10px;
+            QTableWidget::item {
+                padding: 5px;
+                border-bottom: 1px solid #E0E0E0;
+                border-right: 1px solid #E0E0E0;
+            }
+            QTableWidget::item:selected {
+                background-color: #0078D4;
+                color: white;
+            }
+            QTableWidget::item:hover {
+                background-color: #F0F8FF;
+            }
+            QHeaderView::section {
+                background-color: #F8F8F8;
+                color: #333333;
+                border: 1px solid #CCCCCC;
+                border-bottom: 2px solid #CCCCCC;
+                padding: 8px 5px;
+                font-weight: bold;
+                font-size: 11px;
+                text-align: left;
             }
         """)
-        addr_layout = QHBoxLayout(addr_group)
+        
+        table_layout.addWidget(self.address_table)
+        layout.addWidget(table_group)
+        
+        # Initialize address data
+        self.address_data = []
+        
+        # Connect signals
+        self.address_table.itemSelectionChanged.connect(self._on_address_selection_changed)
+        self.address_table.itemChanged.connect(self._on_address_item_changed)
+        
+        # Add initial empty row
+        self._add_address_row()
+        
+        self.tab_widget.addTab(address_widget, "Modbus Address")
 
-        addr_layout.addWidget(QLabel("Start Address:"))
-        self.read_start_addr = QSpinBox()
-        self.read_start_addr.setRange(0, 65535)
-        self.read_start_addr.setStyleSheet(self._get_input_style())
-        addr_layout.addWidget(self.read_start_addr)
+    def _add_address_row(self, description="", address=0, data_type="UInt16", byte_order="Big Endian"):
+        """Add a new row to the address table."""
+        row = self.address_table.rowCount()
+        self.address_table.insertRow(row)
+        
+        # Store row data
+        self.address_data.append({
+            'description': description,
+            'address': address,
+            'data_type': data_type,
+            'byte_order': byte_order,
+            'current_value': '--',
+            'write_value': '',
+            'status': 'Idle',
+            'timestamp': ''
+        })
+        
+        # Create table items
+        # Description (editable)
+        desc_item = QTableWidgetItem(description or f"Address {address}")
+        desc_item.setFlags(desc_item.flags() | Qt.ItemIsEditable)
+        self.address_table.setItem(row, 0, desc_item)
+        
+        # Address (editable)
+        addr_item = QTableWidgetItem(str(address))
+        addr_item.setFlags(addr_item.flags() | Qt.ItemIsEditable)
+        self.address_table.setItem(row, 1, addr_item)
+        
+        # Type (combo box)
+        type_combo = QComboBox()
+        type_combo.addItems(["Boolean", "UInt16", "Int16", "UInt32", "Int32", "Float32", "String"])
+        type_combo.setCurrentText(data_type)
+        type_combo.setStyleSheet(self._get_input_style())
+        self.address_table.setCellWidget(row, 2, type_combo)
+        
+        # Byte Order (combo box)
+        byte_combo = QComboBox()
+        byte_combo.addItems(["Big Endian", "Little Endian", "Mid-Big Endian", "Mid-Little Endian"])
+        byte_combo.setCurrentText(byte_order)
+        byte_combo.setStyleSheet(self._get_input_style())
+        self.address_table.setCellWidget(row, 3, byte_combo)
+        
+        # Current Value (read-only)
+        value_item = QTableWidgetItem("--")
+        value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
+        value_item.setBackground(QColor("#F8F8F8"))
+        self.address_table.setItem(row, 4, value_item)
+        
+        # Write Value (editable)
+        write_item = QTableWidgetItem("")
+        write_item.setFlags(write_item.flags() | Qt.ItemIsEditable)
+        write_item.setBackground(QColor("#FFF8DC"))
+        self.address_table.setItem(row, 5, write_item)
+        
+        # Status (read-only)
+        status_item = QTableWidgetItem("Idle")
+        status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
+        status_item.setBackground(QColor("#F8F8F8"))
+        self.address_table.setItem(row, 6, status_item)
+        
+        # Timestamp (read-only)
+        timestamp_item = QTableWidgetItem("")
+        timestamp_item.setFlags(timestamp_item.flags() & ~Qt.ItemIsEditable)
+        timestamp_item.setBackground(QColor("#F8F8F8"))
+        self.address_table.setItem(row, 7, timestamp_item)
+        
+        # Connect combo box signals
+        type_combo.currentTextChanged.connect(lambda text, r=row: self._on_type_changed(r, text))
+        byte_combo.currentTextChanged.connect(lambda text, r=row: self._on_byte_order_changed(r, text))
 
-        addr_layout.addWidget(QLabel("Count:"))
-        self.read_count = QSpinBox()
-        self.read_count.setRange(1, 125)
-        self.read_count.setValue(10)
-        self.read_count.setStyleSheet(self._get_input_style())
-        addr_layout.addWidget(self.read_count)
+    def _remove_address_rows(self):
+        """Remove selected rows from the address table."""
+        selected_rows = sorted(set(item.row() for item in self.address_table.selectedItems()), reverse=True)
+        
+        for row in selected_rows:
+            # Remove from data list
+            if row < len(self.address_data):
+                del self.address_data[row]
+            # Remove from table
+            self.address_table.removeRow(row)
+        
+        # Add a new empty row if table is empty
+        if self.address_table.rowCount() == 0:
+            self._add_address_row()
 
-        layout.addWidget(addr_group)
+    def _on_address_selection_changed(self):
+        """Handle address table selection changes."""
+        has_selection = bool(self.address_table.selectedItems())
+        self.remove_address_btn.setEnabled(has_selection)
 
-        # Read buttons
-        buttons_group = QGroupBox("Read Operations")
-        buttons_layout = QGridLayout(buttons_group)
+    def _on_address_item_changed(self, item):
+        """Handle address table item changes."""
+        row = item.row()
+        col = item.column()
+        
+        if row >= len(self.address_data):
+            return
+            
+        if col == 0:  # Description
+            self.address_data[row]['description'] = item.text()
+        elif col == 1:  # Address
+            try:
+                self.address_data[row]['address'] = int(item.text())
+            except ValueError:
+                item.setText(str(self.address_data[row]['address']))
+        elif col == 5:  # Write Value
+            self.address_data[row]['write_value'] = item.text()
+            # Trigger write if not empty
+            if item.text().strip():
+                self._write_to_table_row(row)
 
-        self.read_coils_btn = self._create_operation_button("Read Coils (0x)", "#4CAF50")
-        buttons_layout.addWidget(self.read_coils_btn, 0, 0)
+    def _on_type_changed(self, row, data_type):
+        """Handle data type change for a row."""
+        if row < len(self.address_data):
+            self.address_data[row]['data_type'] = data_type
 
-        self.read_discrete_inputs_btn = self._create_operation_button("Read Discrete Inputs (1x)", "#2196F3")
-        buttons_layout.addWidget(self.read_discrete_inputs_btn, 0, 1)
+    def _on_byte_order_changed(self, row, byte_order):
+        """Handle byte order change for a row."""
+        if row < len(self.address_data):
+            self.address_data[row]['byte_order'] = byte_order
 
-        self.read_holding_registers_btn = self._create_operation_button("Read Holding Registers (4x)", "#FF9800")
-        buttons_layout.addWidget(self.read_holding_registers_btn, 1, 0)
+    def _write_to_table_row(self, row):
+        """Write value from table row to Modbus address."""
+        if not self._check_connection():
+            return
+            
+        if row >= len(self.address_data):
+            return
+            
+        addr_info = self.address_data[row]
+        input_value = addr_info['write_value'].strip()
+        
+        if not input_value:
+            return
+        
+        try:
+            # Update status
+            status_item = self.address_table.item(row, 6)
+            status_item.setText("Writing...")
+            status_item.setBackground(QColor("#FFF3E0"))
+            
+            raw_value = self._convert_input_to_raw(input_value, addr_info['data_type'], addr_info['byte_order'])
+            
+            if isinstance(raw_value, list):
+                # Multi-byte value
+                success = self.modbus.write_registers(addr_info['address'], raw_value)
+            else:
+                # Single value
+                if addr_info['data_type'] == "Boolean":
+                    success = self.modbus.write_coil(addr_info['address'], raw_value)
+                else:
+                    success = self.modbus.write_register(addr_info['address'], raw_value)
+            
+            if success:
+                # Update status and timestamp
+                status_item.setText("Success")
+                status_item.setBackground(QColor("#E8F5E8"))
+                
+                timestamp_item = self.address_table.item(row, 7)
+                timestamp_item.setText(time.strftime("%H:%M:%S"))
+                
+                # Clear write value
+                write_item = self.address_table.item(row, 5)
+                write_item.setText("")
+                
+                self._log(f"Wrote {input_value} to address {addr_info['address']} ({addr_info['data_type']})")
+                
+                # Read back to update current value
+                if self.monitoring_active:
+                    self._read_table_row(row)
+            else:
+                error_msg = getattr(self.modbus, 'last_error', 'Unknown error')
+                status_item.setText("Error")
+                status_item.setBackground(QColor("#FFEBEE"))
+                self._log(f"Failed to write to address {addr_info['address']}: {error_msg}")
+                
+        except ValueError as e:
+            status_item.setText("Error")
+            status_item.setBackground(QColor("#FFEBEE"))
+            self._log(f"Invalid {addr_info['data_type']} value: {e}")
+        except Exception as e:
+            status_item.setText("Error")
+            status_item.setBackground(QColor("#FFEBEE"))
+            self._log(f"Write error: {e}")
 
-        self.read_input_registers_btn = self._create_operation_button("Read Input Registers (3x)", "#9C27B0")
-        buttons_layout.addWidget(self.read_input_registers_btn, 1, 1)
+    def _start_address_monitoring(self):
+        """Start monitoring all configured addresses."""
+        self._log("Starting address monitoring...")
+        
+        if not self._check_connection():
+            self._log("Connection check failed")
+            return
+            
+        # Filter out empty rows - skip rows with address 0 AND no description
+        valid_addresses = []
+        for i, data in enumerate(self.address_data):
+            if data['address'] != 0 or (data['description'] and data['description'].strip()):
+                valid_addresses.append(i)
+                self._log(f"Valid address {i}: addr={data['address']}, desc='{data['description']}'")
+            else:
+                self._log(f"Skipping empty row {i}: addr={data['address']}, desc='{data['description']}'")
+        
+        self._log(f"Found {len(valid_addresses)} valid addresses out of {len(self.address_data)} total")
+        
+        if not valid_addresses:
+            self._log("No valid addresses configured for monitoring")
+            return
+        
+        self.monitoring_active = True
+        self.start_monitoring_btn.setEnabled(False)
+        self.stop_monitoring_btn.setEnabled(True)
+        
+        # Create monitoring timer (reuse existing timer if available)
+        if hasattr(self, 'monitoring_timer'):
+            self._log("Disconnecting existing timer signals")
+            self.monitoring_timer.timeout.disconnect()
+        self.monitoring_timer.timeout.connect(self._update_all_table_addresses)
+        self._log("Connected timer to _update_all_table_addresses")
+        
+        interval = self.monitoring_interval.value() if hasattr(self, 'monitoring_interval') else 1000
+        self._log(f"Starting timer with {interval}ms interval")
+        self.monitoring_timer.start(interval)
+        
+        self._log(f"Started monitoring {len(valid_addresses)} addresses (interval: {interval}ms)")
 
-        layout.addWidget(buttons_group)
+    def _stop_address_monitoring(self):
+        """Stop monitoring addresses."""
+        if hasattr(self, 'monitoring_timer') and self.monitoring_timer.isActive():
+            self.monitoring_timer.stop()
+        
+        self.monitoring_active = False
+        self.start_monitoring_btn.setEnabled(True)
+        self.stop_monitoring_btn.setEnabled(False)
+        
+        self._log("Stopped monitoring")
 
-        self.tab_widget.addTab(read_widget, "Read")
+    def _update_all_table_addresses(self):
+        """Update all configured address values in the table."""
+        if not self.monitoring_active or not self.modbus or not self.modbus.is_connected():
+            self._log(f"Monitoring update skipped: active={self.monitoring_active}, connected={self.modbus.is_connected() if self.modbus else False}")
+            return
+        
+        self._log(f"Updating {len(self.address_data)} address rows")
+        
+        for row, addr_info in enumerate(self.address_data):
+            # Skip empty rows - skip rows with address 0 AND no description
+            if addr_info['address'] == 0 and not (addr_info['description'] and addr_info['description'].strip()):
+                self._log(f"Skipping empty row {row}: addr={addr_info['address']}, desc='{addr_info['description']}'")
+                continue
+                
+            self._log(f"Reading address {addr_info['address']} ({addr_info['data_type']})")
+            self._read_table_row(row)
 
-    def _setup_write_tab(self):
-        """Setup write operations tab."""
-        write_widget = QWidget()
-        layout = QVBoxLayout(write_widget)
-
-        # Address input
-        addr_group = QGroupBox("Address")
-        addr_layout = QHBoxLayout(addr_group)
-
-        addr_layout.addWidget(QLabel("Address:"))
-        self.write_addr = QSpinBox()
-        self.write_addr.setRange(0, 65535)
-        self.write_addr.setStyleSheet(self._get_input_style())
-        addr_layout.addWidget(self.write_addr)
-
-        layout.addWidget(addr_group)
-
-        # Value inputs
-        value_group = QGroupBox("Values")
-        value_layout = QVBoxLayout(value_group)
-
-        # Single value
-        single_layout = QHBoxLayout()
-        single_layout.addWidget(QLabel("Single Value:"))
-        self.write_single_value = QLineEdit()
-        self.write_single_value.setStyleSheet(self._get_input_style())
-        single_layout.addWidget(self.write_single_value)
-        value_layout.addLayout(single_layout)
-
-        # Multiple values
-        multi_layout = QHBoxLayout()
-        multi_layout.addWidget(QLabel("Multiple Values (comma-separated):"))
-        self.write_multi_values = QLineEdit()
-        self.write_multi_values.setStyleSheet(self._get_input_style())
-        multi_layout.addWidget(self.write_multi_values)
-        value_layout.addLayout(multi_layout)
-
-        layout.addWidget(value_group)
-
-        # Write buttons
-        buttons_group = QGroupBox("Write Operations")
-        buttons_layout = QGridLayout(buttons_group)
-
-        self.write_coil_btn = self._create_operation_button("Write Coil", "#4CAF50")
-        buttons_layout.addWidget(self.write_coil_btn, 0, 0)
-
-        self.write_register_btn = self._create_operation_button("Write Register", "#FF9800")
-        buttons_layout.addWidget(self.write_register_btn, 0, 1)
-
-        self.write_coils_btn = self._create_operation_button("Write Multiple Coils", "#2196F3")
-        buttons_layout.addWidget(self.write_coils_btn, 1, 0)
-
-        self.write_registers_btn = self._create_operation_button("Write Multiple Registers", "#9C27B0")
-        buttons_layout.addWidget(self.write_registers_btn, 1, 1)
-
-        layout.addWidget(buttons_group)
-
-        self.tab_widget.addTab(write_widget, "Write")
+    def _read_table_row(self, row):
+        """Read value from specific address and update table."""
+        if row >= len(self.address_data) or row >= self.address_table.rowCount():
+            self._log(f"Row {row} out of bounds")
+            return
+            
+        addr_info = self.address_data[row]
+        self._log(f"Reading row {row}: addr={addr_info['address']}, type={addr_info['data_type']}, byte_order={addr_info['byte_order']}")
+        
+        try:
+            raw_data = None
+            
+            # Determine read function based on data type
+            if addr_info['data_type'] == "Boolean":
+                raw_data = self.modbus.read_coils(addr_info['address'], 1)
+                self._log(f"Read coils result: {raw_data}")
+            elif addr_info['data_type'] in ["UInt16", "Int16"]:
+                raw_data = self.modbus.read_registers(addr_info['address'], 1)
+                self._log(f"Read registers result: {raw_data}")
+            elif addr_info['data_type'] in ["UInt32", "Int32", "Float32", "String"]:
+                raw_data = self.modbus.read_registers(addr_info['address'], 2)  # 2 registers for 32-bit types
+                self._log(f"Read registers (2) result: {raw_data}")
+            
+            # Get table items safely
+            value_item = self.address_table.item(row, 4)
+            status_item = self.address_table.item(row, 6)
+            timestamp_item = self.address_table.item(row, 7)
+            
+            # Create items if they don't exist
+            if not value_item:
+                value_item = QTableWidgetItem("--")
+                value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
+                value_item.setBackground(QColor("#F8F8F8"))
+                self.address_table.setItem(row, 4, value_item)
+                self._log(f"Created value item for row {row}")
+            
+            if not status_item:
+                status_item = QTableWidgetItem("Idle")
+                status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
+                status_item.setBackground(QColor("#F8F8F8"))
+                self.address_table.setItem(row, 6, status_item)
+                self._log(f"Created status item for row {row}")
+            
+            if not timestamp_item:
+                timestamp_item = QTableWidgetItem("")
+                timestamp_item.setFlags(timestamp_item.flags() & ~Qt.ItemIsEditable)
+                timestamp_item.setBackground(QColor("#F8F8F8"))
+                self.address_table.setItem(row, 7, timestamp_item)
+                self._log(f"Created timestamp item for row {row}")
+            
+            if raw_data is not None:
+                formatted_value = self._convert_data_to_display(raw_data, addr_info['data_type'], addr_info['byte_order'])
+                self._log(f"Formatted value: {formatted_value}")
+                
+                # Display raw data in diagnostics
+                self._display_raw_data(f"Address[{addr_info['address']}]", raw_data)
+                
+                value_item.setText(formatted_value)
+                value_item.setBackground(QColor("#FFFFFF"))
+                status_item.setText("OK")
+                status_item.setBackground(QColor("#E8F5E8"))
+                timestamp_item.setText(time.strftime("%H:%M:%S"))
+                self._log(f"Updated row {row} with value: {formatted_value}")
+            else:
+                error_msg = getattr(self.modbus, 'last_error', 'Unknown error')
+                self._log(f"Read failed: {error_msg}")
+                value_item.setText("Error")
+                value_item.setBackground(QColor("#FFEBEE"))
+                status_item.setText("Error")
+                status_item.setBackground(QColor("#FFEBEE"))
+                timestamp_item.setText(time.strftime("%H:%M:%S"))
+                
+        except Exception as e:
+            self._log(f"Exception reading row {row}: {e}")
+            if row < self.address_table.rowCount():
+                value_item = self.address_table.item(row, 4)
+                status_item = self.address_table.item(row, 6)
+                timestamp_item = self.address_table.item(row, 7)
+                
+                # Create items if they don't exist
+                if not value_item:
+                    value_item = QTableWidgetItem("Error")
+                    value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
+                    value_item.setBackground(QColor("#FFEBEE"))
+                    self.address_table.setItem(row, 4, value_item)
+                else:
+                    value_item.setText("Error")
+                    value_item.setBackground(QColor("#FFEBEE"))
+                
+                if not status_item:
+                    status_item = QTableWidgetItem("Error")
+                    status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
+                    status_item.setBackground(QColor("#FFEBEE"))
+                    self.address_table.setItem(row, 6, status_item)
+                else:
+                    status_item.setText("Error")
+                    status_item.setBackground(QColor("#FFEBEE"))
+                
+                if not timestamp_item:
+                    timestamp_item = QTableWidgetItem(time.strftime("%H:%M:%S"))
+                    timestamp_item.setFlags(timestamp_item.flags() & ~Qt.ItemIsEditable)
+                    timestamp_item.setBackground(QColor("#F8F8F8"))
+                    self.address_table.setItem(row, 7, timestamp_item)
+            
+            if hasattr(self, '_log'):
+                self._log(f"Error reading address {addr_info['address']}: {e}")
 
     def _setup_monitoring_tab(self):
         """Setup monitoring tab with real-time data display."""
@@ -671,25 +845,25 @@ class ModbusGUI(QMainWindow):
         # Control buttons
         control_layout = QHBoxLayout()
 
-        self.start_monitoring_btn = QPushButton("Start Monitoring")
-        self.start_monitoring_btn.setStyleSheet(self._get_button_style())
-        control_layout.addWidget(self.start_monitoring_btn)
+        self.tag_start_monitoring_btn = QPushButton("Start Monitoring")
+        self.tag_start_monitoring_btn.setStyleSheet(self._get_button_style())
+        control_layout.addWidget(self.tag_start_monitoring_btn)
 
-        self.stop_monitoring_btn = QPushButton("Stop Monitoring")
-        self.stop_monitoring_btn.setStyleSheet(self._get_button_style())
-        self.stop_monitoring_btn.setEnabled(False)
-        control_layout.addWidget(self.stop_monitoring_btn)
+        self.tag_stop_monitoring_btn = QPushButton("Stop Monitoring")
+        self.tag_stop_monitoring_btn.setStyleSheet(self._get_button_style())
+        self.tag_stop_monitoring_btn.setEnabled(False)
+        control_layout.addWidget(self.tag_stop_monitoring_btn)
 
         self.open_results_btn = QPushButton("Open Results Window")
         self.open_results_btn.setStyleSheet(self._get_button_style())
         control_layout.addWidget(self.open_results_btn)
 
         control_layout.addWidget(QLabel("Interval (ms):"))
-        self.monitoring_interval = QSpinBox()
-        self.monitoring_interval.setRange(100, 10000)
-        self.monitoring_interval.setValue(1000)
-        self.monitoring_interval.setStyleSheet(self._get_input_style())
-        control_layout.addWidget(self.monitoring_interval)
+        self.tag_monitoring_interval = QSpinBox()
+        self.tag_monitoring_interval.setRange(100, 10000)
+        self.tag_monitoring_interval.setValue(1000)
+        self.tag_monitoring_interval.setStyleSheet(self._get_input_style())
+        control_layout.addWidget(self.tag_monitoring_interval)
 
         layout.addLayout(control_layout)
 
@@ -754,85 +928,34 @@ class ModbusGUI(QMainWindow):
 
         self.tab_widget.addTab(monitor_widget, "Tags")
 
-    def _setup_bottom_section(self, splitter):
-        """Setup bottom section with output and logs."""
-        bottom_widget = QWidget()
-        bottom_layout = QVBoxLayout(bottom_widget)
+    def _show_diagnostics_results(self):
+        """Show diagnostics dialog with results data."""
+        if not hasattr(self, 'diagnostics_dialog'):
+            self.diagnostics_dialog = QDialog(self)
+            self.diagnostics_dialog.setWindowTitle("Diagnostics - Results Log")
+            self.diagnostics_dialog.setGeometry(200, 200, 800, 600)
+            
+            layout = QVBoxLayout(self.diagnostics_dialog)
+            
+            # Results table
+            self.diagnostics_results_table = QTableWidget()
+            self.diagnostics_results_table.setColumnCount(8)
 
-        # Output tabs
-        self.output_tabs = QTabWidget()
-        self.output_tabs.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #CCCCCC;
-                background-color: #FFFFFF;
-            }
-            QTabBar::tab {
-                background-color: #E9E9E9;
-                color: #333333;
-                padding: 5px 10px;
-                border: 1px solid #CCCCCC;
-            }
-            QTabBar::tab:selected {
-                background-color: #007ACC;
-                color: white;
-            }
-        """)
+    def _show_diagnostics_logs(self):
+        """Show diagnostics dialog with communication logs."""
+        self.diagnostics_dialogs.show_diagnostics_logs()
 
-        # Monitoring results
-        self.monitoring_table = QTableWidget()
-        self.monitoring_table.setColumnCount(8)
-        self.monitoring_table.setHorizontalHeaderLabels([
-            "Tag Name", "Mode", "Type", "Address", "Read Value", "Write Value", "Comment", "Timestamp"
-        ])
-        self.monitoring_table.setAlternatingRowColors(True)
-        self.monitoring_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.monitoring_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.monitoring_table.setStyleSheet("""
-            QTableWidget {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: none;
-                gridline-color: #D0D0D0;
-            }
-            QHeaderView::section {
-                background-color: #E9E9E9;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                padding: 5px;
-            }
-        """)
-        self.output_tabs.addTab(self.monitoring_table, "Results")
+    def _show_diagnostics_raw_data(self):
+        """Show diagnostics dialog with raw data."""
+        self.diagnostics_dialogs.show_diagnostics_raw_data(self.advanced_diagnostics)
 
-        # Log output
-        self.log_output = QTextEdit()
-        self.log_output.setReadOnly(True)
-        self.log_output.setStyleSheet("""
-            QTextEdit {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: none;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 10px;
-            }
-        """)
-        self.output_tabs.addTab(self.log_output, "Logs")
-
-        # Raw data output
-        self.data_output = QTextEdit()
-        self.data_output.setReadOnly(True)
-        self.data_output.setStyleSheet("""
-            QTextEdit {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: none;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 10px;
-            }
-        """)
-        self.output_tabs.addTab(self.data_output, "Raw Data")
-
-        bottom_layout.addWidget(self.output_tabs)
-        splitter.addWidget(bottom_widget)
+    def _clear_diagnostics_logs(self):
+        """Clear all diagnostics data."""
+        self.diagnostics_dialogs.clear_all_diagnostics_logs()
+        self._log("Diagnostics logs cleared")
+        if hasattr(self, 'diagnostics_results_table'):
+            self.diagnostics_results_table.setRowCount(0)
+        self._log("All diagnostics data cleared")
 
     def _setup_status_bar(self):
         """Setup status bar with additional information."""
@@ -858,27 +981,35 @@ class ModbusGUI(QMainWindow):
             }
         """
 
-    def _get_button_style(self, color=None):
-        """Get consistent button style."""
-        return """
-            QPushButton {
-                background-color: #E0E0E0;
-                color: #000000;
-                border: 1px solid #B0B0B0;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #D5D5D5;
-            }
-            QPushButton:pressed {
-                background-color: #C0C0C0;
-            }
-            QPushButton:disabled {
-                background-color: #F0F0F0;
+    def _get_button_style(self, color=None, small=False):
+        """Get professional button style (gray theme)."""
+        font_size = "11px" if small else "12px"
+        padding = "4px 8px" if small else "8px 16px"
+        
+        return f"""
+            QPushButton {{
+                background-color: #F5F5F5;
+                color: #333333;
+                border: 1px solid #CCCCCC;
+                border-radius: 3px;
+                padding: {padding};
+                font-weight: 500;
+                font-size: {font_size};
+                text-align: center;
+            }}
+            QPushButton:hover {{
+                background-color: #E8E8E8;
+                border-color: #BBBBBB;
+            }}
+            QPushButton:pressed {{
+                background-color: #DDDDDD;
+                border-color: #AAAAAA;
+            }}
+            QPushButton:disabled {{
+                background-color: #F8F8F8;
                 color: #999999;
-            }
+                border-color: #EEEEEE;
+            }}
         """
 
     def _create_monitoring_tag_widget(self, widget_type, value=None): 
@@ -1095,6 +1226,11 @@ class ModbusGUI(QMainWindow):
             count = count_widget.value() 
             value_format = format_widget.currentText() if hasattr(format_widget, "currentText") else "U16"
             comment = comment_widget.text().strip() 
+            
+            # Skip empty rows - only include rows with a non-zero address or a name that's not the default
+            if address == 0 and name == f"Tag {row + 1}":
+                continue
+            
             tags.append({ 
                 "row": row, 
                 "name": name, 
@@ -1122,23 +1258,18 @@ class ModbusGUI(QMainWindow):
         self.connection_history_combo.currentTextChanged.connect(self._load_connection_from_history)
         self.delete_history_btn.clicked.connect(self._delete_selected_history)
 
-        # Read operation signals
-        self.read_coils_btn.clicked.connect(lambda: self._read_operation("coils"))
-        self.read_discrete_inputs_btn.clicked.connect(lambda: self._read_operation("discrete_inputs"))
-        self.read_holding_registers_btn.clicked.connect(lambda: self._read_operation("holding_registers"))
-        self.read_input_registers_btn.clicked.connect(lambda: self._read_operation("input_registers"))
+        # Monitoring tab signals (keep existing monitoring functionality)
+        if hasattr(self, 'tag_start_monitoring_btn'):
+            self.tag_start_monitoring_btn.clicked.connect(self._start_monitoring)
+        if hasattr(self, 'tag_stop_monitoring_btn'):
+            self.tag_stop_monitoring_btn.clicked.connect(self._stop_monitoring)
+        if hasattr(self, 'open_results_btn'):
+            self.open_results_btn.clicked.connect(self._show_results_window)
+        if hasattr(self, 'monitoring_table'):
+            self.monitoring_table.itemChanged.connect(self._on_monitoring_table_item_changed)
 
-        # Write operation signals
-        self.write_coil_btn.clicked.connect(lambda: self._write_operation("coil"))
-        self.write_register_btn.clicked.connect(lambda: self._write_operation("register"))
-        self.write_coils_btn.clicked.connect(lambda: self._write_operation("coils"))
-        self.write_registers_btn.clicked.connect(lambda: self._write_operation("registers"))
-
-        # Monitoring signals
-        self.start_monitoring_btn.clicked.connect(self._start_monitoring)
-        self.stop_monitoring_btn.clicked.connect(self._stop_monitoring)
-        self.open_results_btn.clicked.connect(self._show_results_window)
-        self.monitoring_table.itemChanged.connect(self._on_monitoring_table_item_changed)
+        # Note: Read/Write operation signals removed - now handled in unified Modbus Address tab
+        # Note: Data type change signals removed - now handled in unified Modbus Address tab
 
     def _on_monitoring_table_item_changed(self, item):
         # Cache manual edits to the "Write Value" column so polling never overwrites user input.
@@ -1156,6 +1287,164 @@ class ModbusGUI(QMainWindow):
             return
 
         self._monitoring_write_value_cache[(tag_name, data_type, address)] = item.text()
+
+    def _on_read_data_type_changed(self, data_type):
+        """Handle read data type selection change."""
+        # Enable/disable byte order based on data type
+        is_multi_byte = data_type in ["UInt32", "Int32", "Float32", "String"]
+        self.read_byte_order.setEnabled(is_multi_byte)
+
+    def _on_write_data_type_changed(self, data_type):
+        """Handle write data type selection change."""
+        # Enable/disable byte order based on data type
+        is_multi_byte = data_type in ["UInt32", "Int32", "Float32", "String"]
+        self.write_byte_order.setEnabled(is_multi_byte)
+
+    def _convert_data_to_display(self, raw_data, data_type, byte_order):
+        """Convert raw Modbus data to selected display format."""
+        if data_type == "Raw":
+            return str(raw_data)
+        elif data_type == "Boolean":
+            if isinstance(raw_data, list):
+                return ", ".join(["True" if x else "False" for x in raw_data])
+            return "True" if raw_data else "False"
+        elif data_type == "UInt16":
+            if isinstance(raw_data, list):
+                return ", ".join([str(x & 0xFFFF) for x in raw_data])
+            return str(raw_data & 0xFFFF)
+        elif data_type == "Int16":
+            if isinstance(raw_data, list):
+                return ", ".join([str(x if x <= 32767 else x - 65536) for x in raw_data])
+            return str(raw_data if raw_data <= 32767 else raw_data - 65536)
+        elif data_type in ["UInt32", "Int32", "Float32"]:
+            return self._convert_multi_byte_data(raw_data, data_type, byte_order)
+        elif data_type == "String":
+            return self._convert_to_string(raw_data, byte_order)
+        else:
+            return str(raw_data)
+
+    def _convert_multi_byte_data(self, raw_data, data_type, byte_order):
+        """Convert raw data to multi-byte formats."""
+        if isinstance(raw_data, list) and len(raw_data) >= 2:
+            # Combine two 16-bit registers for 32-bit values
+            reg1, reg2 = raw_data[0], raw_data[1]
+            
+            # Apply byte order
+            if byte_order == "Big Endian":
+                bytes_data = struct.pack(">HH", reg1, reg2)
+            elif byte_order == "Little Endian":
+                bytes_data = struct.pack("<HH", reg1, reg2)
+            elif byte_order == "Mid-Big Endian":
+                bytes_data = struct.pack(">HH", reg1, reg2)
+                # Swap middle bytes
+                bytes_data = bytes_data[0:1] + bytes_data[2:3] + bytes_data[1:2] + bytes_data[3:4]
+            else:  # Mid-Little Endian
+                bytes_data = struct.pack("<HH", reg1, reg2)
+                # Swap middle bytes
+                bytes_data = bytes_data[0:1] + bytes_data[2:3] + bytes_data[1:2] + bytes_data[3:4]
+            
+            # Unpack based on data type
+            if data_type == "UInt32":
+                return str(struct.unpack(">I", bytes_data)[0])
+            elif data_type == "Int32":
+                return str(struct.unpack(">i", bytes_data)[0])
+            elif data_type == "Float32":
+                return str(struct.unpack(">f", bytes_data)[0])
+        
+        return "Insufficient data"
+
+    def _convert_to_string(self, raw_data, byte_order):
+        """Convert raw data to string."""
+        if isinstance(raw_data, list):
+            # Convert each register to bytes
+            bytes_data = b""
+            for reg in raw_data:
+                if byte_order == "Big Endian":
+                    bytes_data += struct.pack(">H", reg)
+                else:
+                    bytes_data += struct.pack("<H", reg)
+            
+            # Convert to string, remove null characters
+            try:
+                return bytes_data.decode('utf-8').rstrip('\x00')
+            except UnicodeDecodeError:
+                return bytes_data.decode('latin-1', errors='replace').rstrip('\x00')
+        
+        return str(raw_data)
+
+    def _convert_input_to_raw(self, input_value, data_type, byte_order):
+        """Convert user input to raw Modbus values."""
+        try:
+            if data_type == "Boolean":
+                return bool(int(input_value))
+            elif data_type == "UInt16":
+                return int(input_value) & 0xFFFF
+            elif data_type == "Int16":
+                val = int(input_value)
+                return val if -32768 <= val <= 32767 else (val + 65536 if val < 0 else 65535)
+            elif data_type in ["UInt32", "Int32", "Float32"]:
+                return self._convert_multi_byte_input(input_value, data_type, byte_order)
+            elif data_type == "String":
+                return self._convert_string_to_registers(input_value, byte_order)
+            else:
+                return int(input_value)
+        except (ValueError, struct.error) as e:
+            raise ValueError(f"Invalid {data_type} value: {input_value}")
+
+    def _convert_multi_byte_input(self, input_value, data_type, byte_order):
+        """Convert input to multi-byte register values."""
+        if data_type == "UInt32":
+            val = int(input_value)
+            bytes_data = struct.pack(">I", val)
+        elif data_type == "Int32":
+            val = int(input_value)
+            bytes_data = struct.pack(">i", val)
+        elif data_type == "Float32":
+            val = float(input_value)
+            bytes_data = struct.pack(">f", val)
+        else:
+            raise ValueError(f"Unsupported data type: {data_type}")
+        
+        # Apply byte order and split into registers
+        if byte_order == "Big Endian":
+            reg1, reg2 = struct.unpack(">HH", bytes_data)
+        elif byte_order == "Little Endian":
+            reg1, reg2 = struct.unpack("<HH", bytes_data)
+        elif byte_order == "Mid-Big Endian":
+            reg1, reg2 = struct.unpack(">HH", bytes_data)
+            # Swap middle bytes
+            bytes_swapped = bytes_data[0:1] + bytes_data[2:3] + bytes_data[1:2] + bytes_data[3:4]
+            reg1, reg2 = struct.unpack(">HH", bytes_swapped)
+        else:  # Mid-Little Endian
+            reg1, reg2 = struct.unpack("<HH", bytes_data)
+            # Swap middle bytes
+            bytes_swapped = bytes_data[0:1] + bytes_data[2:3] + bytes_data[1:2] + bytes_data[3:4]
+            reg1, reg2 = struct.unpack("<HH", bytes_swapped)
+        
+        return [reg1, reg2]
+
+    def _convert_string_to_registers(self, input_value, byte_order):
+        """Convert string to register values."""
+        # Encode string to bytes
+        try:
+            bytes_data = input_value.encode('utf-8')
+        except UnicodeEncodeError:
+            bytes_data = input_value.encode('latin-1', errors='replace')
+        
+        # Pad to even number of bytes
+        if len(bytes_data) % 2 != 0:
+            bytes_data += b'\x00'
+        
+        # Convert to registers
+        registers = []
+        for i in range(0, len(bytes_data), 2):
+            if byte_order == "Big Endian":
+                reg = struct.unpack(">H", bytes_data[i:i+2])[0]
+            else:
+                reg = struct.unpack("<H", bytes_data[i:i+2])[0]
+            registers.append(reg)
+        
+        return registers
 
     def _connect(self):
         """Connect to Modbus server."""
@@ -1211,7 +1500,7 @@ class ModbusGUI(QMainWindow):
         if self.monitoring_active:
             self._stop_monitoring()
 
-        self._log("🔌 Disconnected from Modbus server")
+        self._log("Disconnected from Modbus server")
 
     def _set_connection_controls(self, connected: bool, connecting: bool = False):
         if connecting:
@@ -1270,50 +1559,101 @@ class ModbusGUI(QMainWindow):
             self._modbus_busy = True
             start_addr = self.read_start_addr.value()
             count = self.read_count.value()
+            data_type = self.read_data_type.currentText()
+            byte_order = self.read_byte_order.currentText()
+            
             if start_addr + count - 1 > 65535:
                 self._log("Read operation blocked: address range exceeds 65535")
                 return
 
+            raw_data = None
+            operation_name = ""
+            
             if operation_type == "coils":
-                data = self.modbus.read_coils(start_addr, count)
-                if data is not None:
-                    self._log(f"Read {len(data)} coils from {start_addr}: {data}")
-                    self._display_raw_data(f"Coils[{start_addr}:{start_addr+count-1}]", data)
-                else:
-                    extra = f" ({self.modbus.last_error})" if getattr(self.modbus, "last_error", None) else ""
-                    self._log(f"Failed to read coils{extra}")
-
+                raw_data = self.modbus.read_coils(start_addr, count)
+                operation_name = "Coils"
             elif operation_type == "discrete_inputs":
-                data = self.modbus.read_discrete_inputs(start_addr, count)
-                if data is not None:
-                    self._log(f"Read {len(data)} discrete inputs from {start_addr}: {data}")
-                    self._display_raw_data(f"DiscreteInputs[{start_addr}:{start_addr+count-1}]", data)
-                else:
-                    extra = f" ({self.modbus.last_error})" if getattr(self.modbus, "last_error", None) else ""
-                    self._log(f"Failed to read discrete inputs{extra}")
-
+                raw_data = self.modbus.read_discrete_inputs(start_addr, count)
+                operation_name = "Discrete Inputs"
             elif operation_type == "holding_registers":
-                data = self.modbus.read_registers(start_addr, count)
-                if data is not None:
-                    self._log(f"Read {len(data)} holding registers from {start_addr}: {data}")
-                    self._display_raw_data(f"HoldingRegisters[{start_addr}:{start_addr+count-1}]", data)
-                else:
-                    extra = f" ({self.modbus.last_error})" if getattr(self.modbus, "last_error", None) else ""
-                    self._log(f"Failed to read holding registers{extra}")
-
+                raw_data = self.modbus.read_registers(start_addr, count)
+                operation_name = "Holding Registers"
             elif operation_type == "input_registers":
-                data = self.modbus.read_input_registers(start_addr, count)
-                if data is not None:
-                    self._log(f"Read {len(data)} input registers from {start_addr}: {data}")
-                    self._display_raw_data(f"InputRegisters[{start_addr}:{start_addr+count-1}]", data)
-                else:
-                    extra = f" ({self.modbus.last_error})" if getattr(self.modbus, "last_error", None) else ""
-                    self._log(f"Failed to read input registers{extra}")
+                raw_data = self.modbus.read_input_registers(start_addr, count)
+                operation_name = "Input Registers"
+            
+            if raw_data is not None:
+                self._log(f"Read {len(raw_data)} {operation_name.lower()} from {start_addr}: {raw_data}")
+                self._display_raw_data(f"{operation_name}[{start_addr}:{start_addr+count-1}]", raw_data)
+                
+                # Update results table with formatted data
+                self._update_read_results_table(start_addr, raw_data, data_type, byte_order)
+            else:
+                extra = f" ({self.modbus.last_error})" if getattr(self.modbus, "last_error", None) else ""
+                self._log(f"Failed to read {operation_name.lower()}{extra}")
+                self._clear_read_results_table()
 
         except Exception as e:
             self._log(f"Read operation error: {e}")
         finally:
             self._modbus_busy = False
+
+    def _update_read_results_table(self, start_addr, raw_data, data_type, byte_order):
+        """Update the read results table with formatted data."""
+        self.read_results_table.setRowCount(0)
+        
+        if isinstance(raw_data, list):
+            # Handle multi-byte data types
+            if data_type in ["UInt32", "Int32", "Float32"]:
+                # Group registers in pairs for 32-bit values
+                for i in range(0, len(raw_data), 2):
+                    if i + 1 < len(raw_data):
+                        addr = start_addr + i
+                        raw_pair = raw_data[i:i+2]
+                        formatted = self._convert_data_to_display(raw_pair, data_type, byte_order)
+                        
+                        row = self.read_results_table.rowCount()
+                        self.read_results_table.insertRow(row)
+                        self.read_results_table.setItem(row, 0, QTableWidgetItem(str(addr)))
+                        self.read_results_table.setItem(row, 1, QTableWidgetItem(str(raw_pair)))
+                        self.read_results_table.setItem(row, 2, QTableWidgetItem(formatted))
+                        self.read_results_table.setItem(row, 3, QTableWidgetItem(data_type))
+            elif data_type == "String":
+                # Show string for entire range
+                formatted = self._convert_data_to_display(raw_data, data_type, byte_order)
+                
+                row = self.read_results_table.rowCount()
+                self.read_results_table.insertRow(row)
+                self.read_results_table.setItem(row, 0, QTableWidgetItem(f"{start_addr}-{start_addr+len(raw_data)-1}"))
+                self.read_results_table.setItem(row, 1, QTableWidgetItem(str(raw_data)))
+                self.read_results_table.setItem(row, 2, QTableWidgetItem(formatted))
+                self.read_results_table.setItem(row, 3, QTableWidgetItem(data_type))
+            else:
+                # Handle single values (Boolean, UInt16, Int16, Raw)
+                for i, value in enumerate(raw_data):
+                    addr = start_addr + i
+                    formatted = self._convert_data_to_display(value, data_type, byte_order)
+                    
+                    row = self.read_results_table.rowCount()
+                    self.read_results_table.insertRow(row)
+                    self.read_results_table.setItem(row, 0, QTableWidgetItem(str(addr)))
+                    self.read_results_table.setItem(row, 1, QTableWidgetItem(str(value)))
+                    self.read_results_table.setItem(row, 2, QTableWidgetItem(formatted))
+                    self.read_results_table.setItem(row, 3, QTableWidgetItem(data_type))
+        else:
+            # Single value
+            formatted = self._convert_data_to_display(raw_data, data_type, byte_order)
+            
+            row = self.read_results_table.rowCount()
+            self.read_results_table.insertRow(row)
+            self.read_results_table.setItem(row, 0, QTableWidgetItem(str(start_addr)))
+            self.read_results_table.setItem(row, 1, QTableWidgetItem(str(raw_data)))
+            self.read_results_table.setItem(row, 2, QTableWidgetItem(formatted))
+            self.read_results_table.setItem(row, 3, QTableWidgetItem(data_type))
+
+    def _clear_read_results_table(self):
+        """Clear the read results table."""
+        self.read_results_table.setRowCount(0)
 
     def _write_operation(self, operation_type):
         """Handle write operations."""
@@ -1333,64 +1673,111 @@ class ModbusGUI(QMainWindow):
         try:
             self._modbus_busy = True
             addr = self.write_addr.value()
+            data_type = self.write_data_type.currentText()
+            byte_order = self.write_byte_order.currentText()
+            
+            success = False
+            input_value = ""
+            raw_value = None
+            operation_name = ""
 
             if operation_type == "coil":
-                value_text = self.write_single_value.text().strip()
-                if not value_text:
+                input_value = self.write_single_value.text().strip()
+                if not input_value:
                     self._log("Please enter a value for coil")
                     return
-                value = bool(int(value_text))
-                success = self.modbus.write_coil(addr, value)
-                if success:
-                    self._log(f"Wrote coil {addr} = {value}")
-                else:
-                    self._log("Failed to write coil")
-
+                raw_value = self._convert_input_to_raw(input_value, "Boolean", byte_order)
+                success = self.modbus.write_coil(addr, raw_value)
+                operation_name = "Coil"
+                
             elif operation_type == "register":
-                value_text = self.write_single_value.text().strip()
-                if not value_text:
+                input_value = self.write_single_value.text().strip()
+                if not input_value:
                     self._log("Please enter a value for register")
                     return
-                value = int(value_text)
-                success = self.modbus.write_register(addr, value)
-                if success:
-                    self._log(f"Wrote register {addr} = {value}")
+                raw_value = self._convert_input_to_raw(input_value, data_type, byte_order)
+                
+                if isinstance(raw_value, list):
+                    # Multi-byte value, use write_registers
+                    success = self.modbus.write_registers(addr, raw_value)
+                    operation_name = "Registers"
                 else:
-                    self._log("Failed to write register")
-
+                    # Single 16-bit value
+                    success = self.modbus.write_register(addr, raw_value)
+                    operation_name = "Register"
+                    
             elif operation_type == "coils":
-                values_text = self.write_multi_values.text().strip()
-                if not values_text:
+                input_value = self.write_multi_values.text().strip()
+                if not input_value:
                     self._log("Please enter values for coils")
                     return
-                values = [bool(int(v.strip())) for v in values_text.split(",")]
+                values = [bool(int(v.strip())) for v in input_value.split(",")]
                 success = self.modbus.write_coils(addr, values)
-                if success:
-                    self._log(f"Wrote {len(values)} coils starting at {addr}: {values}")
-                else:
-                    self._log("Failed to write coils")
-
+                raw_value = values
+                operation_name = "Coils"
+                
             elif operation_type == "registers":
-                values_text = self.write_multi_values.text().strip()
-                if not values_text:
+                input_value = self.write_multi_values.text().strip()
+                if not input_value:
                     self._log("Please enter values for registers")
                     return
-                values = [int(v.strip()) for v in values_text.split(",")]
+                values = [int(v.strip()) for v in input_value.split(",")]
                 success = self.modbus.write_registers(addr, values)
-                if success:
-                    self._log(f"Wrote {len(values)} registers starting at {addr}: {values}")
-                else:
-                    self._log("Failed to write registers")
+                raw_value = values
+                operation_name = "Registers"
+            
+            # Update write results table
+            status = "Success" if success else "Failed"
+            self._update_write_results_table(addr, input_value, raw_value, status)
+            
+            if success:
+                self._log(f"Wrote {operation_name} {addr} = {input_value} (raw: {raw_value})")
+            else:
+                error_msg = getattr(self.modbus, 'last_error', 'Unknown error')
+                self._log(f"Failed to write {operation_name.lower()}: {error_msg}")
 
         except ValueError as e:
             self._log(f"Invalid value format: {e}")
+            self._update_write_results_table(addr, input_value if 'input_value' in locals() else "", "Error", f"Format Error: {e}")
         except Exception as e:
             self._log(f"Write operation error: {e}")
+            self._update_write_results_table(addr, input_value if 'input_value' in locals() else "", "Error", f"Error: {e}")
         finally:
             self._modbus_busy = False
             if was_monitoring and self.monitoring_active:
                 self._restart_monitoring_timers(monitor_interval)
                 self._log("Safety interlock: monitoring resumed after write request")
+
+    def _update_write_results_table(self, addr, input_value, raw_value, status):
+        """Update the write results table."""
+        row = self.write_results_table.rowCount()
+        self.write_results_table.insertRow(row)
+        
+        # Address
+        self.write_results_table.setItem(row, 0, QTableWidgetItem(str(addr)))
+        
+        # Input Value
+        self.write_results_table.setItem(row, 1, QTableWidgetItem(str(input_value)))
+        
+        # Raw Value
+        if isinstance(raw_value, list):
+            raw_str = ", ".join([str(v) for v in raw_value])
+        else:
+            raw_str = str(raw_value) if raw_value is not None else ""
+        self.write_results_table.setItem(row, 2, QTableWidgetItem(raw_str))
+        
+        # Status
+        status_item = QTableWidgetItem(status)
+        if status == "Success":
+            status_item.setBackground(QColor("#E8F5E8"))
+        elif status.startswith("Error"):
+            status_item.setBackground(QColor("#FFEBEE"))
+        else:
+            status_item.setBackground(QColor("#FFF3E0"))
+        self.write_results_table.setItem(row, 3, status_item)
+        
+        # Auto-scroll to latest entry
+        self.write_results_table.scrollToBottom()
 
     def _write_results_window_selected(self):
         """Write selected rows from the detached results window."""
@@ -1765,11 +2152,14 @@ class ModbusGUI(QMainWindow):
         self._monitoring_failure_count = 0
         self._monitoring_poll_in_progress = False
         self._write_poll_in_progress = False
-        interval = self.monitoring_interval.value()
+        interval = self.tag_monitoring_interval.value() if hasattr(self, 'tag_monitoring_interval') else 1000
         self._restart_monitoring_timers(interval)
 
-        self.start_monitoring_btn.setEnabled(False)
-        self.stop_monitoring_btn.setEnabled(True)
+        # Update correct button references for Tags tab
+        if hasattr(self, 'tag_start_monitoring_btn'):
+            self.tag_start_monitoring_btn.setEnabled(False)
+        if hasattr(self, 'tag_stop_monitoring_btn'):
+            self.tag_stop_monitoring_btn.setEnabled(True)
         self._set_tag_editor_enabled(False)
 
         self._log(f"Started monitoring with {interval}ms interval")
@@ -1822,8 +2212,11 @@ class ModbusGUI(QMainWindow):
         self._monitoring_poll_in_progress = False
         self._write_poll_in_progress = False
 
-        self.start_monitoring_btn.setEnabled(True)
-        self.stop_monitoring_btn.setEnabled(False)
+        # Update correct button references for Tags tab
+        if hasattr(self, 'tag_start_monitoring_btn'):
+            self.tag_start_monitoring_btn.setEnabled(True)
+        if hasattr(self, 'tag_stop_monitoring_btn'):
+            self.tag_stop_monitoring_btn.setEnabled(False)
         self._set_tag_editor_enabled(True)
 
         self._log("Stopped monitoring")
@@ -1841,7 +2234,17 @@ class ModbusGUI(QMainWindow):
             self.write_poll_timer.start(1000)
 
     def _clear_monitoring_results(self):
-        self.monitoring_table.setRowCount(0)
+        """Clear monitoring results table."""
+        # Clear caches
+        self._monitoring_read_value_cache.clear()
+        self._monitoring_write_value_cache.clear()
+        
+        # Check if diagnostics results table exists
+        if hasattr(self, 'diagnostics_results_table'):
+            self.diagnostics_results_table.setRowCount(0)
+        # Check if main monitoring table exists (for backward compatibility)
+        if hasattr(self, 'monitoring_table'):
+            self.monitoring_table.setRowCount(0)
         if self.results_window is not None:
             self._sync_results_window()
 
@@ -1881,18 +2284,56 @@ class ModbusGUI(QMainWindow):
             )
 
     def _current_result_values(self):
+        """Get current values from monitoring results."""
         values = {}
-        for row in range(self.monitoring_table.rowCount()):
-            key = (
-                self._table_item_text(self.monitoring_table, row, 0),
-                self._table_item_text(self.monitoring_table, row, 2),
-                self._table_item_text(self.monitoring_table, row, 3),
-            )
-            values[key] = {
-                "read_value": self._table_item_text(self.monitoring_table, row, 4),
-                "write_value": self._table_item_text(self.monitoring_table, row, 5),
-                "timestamp": self._table_item_text(self.monitoring_table, row, 7),
-            }
+        # Check if main monitoring table exists
+        if hasattr(self, 'monitoring_table'):
+            for row in range(self.monitoring_table.rowCount()):
+                key = (
+                    self._table_item_text(self.monitoring_table, row, 0),
+                    self._table_item_text(self.monitoring_table, row, 1),
+                    self._table_item_text(self.monitoring_table, row, 2),
+                    self._table_item_text(self.monitoring_table, row, 3),
+                )
+                values[key] = {
+                    "read_value": self._table_item_text(self.monitoring_table, row, 4),
+                    "write_value": self._table_item_text(self.monitoring_table, row, 5),
+                    "timestamp": self._table_item_text(self.monitoring_table, row, 7),
+                }
+        # Check if diagnostics results table exists
+        elif hasattr(self, 'diagnostics_results_table'):
+            for row in range(self.diagnostics_results_table.rowCount()):
+                key = (
+                    self._table_item_text(self.diagnostics_results_table, row, 0),
+                    self._table_item_text(self.diagnostics_results_table, row, 1),
+                    self._table_item_text(self.diagnostics_results_table, row, 2),
+                    self._table_item_text(self.diagnostics_results_table, row, 3),
+                )
+                values[key] = {
+                    "read_value": self._table_item_text(self.diagnostics_results_table, row, 4),
+                    "write_value": self._table_item_text(self.diagnostics_results_table, row, 5),
+                    "timestamp": self._table_item_text(self.diagnostics_results_table, row, 7),
+                }
+        else:
+            # For Tags monitoring, use the cache
+            for key, read_value in self._monitoring_read_value_cache.items():
+                write_value = self._monitoring_write_value_cache.get(key, "")
+                # Convert key from (tag_name, data_type, address) to (tag_name, mode, data_type, address)
+                tag_name, data_type, address = key
+                # Find the tag mode from the monitoring tags
+                mode = "Read"  # Default to Read since we only cache read values
+                for tag in self._get_monitoring_tags():
+                    if tag["name"] == tag_name and str(tag["address"]) == address:
+                        mode = tag["mode"]
+                        break
+                
+                full_key = (tag_name, mode, data_type, address)
+                values[full_key] = {
+                    "read_value": read_value,
+                    "write_value": write_value,
+                    "timestamp": "",  # We don't store timestamps in cache
+                }
+        
         return values
 
     def _table_item_text(self, table, row, column):
@@ -1941,6 +2382,10 @@ class ModbusGUI(QMainWindow):
                         break
 
                     display_value = self._format_monitoring_value(tag, value)
+                    
+                    # Display raw data in diagnostics for Tags monitoring
+                    self._display_raw_data(f"Tag[{tag['name']}]", value)
+                    
                     self._add_monitoring_row(
                         tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
                         tag["comment"], timestamp
@@ -1967,7 +2412,8 @@ class ModbusGUI(QMainWindow):
         finally:
             self._monitoring_poll_in_progress = False
             if self.monitoring_active:
-                self.monitoring_timer.start(self.monitoring_interval.value())
+                interval = self.tag_monitoring_interval.value() if hasattr(self, 'tag_monitoring_interval') else 1000
+                self.monitoring_timer.start(interval)
 
     def _update_write_tag_values(self):
         """Poll write-mode tags at a fixed 1000ms interval for their current device values."""
@@ -2111,20 +2557,40 @@ class ModbusGUI(QMainWindow):
     def _add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp):
         """Add or update a tag row in the monitoring results table."""
         key = (tag_name, data_type, str(address))
+        
+        # Store read value in cache for Tags monitoring
+        if read_value:
+            self._monitoring_read_value_cache[key] = read_value
+        
         if write_value:
             self._monitoring_write_value_cache[key] = write_value
 
         cached_write_value = self._monitoring_write_value_cache.get(key, "")
         initial_write_value = write_value if write_value else cached_write_value
 
-        row_count = self.monitoring_table.rowCount()
+        # Use diagnostics results table if main monitoring table doesn't exist
+        target_table = None
+        if hasattr(self, 'monitoring_table'):
+            target_table = self.monitoring_table
+        elif hasattr(self, 'diagnostics_results_table'):
+            target_table = self.diagnostics_results_table
+        
+        if target_table is None:
+            # For Tags monitoring, update the results window directly
+            if self.results_window is not None:
+                self.results_window.update_row(
+                    tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
+                )
+            return
+            
+        row_count = target_table.rowCount()
 
         self._updating_monitoring_table = True
         try:
             for row in range(row_count):
-                name_item = self.monitoring_table.item(row, 0)
-                type_item = self.monitoring_table.item(row, 2)
-                address_item = self.monitoring_table.item(row, 3)
+                name_item = target_table.item(row, 0)
+                type_item = target_table.item(row, 2)
+                address_item = target_table.item(row, 3)
                 if (
                     name_item and type_item and address_item
                     and name_item.text() == tag_name
@@ -2133,41 +2599,41 @@ class ModbusGUI(QMainWindow):
                 ):
                     # Don't mutate the row while the user is typing a write value; it cancels the editor.
                     if (
-                        self.monitoring_table.state() == QAbstractItemView.EditingState
-                        and self.monitoring_table.currentRow() == row
-                        and self.monitoring_table.currentColumn() == 5
+                        target_table.state() == QAbstractItemView.EditingState
+                        and target_table.currentRow() == row
+                        and target_table.currentColumn() == 5
                     ):
                         return
 
-                    self.monitoring_table.setItem(row, 1, QTableWidgetItem(mode))
-                    self.monitoring_table.setItem(row, 3, QTableWidgetItem(str(address)))
+                    target_table.setItem(row, 1, QTableWidgetItem(mode))
+                    target_table.setItem(row, 3, QTableWidgetItem(str(address)))
                     if read_value:
-                        self.monitoring_table.setItem(row, 4, QTableWidgetItem(read_value))
+                        target_table.setItem(row, 4, QTableWidgetItem(read_value))
 
                     # Only set the write column if we have a meaningful value to show.
                     # This avoids stomping on user edits during polling.
                     if write_value:
-                        self.monitoring_table.setItem(row, 5, QTableWidgetItem(write_value))
-                    elif initial_write_value and self.monitoring_table.item(row, 5) is None:
-                        self.monitoring_table.setItem(row, 5, QTableWidgetItem(initial_write_value))
+                        target_table.setItem(row, 5, QTableWidgetItem(write_value))
+                    elif initial_write_value and target_table.item(row, 5) is None:
+                        target_table.setItem(row, 5, QTableWidgetItem(initial_write_value))
 
-                    self.monitoring_table.setItem(row, 6, QTableWidgetItem(comment))
-                    self.monitoring_table.setItem(row, 7, QTableWidgetItem(timestamp))
+                    target_table.setItem(row, 6, QTableWidgetItem(comment))
+                    target_table.setItem(row, 7, QTableWidgetItem(timestamp))
                     if self.results_window is not None:
                         self.results_window.update_row(
                             tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
                         )
                     return
 
-            self.monitoring_table.insertRow(row_count)
-            self.monitoring_table.setItem(row_count, 0, QTableWidgetItem(tag_name))
-            self.monitoring_table.setItem(row_count, 1, QTableWidgetItem(mode))
-            self.monitoring_table.setItem(row_count, 2, QTableWidgetItem(data_type))
-            self.monitoring_table.setItem(row_count, 3, QTableWidgetItem(str(address)))
-            self.monitoring_table.setItem(row_count, 4, QTableWidgetItem(read_value))
-            self.monitoring_table.setItem(row_count, 5, QTableWidgetItem(initial_write_value))
-            self.monitoring_table.setItem(row_count, 6, QTableWidgetItem(comment))
-            self.monitoring_table.setItem(row_count, 7, QTableWidgetItem(timestamp))
+            target_table.insertRow(row_count)
+            target_table.setItem(row_count, 0, QTableWidgetItem(tag_name))
+            target_table.setItem(row_count, 1, QTableWidgetItem(mode))
+            target_table.setItem(row_count, 2, QTableWidgetItem(data_type))
+            target_table.setItem(row_count, 3, QTableWidgetItem(str(address)))
+            target_table.setItem(row_count, 4, QTableWidgetItem(read_value))
+            target_table.setItem(row_count, 5, QTableWidgetItem(initial_write_value))
+            target_table.setItem(row_count, 6, QTableWidgetItem(comment))
+            target_table.setItem(row_count, 7, QTableWidgetItem(timestamp))
         finally:
             self._updating_monitoring_table = False
 
@@ -2186,23 +2652,98 @@ class ModbusGUI(QMainWindow):
     def _log(self, message):
         """Add message to log output."""
         timestamp = time.strftime("[%H:%M:%S]")
-        current_text = self.log_output.toPlainText()
-        if current_text:
-            current_text += "\n"
-        current_text += f"{timestamp} {message}"
-        self.log_output.setPlainText(current_text)
-
-        # Auto scroll to bottom
-        scrollbar = self.log_output.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        formatted_message = f"{timestamp} {message}"
+        
+        # Update main log output if it exists
+        if hasattr(self, 'log_output'):
+            current_text = self.log_output.toPlainText()
+            if current_text:
+                current_text += "\n"
+            current_text += formatted_message
+            self.log_output.setPlainText(current_text)
+            
+            # Auto scroll to bottom
+            scrollbar = self.log_output.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        
+        # Update diagnostics log if it exists
+        if hasattr(self, 'diagnostics_log_output'):
+            current_text = self.diagnostics_log_output.toPlainText()
+            if current_text:
+                current_text += "\n"
+            current_text += formatted_message
+            self.diagnostics_log_output.setPlainText(current_text)
+            
+            # Auto scroll to bottom
+            scrollbar = self.diagnostics_log_output.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
 
     def _display_raw_data(self, title, data):
         """Display raw data in the data output tab."""
-        current_text = self.data_output.toPlainText()
-        if current_text:
-            current_text += "\n\n"
-        current_text += f"[{time.strftime('%H:%M:%S')}] {title}:\n{data}"
-        self.data_output.setPlainText(current_text)
+        timestamp = time.strftime('[%H:%M:%S]')
+        
+        # Update statistics
+        self.advanced_diagnostics.update_request_stats(
+            success=data is not None, 
+            function_code=self._get_function_code_from_title(title),
+            exception_code=self._get_exception_code_from_error() if data is None else None
+        )
+        
+        if self.advanced_diagnostics.advanced_diagnostics:
+            # Create detailed diagnostics information
+            detailed_info = self.advanced_diagnostics.create_advanced_diagnostics(title, data, self.modbus)
+            formatted_data = f"{timestamp} {title}:\n{data}\n\n--- Advanced Diagnostics ---\n{detailed_info}"
+        else:
+            formatted_data = f"{timestamp} {title}:\n{data}"
+        
+        # Update main data output if it exists
+        if hasattr(self, 'data_output'):
+            current_text = self.data_output.toPlainText()
+            if current_text:
+                current_text += "\n\n"
+            current_text += formatted_data
+            self.data_output.setPlainText(current_text)
+            
+            # Auto scroll to bottom
+            scrollbar = self.data_output.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        
+        # Update diagnostics raw data if it exists
+        if hasattr(self, 'diagnostics_data_output'):
+            current_text = self.diagnostics_data_output.toPlainText()
+            if current_text:
+                current_text += "\n\n"
+            current_text += formatted_data
+            self.diagnostics_data_output.setPlainText(current_text)
+            
+            # Auto scroll to bottom
+            scrollbar = self.diagnostics_data_output.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+    
+    def _get_function_code_from_title(self, title):
+        """Extract function code from title for statistics."""
+        # Simple mapping based on title content
+        if "Address[" in title or "Tag[" in title:
+            return 0x03  # Default to Read Holding Registers
+        return 0x01  # Default to Read Coils
+    
+    def _get_exception_code_from_error(self):
+        """Extract exception code from modbus error."""
+        if not self.modbus or not hasattr(self.modbus, 'last_error'):
+            return None
+        
+        error = self.modbus.last_error.lower()
+        if 'illegal function' in error:
+            return 0x01
+        elif 'illegal data address' in error or 'illegal address' in error:
+            return 0x02
+        elif 'illegal data value' in error:
+            return 0x03
+        elif 'server device failure' in error:
+            return 0x04
+        elif 'server device busy' in error:
+            return 0x06
+        return None
 
     def _load_settings(self):
         """Load user settings and preferences."""
@@ -2236,8 +2777,16 @@ class ModbusGUI(QMainWindow):
         if self.modbus:
             self._disconnect()
         self._clear_monitoring_results()
-        self.log_output.clear()
-        self.data_output.clear()
+        # Clear logs if they exist
+        if hasattr(self, 'log_output'):
+            self.log_output.clear()
+        if hasattr(self, 'data_output'):
+            self.data_output.clear()
+        # Clear diagnostics logs if they exist
+        if hasattr(self, 'diagnostics_log_output'):
+            self.diagnostics_log_output.clear()
+        if hasattr(self, 'diagnostics_data_output'):
+            self.diagnostics_data_output.clear()
         self._log("🆕 New session started")
 
     def _save_session(self):
@@ -2277,13 +2826,10 @@ class ModbusGUI(QMainWindow):
 
     def _network_diagnostics(self): 
         """Show network diagnostics.""" 
-        dialog = NetworkDiagnosticsDialog(
-            host=self.ip_input.text().strip() or "127.0.0.1",
-            port=int(self.port_input.value()),
-            unit_id=int(self.unit_input.value()),
-            parent=self,
-        )
-        dialog.exec()
+        host = self.ip_input.text().strip() or "127.0.0.1"
+        port = int(self.port_input.value())
+        unit_id = int(self.unit_id_input.value()) if hasattr(self, 'unit_id_input') else 1
+        self.network_diagnostics.show_diagnostics(host, port, unit_id)
 
     def _show_documentation(self):
         """Show documentation."""
@@ -2311,6 +2857,8 @@ class ModbusGUI(QMainWindow):
                          "&bull; Data templates<br>"
                          "&bull; Scripting console<br>"
                          "&bull; Documentation viewer<br><br>"
+                         "If you find this tool helpful, consider supporting the developer:<br>"
+                         "<a href=\"https://buymeacoffee.com/craftparking\">Buy Me a Coffee</a><br><br>"
                          "GitHub: <a href=\"https://github.com/CraftParking/ModbusLens\">https://github.com/CraftParking/ModbusLens</a><br><br>"
                          "&copy; 2026 ModbusLens Team")
 
@@ -2492,143 +3040,6 @@ class NetworkDiagnosticsWorker(QThread):
                     self._emit(f"Modbus Connect: FAIL ({e})")
         finally:
             self.done.emit(ok)
-
-
-class NetworkDiagnosticsDialog(QDialog):
-    def __init__(self, host: str, port: int, unit_id: int, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Network Diagnostics")
-        self.setModal(True)
-        self.resize(760, 460)
-
-        self._worker = None
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
-
-        form = QGroupBox("Target")
-        form_layout = QGridLayout(form)
-        form_layout.setSpacing(8)
-
-        form_layout.addWidget(QLabel("Host/IP:"), 0, 0)
-        self.host_input = QLineEdit(host)
-        self.host_input.setStyleSheet(self._input_style())
-        form_layout.addWidget(self.host_input, 0, 1)
-
-        form_layout.addWidget(QLabel("Port:"), 0, 2)
-        self.port_input = QSpinBox()
-        self.port_input.setRange(1, 65535)
-        self.port_input.setValue(int(port))
-        self.port_input.setStyleSheet(self._input_style())
-        form_layout.addWidget(self.port_input, 0, 3)
-
-        form_layout.addWidget(QLabel("Unit ID:"), 1, 0)
-        self.unit_input = QSpinBox()
-        self.unit_input.setRange(1, 247)
-        self.unit_input.setValue(int(unit_id))
-        self.unit_input.setStyleSheet(self._input_style())
-        form_layout.addWidget(self.unit_input, 1, 1)
-
-        form_layout.addWidget(QLabel("Timeout (s):"), 1, 2)
-        self.timeout_input = QSpinBox()
-        self.timeout_input.setRange(1, 30)
-        self.timeout_input.setValue(2)
-        self.timeout_input.setStyleSheet(self._input_style())
-        form_layout.addWidget(self.timeout_input, 1, 3)
-
-        self.modbus_check = QCheckBox("Also test Modbus connect")
-        self.modbus_check.setChecked(True)
-        form_layout.addWidget(self.modbus_check, 2, 0, 1, 4)
-
-        layout.addWidget(form)
-
-        self.output = QTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setStyleSheet("""
-            QTextEdit {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 10px;
-            }
-        """)
-        layout.addWidget(self.output)
-
-        buttons = QHBoxLayout()
-        self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #333333;")
-        buttons.addWidget(self.status_label)
-        buttons.addStretch()
-
-        self.run_btn = QPushButton("Run Tests")
-        self.run_btn.setStyleSheet(self._button_style(primary=True))
-        self.run_btn.clicked.connect(self._run)
-        buttons.addWidget(self.run_btn)
-
-        close_btn = QPushButton("Close")
-        close_btn.setStyleSheet(self._button_style())
-        close_btn.clicked.connect(self.reject)
-        buttons.addWidget(close_btn)
-
-        layout.addLayout(buttons)
-
-    def _append(self, line: str):
-        current = self.output.toPlainText()
-        if current:
-            current += "\n"
-        current += line
-        self.output.setPlainText(current)
-        scrollbar = self.output.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
-
-    def _set_running(self, running: bool):
-        self.host_input.setEnabled(not running)
-        self.port_input.setEnabled(not running)
-        self.unit_input.setEnabled(not running)
-        self.timeout_input.setEnabled(not running)
-        self.modbus_check.setEnabled(not running)
-        self.run_btn.setEnabled(not running)
-
-    def _run(self):
-        if self._worker is not None and self._worker.isRunning():
-            return
-
-        self.output.clear()
-        self.status_label.setText("Running...")
-        self._set_running(True)
-
-        self._worker = NetworkDiagnosticsWorker(
-            host=self.host_input.text().strip(),
-            port=int(self.port_input.value()),
-            unit_id=int(self.unit_input.value()),
-            timeout_s=float(self.timeout_input.value()),
-            test_modbus=bool(self.modbus_check.isChecked()),
-        )
-        self._worker.output.connect(self._append)
-        self._worker.done.connect(self._done)
-        self._worker.start()
-
-    def _done(self, ok: bool):
-        self.status_label.setText("OK" if ok else "FAILED")
-        self._set_running(False)
-        self._worker = None
-
-    @staticmethod
-    def _input_style() -> str:
-        return """
-            QSpinBox, QLineEdit {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                border-radius: 4px;
-                padding: 5px;
-            }
-            QSpinBox:focus, QLineEdit:focus {
-                border-color: #007ACC;
-            }
-        """
 
     @staticmethod
     def _button_style(primary: bool = False) -> str:
