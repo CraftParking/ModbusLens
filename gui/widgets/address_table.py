@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
 
     QPushButton, QTableWidget, QHeaderView, QComboBox, QSpinBox,
 
-    QCheckBox, QGroupBox, QSplitter, QTextEdit, QTableWidgetItem
+    QCheckBox, QGroupBox, QSplitter, QTextEdit, QTableWidgetItem, QSizePolicy, QAbstractItemView
 
 )
 
@@ -49,6 +49,8 @@ class AddressTableWidget(QWidget):
         """Setup the address table interface."""
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
 
         
 
@@ -113,9 +115,7 @@ class AddressTableWidget(QWidget):
         address_layout.addWidget(QLabel("Count:"))
 
         self.count_input = QSpinBox()
-
-        self.count_input.setRange(1, 200)
-
+        self.count_input.setRange(1, 2000)  # Modbus standard allows up to 2000 registers/coils
         self.count_input.setValue(1)  # Default to 1 for new layout
 
         address_layout.addWidget(self.count_input)
@@ -245,16 +245,22 @@ class AddressTableWidget(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
         self.table.setMinimumHeight(400)  # Ensure minimum height
-
         
-
+        # Add proper size policy for resizing
+        # Constrain table to proper size within layout
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.table.setMinimumHeight(300)
+        self.table.setMaximumHeight(400)  # Limit table height to prevent overflow
+        
         # Make table scrollable and enable value modification
-
-        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # Show when needed
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
         self.table.setAutoScroll(True)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        
+        # Ensure proper viewport behavior
+        self.table.viewport().setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed | QTableWidget.AnyKeyPressed)
 
@@ -313,6 +319,7 @@ class AddressTableWidget(QWidget):
         self.table.cellChanged.connect(self.on_cell_changed)
 
         layout.addWidget(self.table)
+        layout.setStretchFactor(self.table, 1)  # Normal stretch factor
 
         
 
@@ -418,19 +425,11 @@ class AddressTableWidget(QWidget):
 
         
 
-        # Limit to 20 addresses per page for better visibility
+        # Modbus standard allows up to 2000 registers/2000 coils per request
+        # Remove artificial 20-row limitation for full Modbus compliance
+        # The table will handle any reasonable count within Modbus specifications
 
-        max_per_page = 20
-
-        if count > max_per_page:
-
-            self.log(f"Limiting to {max_per_page} addresses per page (requested {count})")
-
-            count = max_per_page
-
-            self.count_input.setValue(max_per_page)
-
-            
+        
 
         # Clear existing data
 

@@ -1,6 +1,5 @@
 import sys
 import logging
-import math
 import time
 import socket
 import struct
@@ -12,7 +11,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QTableWidget, QHeaderView, QTableWidgetItem,
     QComboBox, QSpinBox, QTabWidget, QGroupBox, QStatusBar,
     QApplication, QMessageBox, QDialog, QTextEdit, QCheckBox,
-    QAbstractItemView, QFrame, QGridLayout
+    QAbstractItemView, QFrame, QGridLayout, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QColor, QIcon
@@ -182,10 +181,13 @@ class ModbusGUI(QMainWindow):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
-        # Top section: Connection and status
+        # Top section: Connection and status (fixed height)
         self._setup_connection_section(main_layout)
+        
+        # Add stretch to allow proper resizing
+        main_layout.addStretch(0)
 
-        # Operations section (full height, no bottom section)
+        # Operations section (expands to fill available space)
         self._setup_operations_section(main_layout)
 
     def _setup_connection_section(self, parent_layout):
@@ -307,10 +309,17 @@ class ModbusGUI(QMainWindow):
 
         # Network Interface Selection
         interface_layout = QHBoxLayout()
-        interface_layout.addWidget(QLabel("Network Interface:"))
+        interface_layout.setSpacing(15)
+        
+        interface_label = QLabel("Network Interface:")
+        interface_label.setStyleSheet("color: #333333; font-weight: bold;")
+        interface_label.setMinimumWidth(120)  # Ensure label has consistent width
+        interface_layout.addWidget(interface_label)
         
         self.network_interface_combo = QComboBox()
-        self.network_interface_combo.setMinimumWidth(250)
+        self.network_interface_combo.setMinimumWidth(200)  # Reduced from 250
+        self.network_interface_combo.setMaximumWidth(300)  # Set maximum width
+        self.network_interface_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.network_interface_combo.setStyleSheet(self._get_input_style())
         
         # Populate network interfaces
@@ -326,10 +335,14 @@ class ModbusGUI(QMainWindow):
         self.network_interface_combo.currentTextChanged.connect(self.on_network_interface_changed)
         interface_layout.addWidget(self.network_interface_combo)
         
-        # Refresh button
+        # Add stretch to push refresh button to the right
+        interface_layout.addStretch()
+        
+        # Refresh button with proper sizing
         refresh_interface_btn = QPushButton("Refresh")
         refresh_interface_btn.setStyleSheet(self._get_button_style())
         refresh_interface_btn.clicked.connect(self.refresh_network_interfaces)
+        refresh_interface_btn.setMinimumWidth(80)
         refresh_interface_btn.setMaximumWidth(80)
         interface_layout.addWidget(refresh_interface_btn)
         
@@ -398,6 +411,7 @@ class ModbusGUI(QMainWindow):
         """Setup operations section with full height for address tables."""
         # Tab widget for operations
         self.tab_widget = QTabWidget()
+        self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
                 border: 1px solid #CCCCCC;
@@ -430,6 +444,7 @@ class ModbusGUI(QMainWindow):
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
         parent_layout.addWidget(self.tab_widget)
+        parent_layout.setStretchFactor(self.tab_widget, 1)  # Make tab widget expand
 
     def _setup_address_table_tab(self):
         """Setup Address Table tab with ModScan-like interface."""
@@ -441,32 +456,68 @@ class ModbusGUI(QMainWindow):
         """Setup monitoring tab with real-time data display."""
         monitor_widget = QWidget()
         layout = QVBoxLayout(monitor_widget)
+        layout.setSpacing(10)
+        layout.setContentsMargins(10, 10, 10, 10)
 
-        # Control buttons
-        control_layout = QHBoxLayout()
+        # Control buttons section
+        control_group = QGroupBox("Monitoring Controls")
+        control_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                color: #222222;
+                border: 1px solid #CCCCCC;
+                border-radius: 8px;
+                margin-top: 1ex;
+                background-color: #F8F8F8;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 10px 0 10px;
+            }
+        """)
+        control_layout = QVBoxLayout(control_group)
+        control_layout.setSpacing(10)
+        control_layout.setContentsMargins(15, 15, 15, 15)
+
+        # First row: Monitoring buttons
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(10)
 
         self.tag_start_monitoring_btn = QPushButton("Start Monitoring")
         self.tag_start_monitoring_btn.setStyleSheet(self._get_button_style())
         self.tag_start_monitoring_btn.setEnabled(False)  # Initially disabled until connection
-        control_layout.addWidget(self.tag_start_monitoring_btn)
+        self.tag_start_monitoring_btn.setMinimumWidth(120)
+        buttons_layout.addWidget(self.tag_start_monitoring_btn)
 
         self.tag_stop_monitoring_btn = QPushButton("Stop Monitoring")
         self.tag_stop_monitoring_btn.setStyleSheet(self._get_button_style())
         self.tag_stop_monitoring_btn.setEnabled(False)
-        control_layout.addWidget(self.tag_stop_monitoring_btn)
+        self.tag_stop_monitoring_btn.setMinimumWidth(120)
+        buttons_layout.addWidget(self.tag_stop_monitoring_btn)
 
         self.open_results_btn = QPushButton("Open Results Window")
         self.open_results_btn.setStyleSheet(self._get_button_style())
-        control_layout.addWidget(self.open_results_btn)
+        self.open_results_btn.setMinimumWidth(140)
+        buttons_layout.addWidget(self.open_results_btn)
 
-        control_layout.addWidget(QLabel("Interval (ms):"))
+        # Add stretch to push interval controls to the right
+        buttons_layout.addStretch()
+
+        # Interval controls
+        interval_label = QLabel("Interval (ms):")
+        interval_label.setStyleSheet("color: #333333; font-weight: normal;")
+        buttons_layout.addWidget(interval_label)
+
         self.tag_monitoring_interval = QSpinBox()
         self.tag_monitoring_interval.setRange(100, 10000)
         self.tag_monitoring_interval.setValue(1000)
         self.tag_monitoring_interval.setStyleSheet(self._get_input_style())
-        control_layout.addWidget(self.tag_monitoring_interval)
+        self.tag_monitoring_interval.setMinimumWidth(80)
+        buttons_layout.addWidget(self.tag_monitoring_interval)
 
-        layout.addLayout(control_layout)
+        control_layout.addLayout(buttons_layout)
+        layout.addWidget(control_group)
 
         # Tag manager table (Excel-style)
         tag_group = QGroupBox("Tags")
@@ -486,12 +537,23 @@ class ModbusGUI(QMainWindow):
             }
         """)
         tag_layout = QVBoxLayout(tag_group)
+        tag_layout.setSpacing(10)
+        tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
 
         self.monitoring_tag_table = QTableWidget() 
         self.monitoring_tag_table.setColumnCount(7) 
         self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Comment"]) 
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True) 
-        self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows) 
+        self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.monitoring_tag_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.monitoring_tag_table.setMinimumHeight(200)  # Ensure minimum height
+        self.monitoring_tag_table.setMaximumHeight(16777215)  # Remove maximum height constraint
+        
+        # Ensure proper scrolling
+        self.monitoring_tag_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.monitoring_tag_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.monitoring_tag_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.monitoring_tag_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel) 
         self.monitoring_tag_table.setStyleSheet(""" 
             QTableWidget { 
                 background-color: #FFFFFF; 
@@ -507,16 +569,25 @@ class ModbusGUI(QMainWindow):
             }
         """)
         tag_layout.addWidget(self.monitoring_tag_table)
+        tag_layout.setStretchFactor(self.monitoring_tag_table, 1)  # Make table expand
 
         tag_buttons_layout = QHBoxLayout()
+        tag_buttons_layout.setSpacing(10)
+        tag_buttons_layout.setContentsMargins(0, 10, 0, 0)
+        
         self.add_tag_btn = QPushButton("Add Tag")
         self.add_tag_btn.setStyleSheet(self._get_button_style())
+        self.add_tag_btn.setMinimumWidth(100)
         tag_buttons_layout.addWidget(self.add_tag_btn)
 
         self.remove_tag_btn = QPushButton("Remove Selected Tag")
         self.remove_tag_btn.setStyleSheet(self._get_button_style())
         self.remove_tag_btn.setEnabled(False)
+        self.remove_tag_btn.setMinimumWidth(150)
         tag_buttons_layout.addWidget(self.remove_tag_btn)
+        
+        # Add stretch to push buttons to the left
+        tag_buttons_layout.addStretch()
 
         tag_layout.addLayout(tag_buttons_layout)
         layout.addWidget(tag_group)
