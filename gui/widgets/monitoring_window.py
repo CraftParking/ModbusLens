@@ -140,9 +140,14 @@ class MonitoringResultsWindow(QMainWindow):
 
     def _find_row(self, tag_name, data_type, address):
         for row in range(self.table.rowCount()):
-            if (self._item_text(row, 0) == tag_name and
-                self._item_text(row, 2) == data_type and
-                self._item_text(row, 3) == str(address)):
+            existing_name = self._item_text(row, 0)
+            existing_type = self._item_text(row, 2)
+            existing_address = self._item_text(row, 3)
+            
+            # More flexible matching - check if key fields match
+            if (existing_name == tag_name and
+                existing_type == data_type and
+                existing_address == str(address)):
                 return row
         return None
 
