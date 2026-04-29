@@ -34,11 +34,13 @@ To provide industrial automation engineers with a reliable, feature-rich Modbus 
 
 ### 🖥️ **Professional GUI Interface**
 - **Modern PySide6 Interface**: Clean, responsive, and professional design
+- **Responsive Layout**: Proper window resizing without element overlapping
 - **Address Table**: Configurable address ranges and function selection
 - **Real-time Monitoring**: Live data updates with configurable intervals
 - **Tag Management System**: Excel-style tag configuration and management
 - **Network Interface Selection**: Choose specific network adapters for communication
 - **Smart Control Logic**: Functions disabled until connection established
+- **Clean Codebase**: Optimized and streamlined project structure
 
 ### 🔍 **Enterprise Network Diagnostics**
 - **Wireshark-like Packet Capture**: Advanced network analysis capabilities
@@ -138,24 +140,24 @@ python gui_main.py
 ```
 ModbusLens/
 ├── 📁 gui/
-│   ├── 📁 main_window.py           # Main GUI application
+│   ├── � main_window.py           # Main GUI application
 │   ├── 📁 widgets/
-│   │   ├── 📁 address_table.py     # Address table interface
-│   │   ├── 📁 monitoring_window.py # Results display
-│   │   └── 📁 status_indicator.py  # Connection status
+│   │   ├── � address_table.py     # Address table interface
+│   │   ├── � monitoring_window.py # Results display
+│   │   └── � status_indicator.py  # Connection status
 │   ├── 📁 monitoring/
-│   │   └── 📁 monitoring_manager.py # Real-time data management
+│   │   └── � monitoring_manager.py # Real-time data management
 │   └── 📁 network/
-│       └── 📁 network_diagnostics.py # Advanced network analysis
+│       └── � network_diagnostics.py # Advanced network analysis
 ├── 📁 core/
-│   └── 📁 modbus_client.py         # Modbus TCP communication
+│   └── � modbus_client.py         # Modbus TCP communication
 ├── 📁 diagnostics/
-│   ├── 📁 advanced_diagnostics.py  # Advanced diagnostic tools
-│   └── 📁 diagnostics_dialogs.py   # Diagnostic interface
+│   ├── � advanced_diagnostics.py  # Advanced diagnostic tools
+│   └── � diagnostics_dialogs.py   # Diagnostic interface
 ├── 📁 assets/                      # Images and resources
-├── 📁 config/                      # Configuration files
-├── 📁 tests/                       # Test suite
-├── 📄 gui_main.py                  # Main application entry
+├── � app_paths.py                # Application path utilities
+├── � gui_main.py                  # Main application entry
+├── 📄 main.py                      # CLI application entry
 ├── 📄 requirements.txt             # Python dependencies
 └── 📄 README.md                    # This file
 ```
@@ -185,6 +187,9 @@ ModbusLens/
 - [x] Smart write/read function separation
 - [x] Connection history management
 - [x] Error handling and recovery
+- [x] Responsive layout design (no element overlapping)
+- [x] Clean and optimized codebase
+- [x] Cross-platform path management
 
 ### 🔄 **In Development**
 - [ ] Data logging and export functionality
