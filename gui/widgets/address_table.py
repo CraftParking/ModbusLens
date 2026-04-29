@@ -473,27 +473,30 @@ class AddressTableWidget(QWidget):
 
             # Value column (editable only for write functions, read-only for read functions)
 
-            value_item = QTableWidgetItem("")
-
-            if is_write:
-
-                value_item.setFlags(value_item.flags() | Qt.ItemIsEditable)
-
-                # Light blue background for writable values
-
-                value_item.setBackground(QColor("#E6F3FF"))  # Light blue for editable
-
+            if is_write and "Coil" in function:
+                # Use checkbox for coil write functions
+                checkbox = QCheckBox()
+                checkbox.setChecked(False)  # Default to false
+                checkbox.setStyleSheet("QCheckBox { margin-left: 5px; }")
+                self.table.setCellWidget(i, 1, checkbox)
+                # Connect checkbox state change to write function
+                checkbox.stateChanged.connect(lambda state, row=i: self.on_coil_checkbox_changed(row, state))
             else:
+                # Use regular text item for registers and read functions
+                value_item = QTableWidgetItem("")
+                
+                if is_write:
+                    value_item.setFlags(value_item.flags() | Qt.ItemIsEditable)
+                    # Light blue background for writable values
+                    value_item.setBackground(QColor("#E6F3FF"))  # Light blue for editable
+                else:
+                    value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
+                    # White background for read-only values
+                    value_item.setBackground(QColor("#FFFFFF"))  # White for read-only
+                
+                self.table.setItem(i, 1, value_item)
 
-                value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
 
-                # White background for read-only values
-
-                value_item.setBackground(QColor("#FFFFFF"))  # White for read-only
-
-            self.table.setItem(i, 1, value_item)
-
-        
 
         # STRICT: Do NOT enable monitoring controls - only enable when there's active connection
 
@@ -990,6 +993,20 @@ class AddressTableWidget(QWidget):
     def write_value_to_device(self, address, value):
         """Write a single value to the Modbus device."""
         try:
+            # Check if parent window and modbus connection exist
+            if not hasattr(self, 'parent_window') or not self.parent_window:
+                self.log("Error: No parent window available for write operation")
+                return False
+            
+            if not hasattr(self.parent_window, 'modbus') or not self.parent_window.modbus:
+                self.log("Error: No Modbus connection available for write operation")
+                return False
+                
+            # Check if modbus is connected
+            if not self.parent_window.modbus.is_connected():
+                self.log("Error: Not connected to Modbus device for write operation")
+                return False
+            
             if "Write Single Coil" in self.current_function:
                 return self.parent_window.modbus.write_coil(address, value)
             elif "Write Single Register" in self.current_function:
@@ -1008,6 +1025,38 @@ class AddressTableWidget(QWidget):
             return False
 
             
+
+    def on_coil_checkbox_changed(self, row, state):
+        """Handle coil checkbox state change for write operations."""
+        try:
+            # Only process changes for write functions
+            if not hasattr(self, 'current_function') or not self.current_function:
+                return
+                
+            is_write = "Write" in self.current_function
+            if not is_write:
+                return  # Don't process changes for read functions
+                
+            # Convert checkbox state to boolean value
+            value = (state == 2)  # Qt.Checked is 2, Qt.Unchecked is 0
+            
+            # Get the address for this row
+            address = self.current_start_address + row
+            
+            # Store the value in current_data
+            self.current_data[address] = value
+            self.log(f"Coil checkbox changed: {'ON' if value else 'OFF'} at address {address}")
+            
+            # Write to device immediately
+            success = self.write_value_to_device(address, value)
+            
+            if success:
+                self.log(f"Wrote coil {'ON' if value else 'OFF'} to address {address}")
+            else:
+                self.log(f"Coil write failed to address {address}: {getattr(self.parent_window.modbus, 'last_error', 'Unknown error')}")
+                
+        except Exception as e:
+            self.log(f"Error in coil checkbox handler: {e}")
 
     def log(self, message):
 
