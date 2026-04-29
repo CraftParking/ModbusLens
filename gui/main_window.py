@@ -1389,7 +1389,7 @@ class ModbusGUI(QMainWindow):
             return
 
         was_monitoring = self.monitoring_active
-        monitor_interval = self.monitoring_interval.value()
+        monitor_interval = self.tag_monitoring_interval.value()
         if was_monitoring:
             self.monitoring_timer.stop()
             self.write_poll_timer.stop()
@@ -1521,7 +1521,7 @@ class ModbusGUI(QMainWindow):
         tags_by_key = {self._tag_key(tag): tag for tag in self._get_monitoring_tags()}
         wrote_any = False
         was_monitoring = self.monitoring_active
-        monitor_interval = self.monitoring_interval.value()
+        monitor_interval = self.tag_monitoring_interval.value()
 
         if was_monitoring:
             self.monitoring_timer.stop()
@@ -1571,7 +1571,7 @@ class ModbusGUI(QMainWindow):
                 self._log("Safety interlock: monitoring resumed after write request")
 
         if wrote_any:
-            self.output_tabs.setCurrentWidget(self.monitoring_table)
+            self.tab_widget.setCurrentWidget(self.monitoring_tag_table)
 
     def _tag_key(self, tag):
         return (tag["name"], tag["type"], str(tag["address"]))
