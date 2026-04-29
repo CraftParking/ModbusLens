@@ -29,7 +29,7 @@ class MonitoringManager:
             if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, format_widget, comment_widget)):
                 continue
 
-            name = name_widget.text().strip() or f"Tag {row + 1}"
+            name = name_widget.text().strip()
             mode = mode_widget.currentText()
             tag_type = type_widget.currentText()
             address = address_widget.value()
@@ -37,8 +37,12 @@ class MonitoringManager:
             value_format = format_widget.currentText() if hasattr(format_widget, "currentText") else "U16"
             comment = comment_widget.text().strip()
             
-            # Skip empty rows - only include rows with a non-zero address or a name that's not the default
-            if address == 0 and name == f"Tag {row + 1}":
+            # Skip rows without names - this prevents duplicate tags
+            if not name:
+                continue
+            
+            # Skip default placeholder names like Tag_1, Tag_2, etc.
+            if name.startswith("Tag_") and name.split("_")[-1].isdigit():
                 continue
             
             tags.append({
@@ -103,6 +107,8 @@ class MonitoringManager:
 
         self.parent._updating_monitoring_table = True
         try:
+            # Look for existing row with same tag name, type, and address
+            existing_row = -1
             for row in range(row_count):
                 name_item = target_table.item(row, 0)
                 type_item = target_table.item(row, 2)
@@ -113,56 +119,60 @@ class MonitoringManager:
                     and type_item.text() == data_type
                     and address_item.text() == str(address)
                 ):
-                    # Don't mutate the row while the user is typing a write value; it cancels the editor.
-                    if (
-                        target_table.state() == QAbstractItemView.EditingState
-                        and target_table.currentRow() == row
-                        and target_table.currentColumn() == 5
-                    ):
-                        return
-
-                    target_table.setItem(row, 1, QTableWidgetItem(mode))
-                    target_table.setItem(row, 3, QTableWidgetItem(str(address)))
-                    if read_value:
-                        target_table.setItem(row, 4, QTableWidgetItem(read_value))
-
-                    # Only set the write column if we have a meaningful value to show.
-                    # This avoids stomping on user edits during polling.
-                    if write_value:
-                        target_table.setItem(row, 5, QTableWidgetItem(write_value))
-                    elif initial_write_value and target_table.item(row, 5) is None:
-                        target_table.setItem(row, 5, QTableWidgetItem(initial_write_value))
-
-                    target_table.setItem(row, 6, QTableWidgetItem(comment))
-                    target_table.setItem(row, 7, QTableWidgetItem(timestamp))
-                    if self.parent.results_window is not None:
-                        self.parent.results_window.update_row(
-                            tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
-                        )
+                    existing_row = row
+                    break
+            
+            if existing_row >= 0:
+                # Update existing row
+                row = existing_row
+                
+                # Don't mutate the row while the user is typing a write value; it cancels the editor.
+                if (
+                    target_table.state() == QAbstractItemView.EditingState
+                    and target_table.currentRow() == row
+                    and target_table.currentColumn() == 5
+                ):
                     return
 
-            target_table.insertRow(row_count)
-            target_table.setItem(row_count, 0, QTableWidgetItem(tag_name))
-            target_table.setItem(row_count, 1, QTableWidgetItem(mode))
-            target_table.setItem(row_count, 2, QTableWidgetItem(data_type))
-            target_table.setItem(row_count, 3, QTableWidgetItem(str(address)))
-            target_table.setItem(row_count, 4, QTableWidgetItem(read_value))
-            target_table.setItem(row_count, 5, QTableWidgetItem(initial_write_value))
-            target_table.setItem(row_count, 6, QTableWidgetItem(comment))
-            target_table.setItem(row_count, 7, QTableWidgetItem(timestamp))
+                target_table.setItem(row, 1, QTableWidgetItem(mode))
+                target_table.setItem(row, 3, QTableWidgetItem(str(address)))
+                if read_value:
+                    target_table.setItem(row, 4, QTableWidgetItem(read_value))
+
+                # Only set the write column if we have a meaningful value to show.
+                # This avoids stomping on user edits during polling.
+                if write_value:
+                    target_table.setItem(row, 5, QTableWidgetItem(write_value))
+                elif initial_write_value and target_table.item(row, 5) is None:
+                    target_table.setItem(row, 5, QTableWidgetItem(initial_write_value))
+
+                target_table.setItem(row, 6, QTableWidgetItem(comment))
+                target_table.setItem(row, 7, QTableWidgetItem(timestamp))
+                
+                # Update results window for existing row
+                if self.parent.results_window is not None:
+                    self.parent.results_window.update_row(
+                        tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
+                    )
+            else:
+                # Add new row
+                target_table.insertRow(row_count)
+                target_table.setItem(row_count, 0, QTableWidgetItem(tag_name))
+                target_table.setItem(row_count, 1, QTableWidgetItem(mode))
+                target_table.setItem(row_count, 2, QTableWidgetItem(data_type))
+                target_table.setItem(row_count, 3, QTableWidgetItem(str(address)))
+                target_table.setItem(row_count, 4, QTableWidgetItem(read_value))
+                target_table.setItem(row_count, 5, QTableWidgetItem(initial_write_value))
+                target_table.setItem(row_count, 6, QTableWidgetItem(comment))
+                target_table.setItem(row_count, 7, QTableWidgetItem(timestamp))
+                
+                # Update results window for new row
+                if self.parent.results_window is not None:
+                    self.parent.results_window.update_row(
+                        tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
+                    )
         finally:
             self.parent._updating_monitoring_table = False
-
-        # Also update the results window if it exists
-        if self.parent.results_window is not None:
-            self.parent.results_window.update_row(
-                tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
-            )
-
-        if self.parent.results_window is not None:
-            self.parent.results_window.update_row(
-                tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
-            )
 
     def get_current_result_values(self):
         """Get current values from monitoring results."""
@@ -229,8 +239,9 @@ class MonitoringManager:
         # Check if main monitoring table exists (for backward compatibility)
         if hasattr(self.parent, 'monitoring_table'):
             self.parent.monitoring_table.setRowCount(0)
+        # Clear the results window directly instead of syncing
         if self.parent.results_window is not None:
-            self.parent._sync_results_window()
+            self.parent.results_window.clear()
 
     def get_tag_key(self, tag):
         """Generate a unique key for a tag."""

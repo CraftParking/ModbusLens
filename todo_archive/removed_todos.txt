@@ -1,0 +1,30 @@
+# TODOs Removed During Code Cleanup
+# These items were removed from main_window.py to clean up the codebase
+# Saved here for future reference if needed for debugging or implementation
+
+## Session Management
+- _save_session(): Save current session to file
+- _load_session(): Load session from file
+
+## Data Export
+- _export_data(): Export monitoring data to file
+
+## UI Features
+- _toggle_theme(): Switch between light and dark themes
+
+## User Management
+- _manage_profiles(): Manage user profiles
+
+## Data Management
+- _manage_templates(): Manage tag templates
+
+## Advanced Features
+- _show_scripting_console(): Open scripting console for automation
+
+## Documentation
+- _show_documentation(): Show help documentation
+
+## Notes
+- All these methods currently show a "will be implemented in the next update" message
+- They were kept in the codebase for future implementation
+- The TODO comments were removed to clean up the code, but the methods remain functional

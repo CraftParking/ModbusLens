@@ -3,6 +3,8 @@ import logging
 import time
 import socket
 import struct
+import os
+import csv
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -198,7 +200,6 @@ class ModbusGUI(QMainWindow):
             QFrame {
                 background-color: #F7F7F7;
                 border: 1px solid #CCCCCC;
-                border-radius: 8px;
             }
         """)
 
@@ -209,18 +210,14 @@ class ModbusGUI(QMainWindow):
         # Status indicator
         status_layout = QVBoxLayout()
         status_layout.setAlignment(Qt.AlignCenter)
-        status_layout.setSpacing(5)
+        status_layout.setSpacing(8)
 
-        status_label = QLabel("Status")
-        status_label.setStyleSheet("color: #333333; font-weight: bold;")
+        status_label = QLabel("Connection Status")
+        status_label.setStyleSheet("color: #333333; font-weight: bold; font-size: 11px;")
         status_layout.addWidget(status_label)
 
         self.status_indicator = StatusIndicator()
         status_layout.addWidget(self.status_indicator)
-
-        self.status_text = QLabel("Disconnected")
-        self.status_text.setStyleSheet("color: #333333;")
-        status_layout.addWidget(self.status_text)
 
         layout.addLayout(status_layout)
 
@@ -240,8 +237,7 @@ class ModbusGUI(QMainWindow):
                 background-color: #FFFFFF;
                 color: #000000;
                 border: 1px solid #CCCCCC;
-                border-radius: 4px;
-                padding: 5px;
+                                padding: 5px;
             }
         """)
         inputs_layout.addWidget(self.ip_input, 0, 1)
@@ -259,8 +255,7 @@ class ModbusGUI(QMainWindow):
                 background-color: #FFFFFF;
                 color: #000000;
                 border: 1px solid #CCCCCC;
-                border-radius: 4px;
-                padding: 5px;
+                                padding: 5px;
             }
         """)
         inputs_layout.addWidget(self.port_input, 1, 1)
@@ -278,8 +273,7 @@ class ModbusGUI(QMainWindow):
                 background-color: #FFFFFF;
                 color: #000000;
                 border: 1px solid #CCCCCC;
-                border-radius: 4px;
-                padding: 5px;
+                                padding: 5px;
             }
         """)
         inputs_layout.addWidget(self.unit_input, 0, 3)
@@ -295,7 +289,6 @@ class ModbusGUI(QMainWindow):
                 background-color: #FFFFFF;
                 color: #000000;
                 border: 1px solid #CCCCCC;
-                border-radius: 4px;
                 padding: 5px;
             }
         """)
@@ -358,7 +351,7 @@ class ModbusGUI(QMainWindow):
                 background-color: #E0E0E0; 
                 color: #000000; 
                 border: 1px solid #B0B0B0; 
-                border-radius: 6px; 
+                 
                 padding: 10px 20px; 
                 font-weight: bold; 
                 font-size: 12px; 
@@ -383,7 +376,7 @@ class ModbusGUI(QMainWindow):
                 background-color: #E0E0E0; 
                 color: #000000; 
                 border: 1px solid #B0B0B0; 
-                border-radius: 6px; 
+                 
                 padding: 10px 20px; 
                 font-weight: bold; 
                 font-size: 12px; 
@@ -466,8 +459,7 @@ class ModbusGUI(QMainWindow):
                 font-weight: bold;
                 color: #222222;
                 border: 1px solid #CCCCCC;
-                border-radius: 8px;
-                margin-top: 1ex;
+                                margin-top: 1ex;
                 background-color: #F8F8F8;
             }
             QGroupBox::title {
@@ -526,8 +518,7 @@ class ModbusGUI(QMainWindow):
                 font-weight: bold;
                 color: #222222;
                 border: 1px solid #CCCCCC;
-                border-radius: 8px;
-                margin-top: 1ex;
+                                margin-top: 1ex;
                 background-color: #F8F8F8;
             }
             QGroupBox::title {
@@ -559,34 +550,67 @@ class ModbusGUI(QMainWindow):
                 background-color: #FFFFFF; 
                 color: #000000;
                 border: 1px solid #CCCCCC;
-                border-radius: 4px;
-            }
+                            }
             QHeaderView::section {
                 background-color: #E9E9E9;
                 color: #000000;
                 border: 1px solid #CCCCCC;
                 padding: 5px;
             }
+            QTableWidget::item:selected {
+                background-color: #007ACC;
+                color: #FFFFFF;
+            }
+            QTableWidget::item:selected:!active {
+                background-color: #B3D7FF;
+                color: #000000;
+            }
         """)
         tag_layout.addWidget(self.monitoring_tag_table)
         tag_layout.setStretchFactor(self.monitoring_tag_table, 1)  # Make table expand
 
-        tag_buttons_layout = QHBoxLayout()
-        tag_buttons_layout.setSpacing(10)
-        tag_buttons_layout.setContentsMargins(0, 10, 0, 0)
+        first_row_layout = QHBoxLayout()
+        first_row_layout.setSpacing(10)
+        first_row_layout.setContentsMargins(0, 10, 0, 5)
         
         self.add_tag_btn = QPushButton("Add Tag")
         self.add_tag_btn.setStyleSheet(self._get_button_style())
         self.add_tag_btn.setMinimumWidth(100)
-        tag_buttons_layout.addWidget(self.add_tag_btn)
+        first_row_layout.addWidget(self.add_tag_btn)
 
         self.remove_tag_btn = QPushButton("Remove Selected Tag")
         self.remove_tag_btn.setStyleSheet(self._get_button_style())
         self.remove_tag_btn.setEnabled(False)
         self.remove_tag_btn.setMinimumWidth(150)
-        tag_buttons_layout.addWidget(self.remove_tag_btn)
+        first_row_layout.addWidget(self.remove_tag_btn)
+
+        self.remove_all_tags_btn = QPushButton("Remove All Tags")
+        self.remove_all_tags_btn.setStyleSheet(self._get_button_style())
+        self.remove_all_tags_btn.setEnabled(False)
+        self.remove_all_tags_btn.setMinimumWidth(120)
+        first_row_layout.addWidget(self.remove_all_tags_btn)
+
+        first_row_layout.addStretch()
+
+        csv_row_layout = QHBoxLayout()
+        csv_row_layout.setSpacing(10)
+        csv_row_layout.setContentsMargins(0, 5, 0, 10)
         
-        # Add stretch to push buttons to the left
+        self.export_csv_btn = QPushButton("Export CSV")
+        self.export_csv_btn.setStyleSheet(self._get_button_style())
+        self.export_csv_btn.setMinimumWidth(100)
+        csv_row_layout.addWidget(self.export_csv_btn)
+
+        self.import_csv_btn = QPushButton("Import CSV")
+        self.import_csv_btn.setStyleSheet(self._get_button_style())
+        self.import_csv_btn.setMinimumWidth(100)
+        csv_row_layout.addWidget(self.import_csv_btn)
+
+        csv_row_layout.addStretch()
+
+        tag_buttons_layout = QVBoxLayout()
+        tag_buttons_layout.addLayout(first_row_layout)
+        tag_buttons_layout.addLayout(csv_row_layout)
         tag_buttons_layout.addStretch()
 
         tag_layout.addLayout(tag_buttons_layout)
@@ -595,8 +619,11 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table.itemSelectionChanged.connect(self._update_tag_buttons_state)
         self.add_tag_btn.clicked.connect(self._add_monitoring_tag)
         self.remove_tag_btn.clicked.connect(self._remove_monitoring_tag)
-
-        self._add_monitoring_tag()
+        self.remove_all_tags_btn.clicked.connect(self._remove_all_monitoring_tags)
+        
+        # Connect CSV management buttons
+        self.export_csv_btn.clicked.connect(self._export_tags_csv)
+        self.import_csv_btn.clicked.connect(self._import_tags_csv)
 
         self.tab_widget.addTab(monitor_widget, "Tags")
 
@@ -636,8 +663,7 @@ class ModbusGUI(QMainWindow):
                 background-color: #FFFFFF;
                 color: #000000;
                 border: 1px solid #CCCCCC;
-                border-radius: 4px;
-                padding: 5px;
+                                padding: 5px;
             }
             QSpinBox:focus, QLineEdit:focus {
                 border-color: #007ACC;
@@ -654,8 +680,7 @@ class ModbusGUI(QMainWindow):
                 background-color: #F5F5F5;
                 color: #333333;
                 border: 1px solid #CCCCCC;
-                border-radius: 3px;
-                padding: {padding};
+                                padding: {padding};
                 font-weight: 500;
                 font-size: {font_size};
                 text-align: center;
@@ -857,9 +882,25 @@ class ModbusGUI(QMainWindow):
             self.monitoring_tag_table.removeRow(row)
         self._update_tag_buttons_state()
 
+    def _remove_all_monitoring_tags(self):
+        """Remove all tags from the monitoring table."""
+        reply = QMessageBox.question(
+            self,
+            "Remove All Tags",
+            "Are you sure you want to remove all tags?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.monitoring_tag_table.setRowCount(0)
+            self._update_tag_buttons_state()
+            self._log("All tags removed")
+
     def _update_tag_buttons_state(self):
         selected = bool(self._get_selected_tag_rows())
+        has_tags = self.monitoring_tag_table.rowCount() > 0
         self.remove_tag_btn.setEnabled(selected)
+        self.remove_all_tags_btn.setEnabled(has_tags)
 
     def _get_selected_tag_rows(self):
         selected_rows = {index.row() for index in self.monitoring_tag_table.selectedIndexes()}
@@ -1078,7 +1119,6 @@ class ModbusGUI(QMainWindow):
         """Connect to Modbus server."""
         try:
             self.status_indicator.set_status("connecting")
-            self.status_text.setText("Connecting...")
             self._set_connection_controls(connected=False, connecting=True)
 
             ip = self.ip_input.text().strip()
@@ -1089,7 +1129,6 @@ class ModbusGUI(QMainWindow):
 
             if self.modbus.connect():
                 self.status_indicator.set_status("connected")
-                self.status_text.setText(f"Connected to {ip}:{port}")
                 self.connection_status.setText(f"Connected: {ip}:{port} (Unit {unit_id})")
                 self._set_connection_controls(connected=True)
 
@@ -1103,15 +1142,17 @@ class ModbusGUI(QMainWindow):
                 self._log(f"Connected to Modbus server at {ip}:{port} (Unit ID: {unit_id})")
             else:
                 self.status_indicator.set_status("error")
-                self.status_text.setText("Connection Failed")
                 self._set_connection_controls(connected=False)
                 self._log("Failed to connect to Modbus server")
+                # Show connection failure dialog
+                self._show_connection_error_dialog(ip, port, unit_id, "Connection failed")
 
         except Exception as e:
             self.status_indicator.set_status("error")
-            self.status_text.setText("Connection Error")
             self._set_connection_controls(connected=False)
             self._log(f"Connection error: {e}")
+            # Show connection error dialog
+            self._show_connection_error_dialog(ip, port, unit_id, str(e))
 
     def _disconnect(self):
         """Disconnect from Modbus server."""
@@ -1120,7 +1161,6 @@ class ModbusGUI(QMainWindow):
             self.modbus = None
 
         self.status_indicator.set_status("disconnected")
-        self.status_text.setText("Disconnected")
         self.connection_status.setText("Not Connected")
 
         self._set_connection_controls(connected=False)
@@ -1129,6 +1169,192 @@ class ModbusGUI(QMainWindow):
             self._stop_monitoring()
 
         self._log("Disconnected from Modbus server")
+
+    def _show_connection_error_dialog(self, ip, port, unit_id, error_message):
+        """Show connection error dialog with detailed information."""
+        try:
+            # Create error dialog
+            dialog = QMessageBox(self)
+            dialog.setIcon(QMessageBox.Warning)
+            dialog.setWindowTitle("Connection Failed")
+            dialog.setText(f"Failed to connect to Modbus server")
+            dialog.setInformativeText(f"""
+<strong>Connection Details:</strong><br>
+IP Address: {ip}<br>
+Port: {port}<br>
+Unit ID: {unit_id}<br><br>
+<strong>Error:</strong> {error_message}<br><br>
+<strong>Possible Solutions:</strong><br>
+• Check if the Modbus server is running<br>
+• Verify the IP address and port number<br>
+• Ensure network connectivity to the device<br>
+• Check if the Unit ID matches the device configuration<br>
+• Verify firewall settings are not blocking the connection
+            """)
+            dialog.setStandardButtons(QMessageBox.Ok)
+            dialog.setStyleSheet("""
+                QMessageBox {
+                    background-color: #FFFFFF;
+                }
+                QMessageBox QTextEdit {
+                    background-color: #F8F9FA;
+                    border: 1px solid #CCCCCC;
+                    padding: 8px;
+                }
+            """)
+            dialog.exec()
+        except Exception as e:
+            self._log(f"Error showing connection dialog: {e}")
+
+    def _get_monitoring_tags(self):
+        """Get all monitoring tags from the table."""
+        tags = []
+        row_count = self.monitoring_tag_table.rowCount()
+        
+        for row in range(row_count):
+            try:
+                name = self._table_item_text(self.monitoring_tag_table, row, 0).strip()
+                if not name:
+                    name = f"Tag_{row+1}"
+                
+                tag = {
+                    'name': name,
+                    'mode': self._table_item_text(self.monitoring_tag_table, row, 1) or 'Read',
+                    'type': self._table_item_text(self.monitoring_tag_table, row, 2) or 'Coil',
+                    'address': self._table_item_text(self.monitoring_tag_table, row, 3) or str(row),
+                    'count': self._table_item_text(self.monitoring_tag_table, row, 4) or '1',
+                    'format': self._table_item_text(self.monitoring_tag_table, row, 5) or 'Bool',
+                    'comment': self._table_item_text(self.monitoring_tag_table, row, 6) or ''
+                }
+                
+                tags.append(tag)
+                
+            except Exception as e:
+                tag = {
+                    'name': f"Tag_{row+1}",
+                    'mode': 'Read',
+                    'type': 'Coil',
+                    'address': str(row),
+                    'count': '1',
+                    'format': 'Bool',
+                    'comment': ''
+                }
+                tags.append(tag)
+        
+        return tags
+
+    def _table_item_text(self, table, row, column):
+        """Get text from a table cell widget."""
+        widget = table.cellWidget(row, column)
+        if widget:
+            if hasattr(widget, 'text'):
+                return widget.text()
+            elif hasattr(widget, 'currentText'):
+                return widget.currentText()
+            elif hasattr(widget, 'value'):
+                return str(widget.value())
+        return ""
+
+    
+    def _export_tags_csv(self):
+        """Export tags to CSV file."""
+        try:
+            from PySide6.QtWidgets import QFileDialog
+            
+            row_count = self.monitoring_tag_table.rowCount()
+            if row_count == 0:
+                QMessageBox.warning(self, "No Tags", "No tags to export. Please add tags first.")
+                return
+            
+            tags = self._get_monitoring_tags()
+            if not tags:
+                QMessageBox.warning(self, "No Tags", f"No tags to export. Table has {row_count} rows but no valid tags found. Please add tags with valid addresses or names.")
+                return
+            
+            # Get save file path
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Export Tags CSV", f"tags_{time.strftime('%Y%m%d_%H%M%S')}.csv", "CSV Files (*.csv)"
+            )
+            
+            if not file_path:
+                return
+            
+            # Export to CSV
+            with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                writer.writeheader()
+                for tag in tags:
+                    writer.writerow({
+                        'Tag Name': tag['name'],
+                        'Mode': tag['mode'],
+                        'Type': tag['type'],
+                        'Address': tag['address'],
+                        'Count': tag['count'],
+                        'Format': tag['format'],
+                        'Comment': tag['comment']
+                    })
+            
+            self._log(f"Exported {len(tags)} tags to {file_path}")
+            QMessageBox.information(self, "Export Complete", f"Successfully exported {len(tags)} tags to CSV file!")
+            
+        except Exception as e:
+            self._log(f"Error exporting CSV: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to export tags: {e}")
+
+    def _import_tags_csv(self):
+        """Import tags from CSV file."""
+        try:
+            from PySide6.QtWidgets import QFileDialog
+            
+            # Get file path
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Import Tags CSV", "", "CSV Files (*.csv)"
+            )
+            
+            if not file_path:
+                return
+            
+            # Read CSV file
+            with open(file_path, 'r', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                
+                # Validate CSV structure
+                required_fields = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment']
+                if not all(field in reader.fieldnames for field in required_fields):
+                    QMessageBox.warning(self, "Invalid CSV", 
+                        "CSV file must contain columns: Tag Name, Mode, Type, Address, Count, Format, Comment")
+                    return
+                
+                # Clear existing tags
+                self.monitoring_tag_table.setRowCount(0)
+                
+                # Import tags
+                imported_count = 0
+                for row in reader:
+                    try:
+                        self._add_monitoring_tag(
+                            tag_name=row.get('Tag Name', '').strip(),
+                            mode=row.get('Mode', 'Read').strip(),
+                            tag_type=row.get('Type', 'Coil').strip(),
+                            address=int(row.get('Address', 0)),
+                            count=int(row.get('Count', 1)),
+                            value_format=row.get('Format', 'U16').strip(),
+                            comment=row.get('Comment', '').strip()
+                        )
+                        imported_count += 1
+                    except (ValueError, KeyError) as e:
+                        self._log(f"Skipping invalid row: {e}")
+                        continue
+                
+                self._log(f"Imported {imported_count} tags from {file_path}")
+                QMessageBox.information(self, "Import Complete", 
+                    f"Successfully imported {imported_count} tags from CSV file!")
+            
+        except Exception as e:
+            self._log(f"Error importing CSV: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to import tags: {e}")
 
     def _set_connection_controls(self, connected: bool, connecting: bool = False):
         if connecting:
@@ -1949,6 +2175,9 @@ class ModbusGUI(QMainWindow):
         self.monitoring_manager._monitoring_poll_in_progress = False
         self.monitoring_manager._write_poll_in_progress = False
 
+        # Clear monitoring results when stopping
+        self.monitoring_manager.clear_monitoring_results()
+
         # Update correct button references for Tags tab
         if hasattr(self, 'tag_start_monitoring_btn'):
             self.tag_start_monitoring_btn.setEnabled(True)
@@ -2001,6 +2230,11 @@ class ModbusGUI(QMainWindow):
         current_values = self._current_result_values()
         self.results_window.clear()
         for tag in self._get_monitoring_tags():
+            # Skip default placeholder names
+            name = tag.get("name", "")
+            if name.startswith("Tag_") and name.split("_")[-1].isdigit():
+                continue
+            
             key = self._tag_key(tag)
             values = current_values.get(key, {})
             window_row = window_values.get(key, {})
@@ -2316,41 +2550,34 @@ class ModbusGUI(QMainWindow):
             self.diagnostics_log_output.clear()
         if hasattr(self, 'diagnostics_data_output'):
             self.diagnostics_data_output.clear()
-        self._log("🆕 New session started")
+        self._log(" New session started")
 
     def _save_session(self):
         """Save current session."""
-        # TODO: Implement session saving
         QMessageBox.information(self, "Save Session", "Session saving will be implemented in the next update!")
 
     def _load_session(self):
         """Load a saved session."""
-        # TODO: Implement session loading
         QMessageBox.information(self, "Load Session", "Session loading will be implemented in the next update!")
 
     def _export_data(self):
         """Export monitoring data."""
-        # TODO: Implement data export
         QMessageBox.information(self, "Export Data", "Data export will be implemented in the next update!")
 
     def _toggle_theme(self):
         """Toggle between light and dark themes."""
-        # TODO: Implement theme switching
         QMessageBox.information(self, "Theme Toggle", "Theme switching will be implemented in the next update!")
 
     def _manage_profiles(self):
         """Manage connection profiles."""
-        # TODO: Implement profile management
         QMessageBox.information(self, "Connection Profiles", "Profile management will be implemented in the next update!")
 
     def _manage_templates(self):
         """Manage data templates."""
-        # TODO: Implement template management
         QMessageBox.information(self, "Data Templates", "Template management will be implemented in the next update!")
 
     def _show_scripting_console(self):
         """Show scripting console."""
-        # TODO: Implement scripting console
         QMessageBox.information(self, "Scripting Console", "Scripting console will be implemented in the next update!")
 
     def _network_diagnostics(self): 
@@ -2362,7 +2589,6 @@ class ModbusGUI(QMainWindow):
 
     def _show_documentation(self):
         """Show documentation."""
-        # TODO: Implement documentation viewer
         QMessageBox.information(self, "Documentation", "Documentation viewer will be implemented in the next update!")
 
     def _show_about(self):
@@ -2474,8 +2700,7 @@ class SafetyWarningDialog(QDialog):
                 background-color: {base};
                 color: {text};
                 border: 1px solid #B0B0B0;
-                border-radius: 6px;
-                padding: 10px 18px;
+                                padding: 10px 18px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
@@ -2586,8 +2811,7 @@ class NetworkDiagnosticsWorker(QThread):
                 background-color: {base};
                 color: {text};
                 border: 1px solid #B0B0B0;
-                border-radius: 6px;
-                padding: 8px 14px;
+                                padding: 8px 14px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
