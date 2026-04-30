@@ -20,6 +20,8 @@
 
 **ModbusLens** is a desktop toolkit for engineers and technicians working with **Modbus TCP** devices. It provides a PySide6 GUI, a CLI entry point, live tag monitoring, diagnostics, and network discovery tools for testing and debugging PLCs, controllers, and other Modbus TCP equipment.
 
+It also includes [ARP-based unknown PLC discovery](#unknown-plc-discovery-with-arp), which can help identify a directly connected PLC even when you do not know its IP address.
+
 Current protocol support: **Modbus TCP only**.
 
 ## v1.0.0 Release
@@ -74,6 +76,10 @@ The first stable release is available on GitHub:
 ### Unknown PLC Discovery with ARP
 
 ModbusLens can help identify a PLC on a direct Ethernet connection even when you do not know its IP address.
+
+**What is ARP?** ARP, or Address Resolution Protocol, is how devices on a local Ethernet network ask, "Who has this IP address?" and receive a reply that includes the device MAC address. Because many PLCs answer ARP requests or send ARP traffic when connected, ARP can reveal the device on the wire before you know its Modbus settings.
+
+**How PLC discovery works with ARP:** connect your computer directly to the PLC, select that Ethernet adapter in ModbusLens, and run ARP discovery/capture. With only the PLC connected, the ARP messages shown are much easier to trace back to that PLC. You can then use the displayed IP/MAC/vendor clues to continue with Modbus TCP testing.
 
 Basic workflow:
 
