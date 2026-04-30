@@ -24,6 +24,16 @@ It also includes [ARP-based unknown PLC discovery](#unknown-plc-discovery-with-a
 
 Current protocol support: **Modbus TCP only**.
 
+## Support
+
+If ModbusLens helps your work, you can support development here:
+
+<p>
+  <a href="https://buymeacoffee.com/craftparking">
+    <img src="assets/buy-me-a-coffee.png" alt="Buy Me a Coffee" height="45">
+  </a>
+</p>
+
 ## v1.0.0 Release
 
 The first stable release is available on GitHub:
