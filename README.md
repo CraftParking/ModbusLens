@@ -77,6 +77,8 @@ The first stable release is available on GitHub:
 
 ModbusLens can help identify a PLC on a direct Ethernet connection even when you do not know its IP address.
 
+> **Note:** ARP-based PLC discovery is currently in testing mode. It may not detect every device correctly, and results can vary by PLC model, network adapter, operating system, and local network behavior.
+
 **What is ARP?** ARP, or Address Resolution Protocol, is how devices on a local Ethernet network ask, "Who has this IP address?" and receive a reply that includes the device MAC address. Because many PLCs answer ARP requests or send ARP traffic when connected, ARP can reveal the device on the wire before you know its Modbus settings.
 
 **How PLC discovery works with ARP:** connect your computer directly to the PLC, select that Ethernet adapter in ModbusLens, and run ARP discovery/capture. With only the PLC connected, the ARP messages shown are much easier to trace back to that PLC. You can then use the displayed IP/MAC/vendor clues to continue with Modbus TCP testing.
