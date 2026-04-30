@@ -66,10 +66,30 @@ The first stable release is available on GitHub:
 
 - Select the network interface used for diagnostics.
 - Scan IP ranges for Modbus devices.
-- Discover devices through ARP information.
+- Discover unknown PLCs through ARP messages, even when you do not know the PLC IP address.
 - Inspect packet-level Modbus traffic.
 - Identify known industrial vendors from MAC address data.
 - Stop scans manually when needed.
+
+### Unknown PLC Discovery with ARP
+
+ModbusLens can help identify a PLC on a direct Ethernet connection even when you do not know its IP address.
+
+Basic workflow:
+
+1. Connect your computer directly to the PLC using Ethernet.
+2. Open **Tools > Network Diagnostics**.
+3. Select the Ethernet adapter connected to the PLC.
+4. Start ARP discovery/capture.
+5. Watch the ARP messages shown by ModbusLens.
+
+When the PLC sends or responds to ARP traffic, ModbusLens shows the ARP message from that device. In a direct PC-to-PLC connection, this makes the PLC easier to spot because the visible ARP traffic should mainly come from the connected PLC instead of a busy plant network.
+
+This is useful when:
+
+- The PLC IP address is unknown.
+- The PLC has no label or outdated documentation.
+- You want to identify the device MAC address and possible vendor before starting Modbus TCP tests.
 
 ### Safety and Reliability
 
