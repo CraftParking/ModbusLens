@@ -3,267 +3,173 @@
 </p>
 
 <h1 align="center">ModbusLens</h1>
-<p align="center">🏭 Professional Modbus TCP Client with Advanced Network Diagnostics</p>
+<p align="center">Professional Modbus TCP Client with Advanced Network Diagnostics</p>
 
 <p align="center">
-  <a href="#-features">Features</a> •
-  <a href="#-installation">Installation</a> •
-  <a href="#-usage">Usage</a> •
-  <a href="#-architecture">Architecture</a> •
-  <a href="#-roadmap">Roadmap</a>
+  <a href="#overview">Overview</a> |
+  <a href="#v100-release">v1.0.0 Release</a> |
+  <a href="#features">Features</a> |
+  <a href="#installation">Installation</a> |
+  <a href="#usage">Usage</a> |
+  <a href="#roadmap">Roadmap</a>
 </p>
 
 ---
 
-## 📖 Overview
+## Overview
 
-**ModbusLens** is a comprehensive industrial automation toolkit designed for professionals working with Modbus TCP networks. Built with precision engineering in mind, it combines powerful diagnostic capabilities with an intuitive interface for testing, monitoring, and debugging Modbus-enabled devices including PLCs, RTUs, and industrial controllers.
+**ModbusLens** is a desktop toolkit for engineers and technicians working with **Modbus TCP** devices. It provides a PySide6 GUI, a CLI entry point, live tag monitoring, diagnostics, and network discovery tools for testing and debugging PLCs, controllers, and other Modbus TCP equipment.
 
-### 🎯 Mission Statement
-To provide industrial automation engineers with a reliable, feature-rich Modbus TCP client that enhances productivity while maintaining the highest standards of safety and performance.
+Current protocol support: **Modbus TCP only**.
 
----
+## v1.0.0 Release
 
-## ⭐ Key Features
+The first stable release is available on GitHub:
 
-### 🔧 **Advanced Modbus Communication**
-- **Complete Modbus TCP Implementation**: Full support for all standard function codes
-- **Real-time Operations**: Immediate write operations without monitoring requirements
-- **Connection Management**: Robust connection handling with automatic reconnection
-- **Write Function Support**: All write operations work independently without live monitoring
+- Release tag: `v1.0.0`
+- Windows build: `ModbusLens_V1.0.0.exe`
+- Release page: https://github.com/professoroptimusprime/ModScope/releases/tag/v1.0.0
 
-### 🖥️ **Professional GUI Interface**
-- **Modern PySide6 Interface**: Clean, responsive, and professional design
-- **Responsive Layout**: Proper window resizing without element overlapping
-- **Address Table**: Configurable address ranges and function selection
-- **Real-time Monitoring**: Live data updates with configurable intervals
-- **Tag Management System**: Excel-style tag configuration and management
-- **Network Interface Selection**: Choose specific network adapters for communication
-- **Smart Control Logic**: Functions disabled until connection established
-- **Clean Codebase**: Optimized and streamlined project structure
+### Highlights
 
-### 🔍 **Enterprise Network Diagnostics**
-- **Wireshark-like Packet Capture**: Advanced network analysis capabilities
-- **ARP Device Discovery**: Automatic network device identification
-- **MAC Vendor Database**: 20+ PLC manufacturer identification via MAC addresses
-- **Windows-Compatible**: Cross-platform packet analysis without administrator requirements
-- **Network Scanner**: IP range scanning for Modbus device discovery
-- **Real-time Packet Analysis**: Live Modbus traffic detection and function code analysis
+- Stable Modbus TCP read/write testing and live monitoring.
+- PySide6 GUI with connection controls, address table, tag table, and status indicators.
+- Real-time tag monitoring with configurable polling intervals.
+- CSV import/export for reusable tag configurations.
+- Detached monitoring results window for viewing live values and selected writes.
+- Network diagnostics with interface selection, scanning, ARP/device discovery, and packet analysis.
+- Diagnostics views for logs, raw data, results, and runtime statistics.
+- Safety checks for connection validation, write/read separation, and operation warnings.
+- Improved packaging support for creating a Windows executable.
 
-### 🛡️ **Industrial Safety Features**
-- **Safety Warning Dialogs**: Comprehensive safety notices before operations
-- **Connection Validation**: Verified connections before allowing operations
-- **Error Handling**: Robust error management with user-friendly messages
-- **Write Protection**: Smart write-only operations for write functions
-- **Read-Only Monitoring**: Live monitoring restricted to read functions only
+## Features
 
----
+### Modbus TCP Communication
 
-## 🚀 Installation
+- Read coils, discrete inputs, holding registers, and input registers.
+- Write single/multiple coils and registers.
+- Configure target IP, port, unit ID, address range, and register count.
+- Run write operations without starting live monitoring.
+- Keep live monitoring focused on read operations.
 
-### Prerequisites
+### GUI Application
+
+- Modern PySide6 interface.
+- Connection status indicator and recent connection history.
+- Address table for quick Modbus operations.
+- Tags tab for structured monitoring configurations.
+- CSV import/export for tag tables.
+- Detached results window for live monitoring output.
+- Responsive layout improvements for desktop use.
+
+### Network Diagnostics
+
+- Select the network interface used for diagnostics.
+- Scan IP ranges for Modbus devices.
+- Discover devices through ARP information.
+- Inspect packet-level Modbus traffic.
+- Identify known industrial vendors from MAC address data.
+- Stop scans manually when needed.
+
+### Safety and Reliability
+
+- Safety warnings before sensitive operations.
+- Connection validation before reads/writes.
+- Separate read and write workflows.
+- Busy-range interlocks during polling.
+- Error handling with user-facing messages and diagnostic logs.
+
+## Installation
+
+### Option 1: Download the v1.0.0 Windows Build
+
+Download `ModbusLens_V1.0.0.exe` from the release page:
+
+```text
+https://github.com/professoroptimusprime/ModScope/releases/tag/v1.0.0
+```
+
+### Option 2: Run from Source
+
+Requirements:
+
 - Python 3.8 or higher
-- Windows/Linux/macOS operating system
+- Windows, Linux, or macOS
 
-### Quick Install
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/ModbusLens.git
-cd ModbusLens
-
-# Install dependencies
+git clone https://github.com/professoroptimusprime/ModScope.git
+cd ModScope
 pip install -r requirements.txt
-
-# Run the application
 python gui_main.py
 ```
 
-### Optional Dependencies
-```bash
-# For enhanced network diagnostics (optional)
-pip install psutil
+## Usage
 
-# Basic functionality works without psutil
-# Automatic fallback to alternative detection methods
-```
+### GUI Mode
 
----
-
-## 📖 Usage Guide
-
-### 🖥️ **GUI Mode (Recommended)**
 ```bash
 python gui_main.py
 ```
 
-### 🎛️ **Main Interface Features**
+Use the GUI to:
 
-#### **Connection Section**
-- **Network Interface Selection**: Choose specific network adapter
-- **IP Configuration**: Target device IP address
-- **Port Configuration**: Modbus TCP port (default: 1700)
-- **Unit ID**: Modbus device identifier (1-247)
-- **Connection History**: Quick access to recent connections
+- Select a network interface.
+- Enter target IP, port, and unit ID.
+- Connect to a Modbus TCP device.
+- Read or write values from the address table.
+- Configure tags and start live monitoring.
+- Import or export tag configurations as CSV.
+- Open diagnostics from the menu.
 
-#### **Address Table Tab**
-- **ModScan-like Interface**: Familiar for industrial engineers
-- **Function Selection**: All 8 standard Modbus functions
-- **Address Range**: Configurable start address and count
-- **Live Monitoring**: Real-time data updates (read functions only)
-- **Write Operations**: Immediate write without monitoring requirement
-- **Smart Editability**: Value column editable only for write functions
+### CLI Mode
 
-#### **Tags Tab**
-- **Excel-style Management**: Professional tag configuration
-- **Real-time Monitoring**: Live data updates with configurable intervals
-- **Data Export**: Export monitoring results to external window
-- **Tag Functions**: Support for read/write operations with different data types
-
-### 🔧 **Network Diagnostics**
 ```bash
-# Access from Tools → Network Diagnostics in the GUI
+python main.py
 ```
 
-#### **Diagnostic Capabilities**
-- **Interface Selection**: Choose network interface for analysis
-- **Device Discovery**: Scan network for Modbus devices
-- **Packet Capture**: Wireshark-like network analysis
-- **ARP Analysis**: MAC address vendor identification
-- **PLC Detection**: Automatic manufacturer identification
-- **Stop Control**: User-controlled scan termination
+The CLI provides basic Modbus TCP read/write operations from the terminal.
 
----
+## Project Structure
 
-## 🏗️ Architecture
-
-### 📁 **Project Structure**
-```
+```text
 ModbusLens/
-├── 📁 gui/
-│   ├── � main_window.py           # Main GUI application
-│   ├── 📁 widgets/
-│   │   ├── � address_table.py     # Address table interface
-│   │   ├── � monitoring_window.py # Results display
-│   │   └── � status_indicator.py  # Connection status
-│   ├── 📁 monitoring/
-│   │   └── � monitoring_manager.py # Real-time data management
-│   └── 📁 network/
-│       └── � network_diagnostics.py # Advanced network analysis
-├── 📁 core/
-│   └── � modbus_client.py         # Modbus TCP communication
-├── 📁 diagnostics/
-│   ├── � advanced_diagnostics.py  # Advanced diagnostic tools
-│   └── � diagnostics_dialogs.py   # Diagnostic interface
-├── 📁 assets/                      # Images and resources
-├── � app_paths.py                # Application path utilities
-├── � gui_main.py                  # Main application entry
-├── 📄 main.py                      # CLI application entry
-├── 📄 requirements.txt             # Python dependencies
-└── 📄 README.md                    # This file
+|-- assets/                  # Icons and banner
+|-- core/
+|   `-- modbus_client.py      # Modbus TCP communication
+|-- gui/
+|   |-- main_window.py        # Main GUI application
+|   |-- widgets/              # Address table, status, results window
+|   |-- monitoring/           # Real-time monitoring manager
+|   |-- diagnostics/          # Diagnostics dialogs and tools
+|   `-- network/              # Network diagnostics
+|-- app_paths.py              # Runtime path helpers
+|-- build_exe.py              # PyInstaller build helper
+|-- gui_main.py               # GUI entry point
+|-- main.py                   # CLI entry point
+|-- requirements.txt          # Python dependencies
+`-- README.md
 ```
 
-### 🔧 **Technology Stack**
-- **Frontend**: PySide6 (Qt6) for professional GUI
-- **Communication**: Custom Modbus TCP client implementation
-- **Network Analysis**: Raw socket programming with Windows compatibility
-- **Data Processing**: Threading for real-time operations
-- **Cross-platform**: Windows, Linux, and macOS support
+## Roadmap
 
----
+Planned future work:
 
-## 📊 Current Status
+- Data logging and export improvements.
+- Device configuration profiles.
+- Advanced scripting and automated test sequences.
+- Modbus RTU serial support.
+- Modbus ASCII support.
+- Multi-device management.
+- Data visualization and reporting.
 
-### ✅ **Completed Features**
-- [x] Full Modbus TCP client implementation
-- [x] Professional GUI with modern design
-- [x] Address table interface
-- [x] Real-time monitoring system
-- [x] Advanced network diagnostics
-- [x] Packet capture and analysis
-- [x] ARP device discovery with vendor lookup
-- [x] Network interface selection
-- [x] Windows-compatible implementation
-- [x] Safety warning systems
-- [x] Smart write/read function separation
-- [x] Connection history management
-- [x] Error handling and recovery
-- [x] Responsive layout design (no element overlapping)
-- [x] Clean and optimized codebase
-- [x] Cross-platform path management
+## Contributing
 
-### 🔄 **In Development**
-- [ ] Data logging and export functionality
-- [ ] Device configuration profiles
-- [ ] Advanced scripting capabilities
-- [ ] Modbus RTU support
-- [ ] Multi-device management
+Bug reports and feature requests are welcome through GitHub Issues. Please include reproduction steps, expected behavior, actual behavior, and system details when reporting bugs.
 
----
+## License
 
-## 🚀 Roadmap
+This project is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) for details.
 
-### 🎯 **Future Development**
+## Author
 
-#### **Enhanced Data Management**
-- CSV/Excel export capabilities
-- Historical data logging
-- Data visualization charts
-- Custom report generation
-
-#### **Advanced Scripting**
-- Python scripting integration
-- Automated test sequences
-- Custom function development
-- Batch operation support
-
-#### **Multi-Protocol Support**
-- Modbus RTU (Serial)
-- Modbus ASCII
-- Multi-device management
-- Device topology mapping
-
-#### **Enterprise Features**
-- User management and permissions
-- Audit logging
-- Remote monitoring capabilities
-- API integration for third-party tools
-
----
-
-## 🤝 Contributing
-
-We welcome contributions from the community! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### 🐛 **Bug Reports**
-- Use GitHub Issues for bug reports
-- Provide detailed reproduction steps
-- Include system information and error logs
-
-### 💡 **Feature Requests**
-- Submit feature requests via GitHub Issues
-- Provide use case descriptions
-
----
-
-## 📜 License
-
-This project is licensed under **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 👥 Development Team
-
-**Alvin (CraftParking)**
-- Lead Developer
-
-### 🤝 **Contributors**
-We thank all contributors who help make ModbusLens better for the community.
-
----
-
-## 🙏 Acknowledgments
-
-- **Qt/PySide6 Team**: For the excellent GUI framework
-- **Community**: For valuable feedback and suggestions
-- **Open Source Contributors**: For making this project possible
-- **Beta Testers**: For thorough testing and bug reports
+**Alvin (CraftParking)** - Lead Developer
