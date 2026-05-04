@@ -82,10 +82,9 @@ The first stable release is available on GitHub:
 - Filter results to show only Modbus devices.
 - Progress bar with scan status and cycle reporting.
 - Clear Results button to reset discovery data.
-- Packet capture capability detection with Scapy runtime verification.
+- Packet capture capability detection with automatic mode switching.
 - Npcap installation guidance popup with step-by-step instructions.
 - Install Npcap button for easy access to packet capture dependencies.
-- Dynamic mode updates (Advanced/Basic) based on actual system capability.
 - Subnet mismatch detection for Modbus probing.
 - Clean output with unique device registry to prevent spam.
 - Stop scans manually or automatically on window close.
