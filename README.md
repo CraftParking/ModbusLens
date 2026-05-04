@@ -25,6 +25,8 @@
 
 It is designed not just to communicate with devices, but to **discover and troubleshoot them**, even when network details are unknown.
 
+> **Note:** Currently supports **Modbus TCP/IP only**.
+
 ---
 
 ## Highlights
