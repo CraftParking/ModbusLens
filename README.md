@@ -57,17 +57,17 @@
   <img src="assets/network_diag.PNG" width="90%">
 </p>
 
-### Communication Log (NEW)
+### Communication Log
 <p align="center">
   <img src="assets/communication_log.PNG" width="90%">
 </p>
 
-### Connection Parameters (NEW)
+### Connection Parameters
 <p align="center">
   <img src="assets/connection_para.PNG" width="90%">
 </p>
 
-### Combined Status & Monitoring View (NEW)
+### Status & Monitoring View
 <p align="center">
   <img src="assets/com_and_stats.PNG" width="90%">
 </p>
