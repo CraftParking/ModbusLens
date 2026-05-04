@@ -1,11 +1,12 @@
 import socket
 import time
-import threading
 import struct
-import binascii
 import re
 import platform
 import subprocess
+import ipaddress
+import os
+import webbrowser
 try:
     import psutil
     PSUTIL_AVAILABLE = True
@@ -13,6 +14,72 @@ except ImportError:
     PSUTIL_AVAILABLE = False
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QHBoxLayout, QTextEdit, QLineEdit, QLabel, QSpinBox, QProgressBar, QComboBox
+
+
+NPCAP_DOWNLOAD_URL = "https://npcap.com/#download"
+
+
+def detect_packet_capture_capability():
+    """Return runtime packet-capture capability information."""
+    if platform.system().lower() != "windows":
+        return {
+            "advanced": True,
+            "mode": "Advanced",
+            "label": "Mode: Advanced",
+            "reason": "Raw socket capture is available on supported Unix-like systems with proper privileges.",
+            "scapy_available": False,
+            "npcap_present": False,
+        }
+
+    scapy_available = False
+    scapy_interfaces = []
+    try:
+        from scapy.all import get_if_list
+        scapy_interfaces = get_if_list()
+        scapy_available = bool(scapy_interfaces)
+    except Exception:
+        scapy_available = False
+
+    npcap_paths = [
+        os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "Npcap"),
+        os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "SysWOW64", "Npcap"),
+        r"C:\Program Files\Npcap",
+    ]
+    npcap_present = any(os.path.exists(path) for path in npcap_paths)
+
+    if not npcap_present:
+        try:
+            result = subprocess.run(
+                ["sc", "query", "npcap"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            npcap_present = result.returncode == 0 and "SERVICE_NAME" in result.stdout
+        except Exception:
+            npcap_present = False
+
+    advanced = bool(scapy_available and npcap_present)
+    if advanced:
+        label = "Mode: Advanced (Npcap Enabled)"
+        reason = "Npcap and scapy are available."
+    elif not npcap_present:
+        label = "Mode: Basic (No Npcap)"
+        reason = "Npcap packet capture is not available."
+    else:
+        label = "Mode: Basic (Scapy Missing)"
+        reason = "Npcap is installed, but scapy packet capture support is not available."
+
+    return {
+        "advanced": advanced,
+        "mode": "Advanced" if advanced else "Basic",
+        "label": label,
+        "reason": reason,
+        "scapy_available": scapy_available,
+        "npcap_present": npcap_present,
+        "interfaces": scapy_interfaces,
+    }
 
 
 class NetworkDiagnosticsWorker(QThread):
@@ -65,7 +132,7 @@ class NetworkDiagnosticsWorker(QThread):
                     self.output.emit("Modbus OK: Connected successfully")
                     # Try a simple read
                     try:
-                        result = modbus.read_holding_registers(0, 1)
+                        result = modbus.read_registers(0, 1)
                         if result is not None:
                             self.output.emit("Modbus READ OK: Test register read successful")
                         else:
@@ -262,179 +329,182 @@ def lookup_mac_vendor(mac_address):
     return 'Unknown'
 
 
-def get_network_interfaces():
-    """Get list of ALL available network interfaces, including disconnected ones."""
+def is_valid_interface_ipv4(ip_address):
+    """Return True for usable adapter IPv4 addresses."""
+    try:
+        ip = ipaddress.ip_address(ip_address)
+    except ValueError:
+        return False
+
+    return (
+        ip.version == 4
+        and not ip.is_unspecified
+        and not ip.is_loopback
+        and not ip.is_link_local
+        and not ip.is_multicast
+        and str(ip) != "255.255.255.255"
+    )
+
+
+def format_interface_name(raw_name):
+    """Normalize platform adapter section names for display."""
+    name = raw_name.strip().rstrip(":")
+    match = re.match(r"^(?:Ethernet|Wireless LAN|Bluetooth Network|PPP|Tunnel)\s+adapter\s+(.+)$", name, re.IGNORECASE)
+    return match.group(1).strip() if match else name
+
+
+def normalize_mac_address(mac_address):
+    """Normalize a MAC address to AA:BB:CC:DD:EE:FF, or Unknown."""
+    if not mac_address:
+        return "Unknown"
+
+    match = re.search(r"([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})", mac_address)
+    if not match:
+        return "Unknown"
+    return match.group(0).replace("-", ":").upper()
+
+
+def build_interface_record(name, ipv4, mac_address="Unknown"):
+    """Build the structured interface object consumed by the UI."""
+    mac_address = normalize_mac_address(mac_address)
+    vendor = lookup_mac_vendor(mac_address) if mac_address != "Unknown" else "Unknown"
+    display_name = f"{name} ({ipv4})"
+    if vendor != "Unknown":
+        display_name += f" - {vendor}"
+
+    return {
+        "name": name,
+        "display_name": display_name,
+        "ipv4": ipv4,
+        "ip": ipv4,
+        "mac": mac_address,
+        "vendor": vendor,
+        "status": "active",
+    }
+
+
+def get_network_interfaces_from_psutil():
+    """Get active IPv4 network interfaces using psutil."""
     interfaces = []
-    
-    if PSUTIL_AVAILABLE:
+    if not PSUTIL_AVAILABLE:
+        return interfaces
+
+    net_if_addrs = psutil.net_if_addrs()
+    net_if_stats = psutil.net_if_stats()
+
+    for interface_name, addresses in net_if_addrs.items():
+        stats = net_if_stats.get(interface_name)
+        if stats and not stats.isup:
+            continue
+
+        ipv4_addresses = [
+            addr.address
+            for addr in addresses
+            if addr.family == socket.AF_INET and is_valid_interface_ipv4(addr.address)
+        ]
+        if not ipv4_addresses:
+            continue
+
+        mac_address = "Unknown"
+        for addr in addresses:
+            if getattr(addr, "family", None) == getattr(psutil, "AF_LINK", object()):
+                mac_address = addr.address
+                break
+
+        interfaces.append(build_interface_record(interface_name, ipv4_addresses[0], mac_address))
+
+    return interfaces
+
+
+def parse_windows_ipconfig_interfaces(output):
+    """Parse active IPv4 interfaces from Windows ipconfig /all output."""
+    interfaces = []
+    seen_names = set()
+    section = None
+
+    adapter_header_re = re.compile(r"^\s*(?P<name>.+?\badapter\b.+?):\s*$", re.IGNORECASE)
+    ipv4_re = re.compile(r"IPv4 Address.*?:\s*([\d.]+)", re.IGNORECASE)
+    mac_re = re.compile(r"Physical Address.*?:\s*(([0-9a-fA-F]{2}[-:]){5}[0-9a-fA-F]{2})", re.IGNORECASE)
+
+    def flush_section():
+        if not section:
+            return
+        if section["media_disconnected"]:
+            return
+        if not section["ipv4"]:
+            return
+        name = section["name"]
+        if name in seen_names:
+            return
+        seen_names.add(name)
+        interfaces.append(build_interface_record(name, section["ipv4"], section["mac"]))
+
+    for line in output.splitlines():
+        header = adapter_header_re.match(line)
+        if header:
+            flush_section()
+            section = {
+                "name": format_interface_name(header.group("name")),
+                "ipv4": None,
+                "mac": "Unknown",
+                "media_disconnected": False,
+            }
+            continue
+
+        if section is None:
+            continue
+
+        if "Media disconnected" in line:
+            section["media_disconnected"] = True
+            continue
+
+        mac_match = mac_re.search(line)
+        if mac_match:
+            section["mac"] = mac_match.group(1)
+            continue
+
+        ipv4_match = ipv4_re.search(line)
+        if ipv4_match:
+            candidate_ip = ipv4_match.group(1)
+            if is_valid_interface_ipv4(candidate_ip):
+                section["ipv4"] = candidate_ip
+
+    flush_section()
+    return interfaces
+
+
+def get_network_interfaces_from_ipconfig():
+    """Get active IPv4 network interfaces from Windows ipconfig output."""
+    if platform.system().lower() != "windows":
+        return []
+
+    result = subprocess.run(["ipconfig", "/all"], capture_output=True, text=True, timeout=10)
+    if result.returncode != 0:
+        return []
+    return parse_windows_ipconfig_interfaces(result.stdout)
+
+
+def get_network_interfaces():
+    """Get active network interfaces with valid IPv4 addresses."""
+    try:
+        interfaces = get_network_interfaces_from_psutil()
+    except Exception:
+        interfaces = []
+
+    if not interfaces:
         try:
-            # Use psutil to get network interfaces
-            net_if_addrs = psutil.net_if_addrs()
-            net_if_stats = psutil.net_if_stats()
-            
-            print(f"[DEBUG] PSUTIL: Found {len(net_if_addrs)} interfaces")
-            
-            for interface_name, addresses in net_if_addrs.items():
-                # Get interface stats
-                stats = net_if_stats.get(interface_name)
-                
-                # Get IPv4 addresses for this interface
-                ipv4_addresses = []
-                for addr in addresses:
-                    if addr.family == socket.AF_INET:
-                        ipv4_addresses.append(addr.address)
-                
-                # Get MAC address
-                mac_address = 'Unknown'
-                for addr in addresses:
-                    if hasattr(addr, 'family') and addr.family == psutil.AF_LINK:
-                        mac_address = addr.address
-                        break
-                
-                # Format display name - show IP if available, otherwise "No IP"
-                if ipv4_addresses:
-                    ip_display = ipv4_addresses[0]
-                else:
-                    ip_display = "No IP"
-                
-                display_name = f"{interface_name} ({ip_display})"
-                
-                # Add vendor if MAC is known
-                if mac_address != 'Unknown':
-                    vendor = lookup_mac_vendor(mac_address)
-                    if vendor != 'Unknown':
-                        display_name += f" - {vendor}"
-                
-                # Add status indicator if available
-                if stats:
-                    status = " (Active)" if stats.isup else " (Inactive)"
-                    display_name += status
-                
-                print(f"[DEBUG] PSUTIL adding: {display_name}")
-                interfaces.append({
-                    'name': interface_name,
-                    'display_name': display_name,
-                    'ipv4': ipv4_addresses[0] if ipv4_addresses else None,
-                    'mac': mac_address,
-                    'vendor': lookup_mac_vendor(mac_address)
-                })
-            
-        except Exception as e:
-            print(f"[DEBUG] PSUTIL error: {e}")
-            pass  # Fall back to basic detection
-    
-    # Windows fallback using ipconfig /all to get ALL adapters
-    if platform.system().lower() == 'windows':
-        try:
-            print("[DEBUG] Using Windows ipconfig fallback")
-            result = subprocess.run(['ipconfig', '/all'], capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                lines = result.stdout.split('\n')
-                print(f"[DEBUG] ipconfig returned {len(lines)} lines")
-                current_interface = None
-                current_mac = None
-                current_ips = []
-                
-                for line in lines:
-                    line_stripped = line.strip()
-                    # Debug: print lines containing IP-related keywords
-                    if 'IPv4' in line or 'Autoconfiguration' in line:
-                        print(f"[DEBUG] Line with IP keyword: {repr(line)}, current_interface={current_interface}")
-                    
-                    if line_stripped and not line_stripped.startswith(' '):
-                        # Interface name line - save previous interface if exists
-                        if current_interface:
-                            # Check if already exists
-                            already_exists = any(iface['name'] == current_interface for iface in interfaces)
-                            if not already_exists:
-                                # Determine IP to display
-                                ip_display = current_ips[0] if current_ips else "No IP"
-                                display_name = f'{current_interface} ({ip_display})'
-                                
-                                # Add vendor if MAC is available
-                                if current_mac:
-                                    vendor = lookup_mac_vendor(current_mac)
-                                    if vendor != 'Unknown':
-                                        display_name += f' - {vendor}'
-                                
-                                print(f"[DEBUG] Windows adding: {display_name}")
-                                interfaces.append({
-                                    'name': current_interface,
-                                    'display_name': display_name,
-                                    'ipv4': current_ips[0] if current_ips else None,
-                                    'mac': current_mac or 'Unknown',
-                                    'vendor': lookup_mac_vendor(current_mac) if current_mac else 'Unknown'
-                                })
-                        
-                        # Start new interface - only if it's an actual adapter name
-                        # Match: "Ethernet adapter", "Wireless LAN adapter", etc.
-                        if re.match(r'^(Ethernet|Wireless LAN|Bluetooth Network|PPP adapter|Tunnel adapter)', line_stripped, re.IGNORECASE):
-                            current_interface = line_stripped.split(':')[0].strip()
-                            current_mac = None
-                            current_ips = []
-                            print(f"[DEBUG] Found adapter: {current_interface}")
-                        # Don't reset current_interface for other lines like "Description"
-                    
-                    elif 'Physical Address' in line_stripped and current_interface:
-                        # Extract MAC address
-                        mac_match = re.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', line_stripped)
-                        if mac_match:
-                            current_mac = mac_match.group(0).replace('-', ':').upper()
-                    
-                    elif ('IPv4 Address' in line or 'Autoconfiguration IPv4 Address' in line) and current_interface:
-                        # Extract IP address
-                        ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
-                        if ip_match:
-                            ip = ip_match.group(1)
-                            if ip not in current_ips:
-                                current_ips.append(ip)
-                                print(f"[DEBUG] Found IP for {current_interface}: {ip}")
-                
-                # Don't forget the last interface
-                if current_interface:
-                    already_exists = any(iface['name'] == current_interface for iface in interfaces)
-                    if not already_exists:
-                        ip_display = current_ips[0] if current_ips else "No IP"
-                        display_name = f'{current_interface} ({ip_display})'
-                        
-                        if current_mac:
-                            vendor = lookup_mac_vendor(current_mac)
-                            if vendor != 'Unknown':
-                                display_name += f' - {vendor}'
-                        
-                        interfaces.append({
-                            'name': current_interface,
-                            'display_name': display_name,
-                            'ipv4': current_ips[0] if current_ips else None,
-                            'mac': current_mac or 'Unknown',
-                            'vendor': lookup_mac_vendor(current_mac) if current_mac else 'Unknown'
-                        })
-            else:
-                pass
-                
-        except Exception as e:
-            pass
-    
-    # Ultimate fallback if nothing found
+            interfaces = get_network_interfaces_from_ipconfig()
+        except Exception:
+            interfaces = []
+
     if not interfaces:
         try:
             hostname = socket.gethostname()
             local_ip = socket.gethostbyname(hostname)
-            interfaces.append({
-                'name': 'default',
-                'display_name': f'Default Interface ({local_ip})',
-                'ipv4': local_ip,
-                'mac': '00:00:00:00:00:00',
-                'vendor': 'Unknown'
-            })
-        except:
-            interfaces.append({
-                'name': 'loopback',
-                'display_name': 'Loopback (127.0.0.1)',
-                'ipv4': '127.0.0.1',
-                'mac': '00:00:00:00:00:00',
-                'vendor': 'Unknown'
-            })
+            if is_valid_interface_ipv4(local_ip):
+                interfaces.append(build_interface_record("Default Interface", local_ip))
+        except Exception:
+            pass
     
     return interfaces
 
@@ -448,22 +518,83 @@ class PacketCapture(QThread):
     capture_complete = Signal(int)  # number of packets captured
     output = Signal(str)  # status messages
     
-    def __init__(self, interface=None, duration=30):
+    def __init__(self, interface=None, duration=30, capture_capability=None):
         super().__init__()
         self.interface = interface
         self.duration = duration
+        self.capture_capability = capture_capability or detect_packet_capture_capability()
         self.should_stop = False
         self.packet_count = 0
+        self.local_ip = None
+        self.debug = False
+        self.devices = {}
+        self._last_progress_bucket = 0
         self.is_windows = platform.system().lower() == 'windows'
+
+    def _debug(self, message):
+        if self.debug:
+            self.output.emit(message)
+
+    def _normalize_mac(self, mac_address):
+        if not mac_address:
+            return None
+        match = re.fullmatch(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', mac_address.strip())
+        if not match:
+            return None
+        return mac_address.replace('-', ':').upper()
+
+    def _is_valid_device_ip(self, ip_address):
+        try:
+            ip = ipaddress.ip_address(ip_address)
+        except ValueError:
+            return False
+        if ip.version != 4:
+            return False
+        if ip.is_unspecified or ip.is_multicast or str(ip) == "255.255.255.255":
+            return False
+        first_octet = int(str(ip).split('.', 1)[0])
+        if first_octet == 0:
+            return False
+        return True
+
+    def _register_device(self, ip_address, mac_address):
+        if not self._is_valid_device_ip(ip_address):
+            self._debug(f"Ignored noisy ARP IP: {ip_address}")
+            return False
+
+        normalized_mac = self._normalize_mac(mac_address)
+        if normalized_mac is None:
+            self._debug(f"Ignored malformed ARP MAC for {ip_address}: {mac_address}")
+            return False
+        if normalized_mac in ("00:00:00:00:00:00", "FF:FF:FF:FF:FF:FF"):
+            self._debug(f"Ignored unusable ARP MAC for {ip_address}: {normalized_mac}")
+            return False
+
+        vendor = lookup_mac_vendor(normalized_mac)
+        first_seen = self.devices.get(ip_address, {}).get("first_seen", time.time())
+        existing = self.devices.get(ip_address)
+        changed = existing is None or existing.get("mac") != normalized_mac
+
+        self.devices[ip_address] = {
+            "mac": normalized_mac,
+            "vendor": vendor,
+            "first_seen": first_seen,
+        }
+
+        if changed:
+            self.arp_discovered.emit(ip_address, normalized_mac, vendor)
+        return changed
         
     def run(self):
         """Capture and analyze network packets."""
         try:
-            self.output.emit("Starting packet capture...")
+            self.output.emit("Capturing ARP traffic...")
             
             if self.is_windows:
-                # Windows-compatible packet capture using ARP scanning and network discovery
-                self.run_windows_capture()
+                if self.capture_capability.get("advanced"):
+                    self.run_scapy_capture()
+                else:
+                    self.run_windows_capture()
             else:
                 # Linux/Unix packet capture using raw sockets
                 self.run_unix_capture()
@@ -471,15 +602,41 @@ class PacketCapture(QThread):
         except Exception as e:
             self.output.emit(f"Capture error: {e}")
             self.capture_complete.emit(0)
+
+    def run_scapy_capture(self):
+        """Capture ARP packets with scapy/Npcap when available."""
+        self.output.emit("Advanced ARP capture enabled.")
+        try:
+            from scapy.all import ARP, sniff
+
+            def handle_packet(packet):
+                if self.should_stop:
+                    return
+                if packet.haslayer(ARP):
+                    arp_layer = packet[ARP]
+                    if int(getattr(arp_layer, "op", 0)) in (1, 2):
+                        self._register_device(str(arp_layer.psrc), str(arp_layer.hwsrc))
+
+            sniff(
+                filter="arp",
+                prn=handle_packet,
+                timeout=self.duration,
+                store=False,
+            )
+            self.capture_complete.emit(len(self.devices))
+        except Exception as e:
+            self.output.emit(f"Advanced capture failed; using fallback discovery. ({e})")
+            self.run_windows_capture()
     
     def run_windows_capture(self):
         """Windows-compatible packet capture using ARP scanning and ping."""
-        self.output.emit("Using Windows-compatible packet analysis...")
+        self.output.emit("Scanning network...")
         
         try:
             # Get local network information
             hostname = socket.gethostname()
             local_ip = socket.gethostbyname(hostname)
+            self.local_ip = local_ip
             
             # Extract network segment (e.g., 192.168.1.100 -> 192.168.1)
             network_parts = local_ip.split('.')
@@ -495,8 +652,7 @@ class PacketCapture(QThread):
         except Exception as e:
             self.output.emit(f"Windows scan error: {e}")
             
-        self.output.emit(f"Windows packet analysis complete. Total devices found: {len(self.arp_devices)}")
-        self.capture_complete.emit(len(self.arp_devices))
+        self.capture_complete.emit(len(self.devices))
     
     def scan_network_windows(self, network_base):
         """Scan network using ping and ARP table on Windows."""
@@ -535,17 +691,11 @@ class PacketCapture(QThread):
                         mac_bytes = bytes(row.bPhysAddr[:row.dwPhysAddrLen])
                         mac_str = ':'.join(f'{b:02x}' for b in mac_bytes)
                         
-                        # Lookup vendor
-                        vendor = lookup_mac_vendor(mac_str)
-                        
-                        # Emit discovered device
-                        self.arp_discovered.emit(ip_addr, mac_str, vendor)
-                        self.output.emit(f"ARP: {ip_addr} -> {mac_str} ({vendor})")
+                        self._register_device(ip_addr, mac_str)
                         
                         # Check if this might be a Modbus device
                         if self.check_modbus_device_windows(ip_addr):
-                            self.modbus_detected.emit(ip_addr, local_ip, 1)  # Assume read coils
-                            self.output.emit(f"🔧 Potential Modbus device: {ip_addr}")
+                            self.modbus_detected.emit(ip_addr, self.local_ip or "", 1)  # Assume read coils
                         
             else:
                 self.output.emit("Could not access ARP table. Trying alternative method...")
@@ -577,26 +727,25 @@ class PacketCapture(QThread):
                 if result.returncode == 0:
                     # Host is alive, try to get MAC via ARP
                     mac = self.get_mac_via_arp_windows(ip)
-                    vendor = lookup_mac_vendor(mac) if mac else 'Unknown'
-                    
-                    self.arp_discovered.emit(ip, mac, vendor)
-                    self.output.emit(f"🔍 Active device: {ip} -> {mac} ({vendor})")
+                    self._register_device(ip, mac)
                     
                     # Check for Modbus
                     if self.check_modbus_device_windows(ip):
                         self.modbus_detected.emit(ip, ip, 1)
-                        self.output.emit(f"🔧 Potential Modbus device: {ip}")
                         
                 # Update progress
                 progress = int((i / 254) * 100)
-                self.output.emit(f"Scanning progress: {progress}%")
+                bucket = (progress // 25) * 25
+                if bucket in (25, 50, 75, 100) and bucket > self._last_progress_bucket:
+                    self._last_progress_bucket = bucket
+                    self.output.emit(f"Scanning network... {bucket}%")
                 
                 # Small delay to prevent overwhelming network
                 self.msleep(50)
                 
             except subprocess.TimeoutExpired:
                 continue
-            except Exception as e:
+            except Exception:
                 continue
     
     def get_mac_via_arp_windows(self, ip):
@@ -624,7 +773,7 @@ class PacketCapture(QThread):
         except Exception:
             pass
         
-        return '00:00:00:00:00:00'  # Default MAC
+        return None
     
     def check_modbus_device_windows(self, ip):
         """Check if device at IP might be a Modbus device."""
@@ -643,7 +792,7 @@ class PacketCapture(QThread):
         try:
             # Create raw socket for packet capture
             self.raw_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
-            self.output.emit("Socket created successfully")
+            self.output.emit("Listening for ARP traffic...")
             
             start_time = time.time()
             
@@ -666,10 +815,9 @@ class PacketCapture(QThread):
                         elif eth_protocol == 0x0800:
                             self.parse_ipv4_packet(packet[14:], addr[0])
                     
-                    # Update progress every 100 packets
                     if self.packet_count % 100 == 0:
                         elapsed = time.time() - start_time
-                        self.output.emit(f"Captured {self.packet_count} packets in {elapsed:.1f}s...")
+                        self._debug(f"Captured {self.packet_count} packets in {elapsed:.1f}s...")
                         
                 except socket.timeout:
                     continue
@@ -678,8 +826,7 @@ class PacketCapture(QThread):
                     continue
             
             self.raw_socket.close()
-            self.output.emit(f"Packet capture complete. Total packets: {self.packet_count}")
-            self.capture_complete.emit(self.packet_count)
+            self.capture_complete.emit(len(self.devices))
             
         except PermissionError:
             self.output.emit("Error: Requires administrator privileges for packet capture")
@@ -692,26 +839,15 @@ class PacketCapture(QThread):
         """Parse ARP packet to discover devices."""
         try:
             if len(arp_data) >= 28:  # Minimum ARP packet size
-                # ARP header structure
-                        arp_hw_type = struct.unpack('!H', arp_data[0:2])[0]
-                        arp_proto_type = struct.unpack('!H', arp_data[2:4])[0]
-                        arp_hw_len = arp_data[4]
-                        arp_proto_len = arp_data[5]
-                        arp_opcode = struct.unpack('!H', arp_data[6:8])[0]
-                        
-                        if arp_proto_type == 0x0800:  # ARP for IP
-                            sender_mac = ':'.join([f'{arp_data[i+8]:02x}' for i in range(0, 6)])
-                            sender_ip = socket.inet_ntoa(arp_data[14:18])
-                            target_mac = ':'.join([f'{arp_data[i+18]:02x}' for i in range(0, 6)])
-                            target_ip = socket.inet_ntoa(arp_data[24:28])
-                            
-                            # Discover device from ARP request/reply
-                            if arp_opcode in [1, 2]:  # ARP request or reply
-                                vendor = lookup_mac_vendor(sender_mac)
-                                self.arp_discovered.emit(sender_ip, sender_mac, vendor)
-                                self.output.emit(f"ARP: {sender_ip} -> {sender_mac} ({vendor})")
-                                
-        except Exception as e:
+                arp_proto_type = struct.unpack('!H', arp_data[2:4])[0]
+                arp_opcode = struct.unpack('!H', arp_data[6:8])[0]
+
+                if arp_proto_type == 0x0800 and arp_opcode in (1, 2):
+                    sender_mac = ':'.join(f'{arp_data[i + 8]:02x}' for i in range(6))
+                    sender_ip = socket.inet_ntoa(arp_data[14:18])
+                    self._register_device(sender_ip, sender_mac)
+
+        except Exception:
             pass  # Silently ignore ARP parsing errors
     
     def parse_ipv4_packet(self, ip_data, interface):
@@ -741,7 +877,7 @@ class PacketCapture(QThread):
                                     # Modbus TCP header + function
                                     modbus_func = modbus_data[7]
                                     self.modbus_detected.emit(src_ip, dst_ip, modbus_func)
-                                    self.output.emit(f"Modbus: {src_ip}:{src_port} -> {dst_ip}:{dst_port} (Function: {modbus_func})")
+                                    self._debug(f"Modbus: {src_ip}:{src_port} -> {dst_ip}:{dst_port} (Function: {modbus_func})")
                                 
                         self.packet_captured.emit(src_ip, dst_ip, 'TCP', f"{src_port}->{dst_port}")
                     
@@ -749,7 +885,7 @@ class PacketCapture(QThread):
                 elif ip_proto == 17:
                     self.packet_captured.emit(src_ip, dst_ip, 'UDP', 'Data')
                     
-        except Exception as e:
+        except Exception:
             pass  # Silently ignore IP parsing errors
     
     def stop(self):
@@ -758,7 +894,7 @@ class PacketCapture(QThread):
         if hasattr(self, 'raw_socket'):
             try:
                 self.raw_socket.close()
-            except:
+            except Exception:
                 pass
 
 
@@ -774,9 +910,13 @@ class NetworkDiagnosticsDialog:
         self.output_text = None
         self.discovered_devices = []
         self.captured_packets = []
-        self.arp_devices = []
+        self.arp_devices = {}
         self.selected_interface = None
         self.interfaces = []
+        self.capture_capability = detect_packet_capture_capability()
+        self.npcap_notice_shown = False
+        self.npcap_notice_dialog = None
+        self.capture_mode_label = None
 
     def show_diagnostics(self, host, port, unit_id):
         """Show network diagnostics dialog."""
@@ -816,6 +956,7 @@ class NetworkDiagnosticsDialog:
             self.interfaces = get_network_interfaces()
             for interface in self.interfaces:
                 self.interface_combo.addItem(interface['display_name'], interface['name'])
+            self.interface_combo.setEnabled(bool(self.interfaces))
             
             self.interface_combo.currentTextChanged.connect(self.on_interface_changed)
             interface_layout.addWidget(self.interface_combo)
@@ -828,6 +969,18 @@ class NetworkDiagnosticsDialog:
             interface_layout.addWidget(refresh_btn)
             
             layout.addLayout(interface_layout)
+
+            self.capture_mode_label = QLabel(self.capture_capability["label"])
+            self.capture_mode_label.setStyleSheet("""
+                QLabel {
+                    color: #333333;
+                    background-color: #F1F3F5;
+                    border: 1px solid #D0D0D0;
+                    padding: 6px;
+                    font-size: 12px;
+                }
+            """)
+            layout.addWidget(self.capture_mode_label)
             
             # Input fields for IP and Port
             input_layout = QHBoxLayout()
@@ -936,7 +1089,6 @@ class NetworkDiagnosticsDialog:
         for interface in self.interfaces:
             if interface['display_name'] == display_name:
                 self.selected_interface = interface
-                # Auto-fill IP with interface's IPv4 address
                 self.ip_input.setText(interface['ipv4'])
                 self.output_text.append(f"Selected interface: {interface['name']} - {interface['ipv4']}")
                 break
@@ -944,6 +1096,10 @@ class NetworkDiagnosticsDialog:
     def refresh_interfaces(self):
         """Refresh the list of network interfaces."""
         try:
+            self.capture_capability = detect_packet_capture_capability()
+            if self.capture_mode_label:
+                self.capture_mode_label.setText(self.capture_capability["label"])
+
             # Save current selection
             current_name = self.interface_combo.currentText()
             
@@ -954,6 +1110,7 @@ class NetworkDiagnosticsDialog:
             self.interface_combo.clear()
             for interface in self.interfaces:
                 self.interface_combo.addItem(interface['display_name'], interface['name'])
+            self.interface_combo.setEnabled(bool(self.interfaces))
             
             # Try to restore previous selection
             index = self.interface_combo.findText(current_name)
@@ -964,6 +1121,45 @@ class NetworkDiagnosticsDialog:
             
         except Exception as e:
             self.output_text.append(f"Error refreshing interfaces: {e}")
+
+    def show_npcap_notice_once(self):
+        """Show a one-time non-modal notice when advanced ARP capture is unavailable."""
+        if self.capture_capability.get("npcap_present") or self.npcap_notice_shown:
+            return
+
+        self.npcap_notice_shown = True
+        dialog = QDialog(self.dialog)
+        dialog.setWindowTitle("Advanced ARP Capture Not Available")
+        dialog.setModal(False)
+        dialog.setMinimumWidth(520)
+
+        layout = QVBoxLayout(dialog)
+        message = QLabel(
+            "Real-time ARP packet capture requires Npcap to be installed.\n\n"
+            "The application will continue using a fallback discovery method (ping + ARP table), "
+            "which may be less accurate.\n\n"
+            "For full functionality, install Npcap (WinPcap compatibility mode recommended).\n\n"
+            f"Download Npcap: {NPCAP_DOWNLOAD_URL}"
+        )
+        message.setWordWrap(True)
+        message.setOpenExternalLinks(True)
+        layout.addWidget(message)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+
+        open_btn = QPushButton("Open Download Page")
+        open_btn.clicked.connect(lambda: webbrowser.open(NPCAP_DOWNLOAD_URL))
+        buttons.addWidget(open_btn)
+
+        continue_btn = QPushButton("Continue")
+        continue_btn.setDefault(True)
+        continue_btn.clicked.connect(dialog.accept)
+        buttons.addWidget(continue_btn)
+
+        layout.addLayout(buttons)
+        self.npcap_notice_dialog = dialog
+        dialog.show()
 
     def run_tests(self):
         """Run network diagnostics tests using user-provided IP and port."""
@@ -1070,6 +1266,11 @@ class NetworkDiagnosticsDialog:
         """Start packet capture for network analysis."""
         if self.capturer and self.capturer.isRunning():
             return
+
+        self.capture_capability = detect_packet_capture_capability()
+        if self.capture_mode_label:
+            self.capture_mode_label.setText(self.capture_capability["label"])
+        self.show_npcap_notice_once()
         
         self.output_text.clear()
         self.captured_packets.clear()
@@ -1086,7 +1287,12 @@ class NetworkDiagnosticsDialog:
         self.discover_btn.setEnabled(False)
         
         # Start packet capture (30 seconds)
-        self.capturer = PacketCapture(duration=30)
+        interface_name = self.selected_interface["name"] if self.selected_interface else None
+        self.capturer = PacketCapture(
+            interface=interface_name,
+            duration=30,
+            capture_capability=self.capture_capability,
+        )
         self.capturer.packet_captured.connect(self.on_packet_captured)
         self.capturer.arp_discovered.connect(self.on_arp_discovered)
         self.capturer.modbus_detected.connect(self.on_modbus_detected)
@@ -1130,18 +1336,16 @@ class NetworkDiagnosticsDialog:
     
     def on_arp_discovered(self, ip, mac, vendor):
         """Handle ARP device discovery."""
-        self.arp_devices.append((ip, mac, vendor))
-        self.output_text.append(f"🔍 Device discovered via ARP: {ip} -> {mac} ({vendor})")
+        first_seen = self.arp_devices.get(ip, {}).get("first_seen", time.time())
+        self.arp_devices[ip] = {
+            "mac": mac,
+            "vendor": vendor or "Unknown",
+            "first_seen": first_seen,
+        }
     
     def on_modbus_detected(self, src_ip, dst_ip, function):
         """Handle Modbus traffic detection."""
-        func_names = {
-            1: "Read Coils", 2: "Read Discrete Inputs", 3: "Read Holding Registers",
-            4: "Read Input Registers", 5: "Write Single Coil", 6: "Write Single Register",
-            15: "Write Multiple Coils", 16: "Write Multiple Registers"
-        }
-        func_name = func_names.get(function, f"Unknown ({function})")
-        self.output_text.append(f"🔧 Modbus traffic: {src_ip} -> {dst_ip} ({func_name})")
+        self.captured_packets.append((src_ip, dst_ip, "Modbus", str(function)))
     
     def on_capture_complete(self, packet_count):
         """Handle packet capture completion."""
@@ -1152,23 +1356,30 @@ class NetworkDiagnosticsDialog:
         self.discover_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)  # Disable stop button when complete
         
-        # Display summary
-        self.output_text.append(f"\n=== CAPTURE SUMMARY ===")
-        self.output_text.append(f"Total packets captured: {packet_count}")
-        self.output_text.append(f"Devices discovered via ARP: {len(self.arp_devices)}")
-        
-        if self.arp_devices:
-            self.output_text.append(f"\n=== DEVICES IDENTIFIED BY MAC VENDOR ===")
-            for ip, mac, vendor in self.arp_devices:
-                if vendor != 'Unknown':
-                    self.output_text.append(f"🏭 {vendor}: {ip} ({mac})")
-                    
-            # Auto-fill first identified PLC device
-            for ip, mac, vendor in self.arp_devices:
-                if vendor != 'Unknown' and any(plc in vendor.lower() for plc in ['siemens', 'rockwell', 'schneider', 'mitsubishi', 'omron', 'abb']):
-                    self.ip_input.setText(ip)
-                    self.output_text.append(f"\nAuto-filled IP with identified PLC device: {vendor} at {ip}")
-                    break
+        self.output_text.append("\n=== DISCOVERED DEVICES ===")
+        if not self.arp_devices:
+            self.output_text.append("No valid ARP devices found.")
+            self.output_text.append("\nTotal unique devices: 0")
+            return
+
+        sorted_devices = sorted(
+            self.arp_devices.items(),
+            key=lambda item: tuple(int(part) for part in item[0].split("."))
+        )
+        for index, (ip, device) in enumerate(sorted_devices, start=1):
+            self.output_text.append(
+                f"{index}. IP: {ip} | MAC: {device['mac']} | Vendor: {device['vendor']}"
+            )
+
+        self.output_text.append(f"\nTotal unique devices: {len(self.arp_devices)}")
+
+        known_plc_vendors = ["siemens", "rockwell", "schneider", "mitsubishi", "omron", "abb"]
+        for ip, device in sorted_devices:
+            vendor = device["vendor"].lower()
+            if any(plc in vendor for plc in known_plc_vendors):
+                self.ip_input.setText(ip)
+                self.output_text.append(f"\nAuto-filled IP with identified PLC device: {device['vendor']} at {ip}")
+                break
 
     def on_tests_done(self, ok):
         """Handle test completion."""

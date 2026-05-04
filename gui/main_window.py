@@ -1,23 +1,20 @@
 import sys
 import logging
 import time
-import socket
 import struct
-import os
 import csv
 import math
 from pathlib import Path
-from typing import List, Dict, Any
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QTableWidget, QHeaderView, QTableWidgetItem,
-    QComboBox, QSpinBox, QTabWidget, QGroupBox, QStatusBar,
-    QApplication, QMessageBox, QDialog, QTextEdit, QCheckBox,
+    QLineEdit, QPushButton, QTableWidget,
+    QComboBox, QSpinBox, QTabWidget, QGroupBox,
+    QApplication, QMessageBox, QDialog, QCheckBox,
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QThread
-from PySide6.QtGui import QColor, QIcon
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 # Add the gui directory to the path for relative imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -35,14 +32,6 @@ from core.modbus_client import ModbusClient
 from app_paths import resource_path, app_data_dir
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
-
-
-class SafetyWarningDialog(QDialog):
-    def __init__(self):
-        super().__init__()
-
-        self.modbus = None
-        self.connection_history = []
 
 
 class ModbusGUI(QMainWindow):
@@ -92,12 +81,8 @@ class ModbusGUI(QMainWindow):
             for interface in interfaces:
                 if interface['display_name'] == display_name:
                     self.selected_network_interface = interface
-                    # Auto-fill IP with interface's IPv4 address if available
-                    if interface['ipv4']:
-                        self.ip_input.setText(interface['ipv4'])
-                        self._log(f"Selected network interface: {interface['name']} - {interface['ipv4']}")
-                    else:
-                        self._log(f"Selected network interface: {interface['name']} (No IP - disconnected)")
+                    self.ip_input.setText(interface['ipv4'])
+                    self._log(f"Selected network interface: {interface['name']} - {interface['ipv4']}")
                     break
         except ImportError:
             pass
@@ -141,6 +126,7 @@ class ModbusGUI(QMainWindow):
             self.network_interface_combo.clear()
             for interface in interfaces:
                 self.network_interface_combo.addItem(interface['display_name'], interface['name'])
+            self.network_interface_combo.setEnabled(bool(interfaces))
             
             # Try to restore previous selection
             index = self.network_interface_combo.findText(current_name)
@@ -323,8 +309,45 @@ class ModbusGUI(QMainWindow):
         """)
         inputs_layout.addWidget(self.connection_history_combo, 1, 3)
 
-        self.delete_history_btn = QPushButton("Delete History")
-        self.delete_history_btn.setStyleSheet(self._get_button_style())
+        self.delete_history_btn = QPushButton()
+        pixmap = QPixmap(18, 18)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(QColor("#4A4A4A"), 1.8)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.drawLine(5, 6, 13, 6)
+        painter.drawLine(7, 4, 11, 4)
+        painter.drawLine(6, 8, 7, 15)
+        painter.drawLine(12, 8, 11, 15)
+        painter.drawLine(8, 9, 8, 14)
+        painter.drawLine(10, 9, 10, 14)
+        painter.drawLine(7, 15, 11, 15)
+        painter.end()
+        self.delete_history_btn.setIcon(QIcon(pixmap))
+        self.delete_history_btn.setIconSize(pixmap.size())
+        self.delete_history_btn.setToolTip("Delete History")
+        self.delete_history_btn.setFixedSize(34, 30)
+        self.delete_history_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F5F5F5;
+                border: 1px solid #C8C8C8;
+                padding: 4px;
+            }
+            QPushButton:hover {
+                background-color: #FFECEC;
+                border-color: #D66A6A;
+            }
+            QPushButton:pressed {
+                background-color: #FFDADA;
+            }
+            QPushButton:disabled {
+                background-color: #F0F0F0;
+                border-color: #D0D0D0;
+            }
+        """)
         inputs_layout.addWidget(self.delete_history_btn, 1, 4)
 
         layout.addLayout(inputs_layout)
@@ -353,6 +376,7 @@ class ModbusGUI(QMainWindow):
             interfaces = get_network_interfaces()
             for interface in interfaces:
                 self.network_interface_combo.addItem(interface['display_name'], interface['name'])
+            self.network_interface_combo.setEnabled(bool(interfaces))
         except ImportError:
             # Fallback if network_diagnostics not available
             self.network_interface_combo.addItem("Default Interface", "default")
@@ -976,16 +1000,6 @@ class ModbusGUI(QMainWindow):
             selected_rows.add(current_row)
         return selected_rows
 
-    def _get_monitoring_tags(self):
-        """Get all configured monitoring tags from the tag table."""
-        return self.monitoring_manager.get_monitoring_tags() 
-
-    def _create_operation_button(self, text, color):
-        """Create a styled operation button."""
-        btn = QPushButton(text)
-        btn.setStyleSheet(self._get_button_style(color))
-        return btn
-
     def _connect_signals(self):
         """Connect all UI signals to their handlers."""
         # Connection signals
@@ -1023,164 +1037,6 @@ class ModbusGUI(QMainWindow):
             return
 
         self.monitoring_manager.update_write_value_cache((tag_name, data_type, address), item.text())
-
-    def _on_read_data_type_changed(self, data_type):
-        """Handle read data type selection change."""
-        # Enable/disable byte order based on data type
-        is_multi_byte = data_type in ["UInt32", "Int32", "Float32", "String"]
-        self.read_byte_order.setEnabled(is_multi_byte)
-
-    def _on_write_data_type_changed(self, data_type):
-        """Handle write data type selection change."""
-        # Enable/disable byte order based on data type
-        is_multi_byte = data_type in ["UInt32", "Int32", "Float32", "String"]
-        self.write_byte_order.setEnabled(is_multi_byte)
-
-    def _convert_data_to_display(self, raw_data, data_type, byte_order):
-        """Convert raw Modbus data to selected display format."""
-        if data_type == "Raw":
-            return str(raw_data)
-        elif data_type == "Boolean":
-            if isinstance(raw_data, list):
-                return ", ".join(["True" if x else "False" for x in raw_data])
-            return "True" if raw_data else "False"
-        elif data_type == "UInt16":
-            if isinstance(raw_data, list):
-                return ", ".join([str(x & 0xFFFF) for x in raw_data])
-            return str(raw_data & 0xFFFF)
-        elif data_type == "Int16":
-            if isinstance(raw_data, list):
-                return ", ".join([str(x if x <= 32767 else x - 65536) for x in raw_data])
-            return str(raw_data if raw_data <= 32767 else raw_data - 65536)
-        elif data_type in ["UInt32", "Int32", "Float32"]:
-            return self._convert_multi_byte_data(raw_data, data_type, byte_order)
-        elif data_type == "String":
-            return self._convert_to_string(raw_data, byte_order)
-        else:
-            return str(raw_data)
-
-    def _convert_multi_byte_data(self, raw_data, data_type, byte_order):
-        """Convert raw data to multi-byte formats."""
-        if isinstance(raw_data, list) and len(raw_data) >= 2:
-            # Combine two 16-bit registers for 32-bit values
-            reg1, reg2 = raw_data[0], raw_data[1]
-            
-            # Apply byte order
-            if byte_order == "Big Endian":
-                bytes_data = struct.pack(">HH", reg1, reg2)
-            elif byte_order == "Little Endian":
-                bytes_data = struct.pack("<HH", reg1, reg2)
-            elif byte_order == "Mid-Big Endian":
-                bytes_data = struct.pack(">HH", reg1, reg2)
-                # Swap middle bytes
-                bytes_data = bytes_data[0:1] + bytes_data[2:3] + bytes_data[1:2] + bytes_data[3:4]
-            else:  # Mid-Little Endian
-                bytes_data = struct.pack("<HH", reg1, reg2)
-                # Swap middle bytes
-                bytes_data = bytes_data[0:1] + bytes_data[2:3] + bytes_data[1:2] + bytes_data[3:4]
-            
-            # Unpack based on data type
-            if data_type == "UInt32":
-                return str(struct.unpack(">I", bytes_data)[0])
-            elif data_type == "Int32":
-                return str(struct.unpack(">i", bytes_data)[0])
-            elif data_type == "Float32":
-                return str(struct.unpack(">f", bytes_data)[0])
-        
-        return "Insufficient data"
-
-    def _convert_to_string(self, raw_data, byte_order):
-        """Convert raw data to string."""
-        if isinstance(raw_data, list):
-            # Convert each register to bytes
-            bytes_data = b""
-            for reg in raw_data:
-                if byte_order == "Big Endian":
-                    bytes_data += struct.pack(">H", reg)
-                else:
-                    bytes_data += struct.pack("<H", reg)
-            
-            # Convert to string, remove null characters
-            try:
-                return bytes_data.decode('utf-8').rstrip('\x00')
-            except UnicodeDecodeError:
-                return bytes_data.decode('latin-1', errors='replace').rstrip('\x00')
-        
-        return str(raw_data)
-
-    def _convert_input_to_raw(self, input_value, data_type, byte_order):
-        """Convert user input to raw Modbus values."""
-        try:
-            if data_type == "Boolean":
-                return bool(int(input_value))
-            elif data_type == "UInt16":
-                return int(input_value) & 0xFFFF
-            elif data_type == "Int16":
-                val = int(input_value)
-                return val if -32768 <= val <= 32767 else (val + 65536 if val < 0 else 65535)
-            elif data_type in ["UInt32", "Int32", "Float32"]:
-                return self._convert_multi_byte_input(input_value, data_type, byte_order)
-            elif data_type == "String":
-                return self._convert_string_to_registers(input_value, byte_order)
-            else:
-                return int(input_value)
-        except (ValueError, struct.error) as e:
-            raise ValueError(f"Invalid {data_type} value: {input_value}")
-
-    def _convert_multi_byte_input(self, input_value, data_type, byte_order):
-        """Convert input to multi-byte register values."""
-        if data_type == "UInt32":
-            val = int(input_value)
-            bytes_data = struct.pack(">I", val)
-        elif data_type == "Int32":
-            val = int(input_value)
-            bytes_data = struct.pack(">i", val)
-        elif data_type == "Float32":
-            val = float(input_value)
-            bytes_data = struct.pack(">f", val)
-        else:
-            raise ValueError(f"Unsupported data type: {data_type}")
-        
-        # Apply byte order and split into registers
-        if byte_order == "Big Endian":
-            reg1, reg2 = struct.unpack(">HH", bytes_data)
-        elif byte_order == "Little Endian":
-            reg1, reg2 = struct.unpack("<HH", bytes_data)
-        elif byte_order == "Mid-Big Endian":
-            reg1, reg2 = struct.unpack(">HH", bytes_data)
-            # Swap middle bytes
-            bytes_swapped = bytes_data[0:1] + bytes_data[2:3] + bytes_data[1:2] + bytes_data[3:4]
-            reg1, reg2 = struct.unpack(">HH", bytes_swapped)
-        else:  # Mid-Little Endian
-            reg1, reg2 = struct.unpack("<HH", bytes_data)
-            # Swap middle bytes
-            bytes_swapped = bytes_data[0:1] + bytes_data[2:3] + bytes_data[1:2] + bytes_data[3:4]
-            reg1, reg2 = struct.unpack("<HH", bytes_swapped)
-        
-        return [reg1, reg2]
-
-    def _convert_string_to_registers(self, input_value, byte_order):
-        """Convert string to register values."""
-        # Encode string to bytes
-        try:
-            bytes_data = input_value.encode('utf-8')
-        except UnicodeEncodeError:
-            bytes_data = input_value.encode('latin-1', errors='replace')
-        
-        # Pad to even number of bytes
-        if len(bytes_data) % 2 != 0:
-            bytes_data += b'\x00'
-        
-        # Convert to registers
-        registers = []
-        for i in range(0, len(bytes_data), 2):
-            if byte_order == "Big Endian":
-                reg = struct.unpack(">H", bytes_data[i:i+2])[0]
-            else:
-                reg = struct.unpack("<H", bytes_data[i:i+2])[0]
-            registers.append(reg)
-        
-        return registers
 
     def _connect(self):
         """Connect to Modbus server."""
@@ -1277,19 +1133,6 @@ Unit ID: {unit_id}<br><br>
         """Get all monitoring tags from the table."""
         return self.monitoring_manager.get_monitoring_tags()
 
-    def _table_item_text(self, table, row, column):
-        """Get text from a table cell widget."""
-        widget = table.cellWidget(row, column)
-        if widget:
-            if hasattr(widget, 'text'):
-                return widget.text()
-            elif hasattr(widget, 'currentText'):
-                return widget.currentText()
-            elif hasattr(widget, 'value'):
-                return str(widget.value())
-        return ""
-
-    
     def _export_tags_csv(self):
         """Export tags to CSV file."""
         try:
@@ -1537,253 +1380,6 @@ Unit ID: {unit_id}<br><br>
         if current_text in self.connection_history:
             self.connection_history_combo.setCurrentText(current_text)
         self.connection_history_combo.blockSignals(False)
-
-    def _read_operation(self, operation_type):
-        """Handle read operations."""
-        if not self._check_connection():
-            return
-        if self._modbus_busy:
-            self._log("Safety interlock: another Modbus request is active")
-            return
-
-        try:
-            self._modbus_busy = True
-            user_start_addr = self.read_start_addr.value()
-            count = self.read_count.value()
-            data_type = self.read_data_type.currentText()
-            byte_order = self.read_byte_order.currentText()
-            
-            # Convert user address to protocol address (default to 0-based for legacy operations)
-            try:
-                start_addr = self.convert_to_protocol_address(user_start_addr, operation_type, is_one_based=False)
-            except ValueError as e:
-                self._log(f"Address error: {e}")
-                return
-            
-            if start_addr + count - 1 > 65535:
-                self._log("Read operation blocked: address range exceeds 65535")
-                return
-
-            raw_data = None
-            operation_name = ""
-            
-            if operation_type == "coils":
-                raw_data = self.modbus.read_coils(start_addr, count)
-                operation_name = "Coils"
-            elif operation_type == "discrete_inputs":
-                raw_data = self.modbus.read_discrete_inputs(start_addr, count)
-                operation_name = "Discrete Inputs"
-            elif operation_type == "holding_registers":
-                raw_data = self.modbus.read_registers(start_addr, count)
-                operation_name = "Holding Registers"
-            elif operation_type == "input_registers":
-                raw_data = self.modbus.read_input_registers(start_addr, count)
-                operation_name = "Input Registers"
-            
-            if raw_data is not None:
-                self._log(f"Read {len(raw_data)} {operation_name.lower()} from {user_start_addr} (protocol {start_addr}): {raw_data}")
-                self._display_raw_data(f"{operation_name}[{user_start_addr}:{user_start_addr+count-1}]", raw_data)
-                
-                # Update results table with formatted data
-                self._update_read_results_table(user_start_addr, raw_data, data_type, byte_order)
-            else:
-                extra = f" ({self.modbus.last_error})" if getattr(self.modbus, "last_error", None) else ""
-                self._log(f"Failed to read {operation_name.lower()}{extra}")
-                self._clear_read_results_table()
-
-        except Exception as e:
-            self._log(f"Read operation error: {e}")
-        finally:
-            self._modbus_busy = False
-
-    def _update_read_results_table(self, start_addr, raw_data, data_type, byte_order):
-        """Update the read results table with formatted data."""
-        self.read_results_table.setRowCount(0)
-        
-        if isinstance(raw_data, list):
-            # Handle multi-byte data types
-            if data_type in ["UInt32", "Int32", "Float32"]:
-                # Group registers in pairs for 32-bit values
-                for i in range(0, len(raw_data), 2):
-                    if i + 1 < len(raw_data):
-                        addr = start_addr + i
-                        raw_pair = raw_data[i:i+2]
-                        formatted = self._convert_data_to_display(raw_pair, data_type, byte_order)
-                        
-                        row = self.read_results_table.rowCount()
-                        self.read_results_table.insertRow(row)
-                        self.read_results_table.setItem(row, 0, QTableWidgetItem(str(addr)))
-                        self.read_results_table.setItem(row, 1, QTableWidgetItem(str(raw_pair)))
-                        self.read_results_table.setItem(row, 2, QTableWidgetItem(formatted))
-                        self.read_results_table.setItem(row, 3, QTableWidgetItem(data_type))
-            elif data_type == "String":
-                # Show string for entire range
-                formatted = self._convert_data_to_display(raw_data, data_type, byte_order)
-                
-                row = self.read_results_table.rowCount()
-                self.read_results_table.insertRow(row)
-                self.read_results_table.setItem(row, 0, QTableWidgetItem(f"{start_addr}-{start_addr+len(raw_data)-1}"))
-                self.read_results_table.setItem(row, 1, QTableWidgetItem(str(raw_data)))
-                self.read_results_table.setItem(row, 2, QTableWidgetItem(formatted))
-                self.read_results_table.setItem(row, 3, QTableWidgetItem(data_type))
-            else:
-                # Handle single values (Boolean, UInt16, Int16, Raw)
-                for i, value in enumerate(raw_data):
-                    addr = start_addr + i
-                    formatted = self._convert_data_to_display(value, data_type, byte_order)
-                    
-                    row = self.read_results_table.rowCount()
-                    self.read_results_table.insertRow(row)
-                    self.read_results_table.setItem(row, 0, QTableWidgetItem(str(addr)))
-                    self.read_results_table.setItem(row, 1, QTableWidgetItem(str(value)))
-                    self.read_results_table.setItem(row, 2, QTableWidgetItem(formatted))
-                    self.read_results_table.setItem(row, 3, QTableWidgetItem(data_type))
-        else:
-            # Single value
-            formatted = self._convert_data_to_display(raw_data, data_type, byte_order)
-            
-            row = self.read_results_table.rowCount()
-            self.read_results_table.insertRow(row)
-            self.read_results_table.setItem(row, 0, QTableWidgetItem(str(start_addr)))
-            self.read_results_table.setItem(row, 1, QTableWidgetItem(str(raw_data)))
-            self.read_results_table.setItem(row, 2, QTableWidgetItem(formatted))
-            self.read_results_table.setItem(row, 3, QTableWidgetItem(data_type))
-
-    def _clear_read_results_table(self):
-        """Clear the read results table."""
-        self.read_results_table.setRowCount(0)
-
-    def _write_operation(self, operation_type):
-        """Handle write operations."""
-        if not self._check_connection():
-            return
-        if self._modbus_busy:
-            self._log("Safety interlock: another Modbus request is active")
-            return
-
-        was_monitoring = self.monitoring_active
-        monitor_interval = self.tag_monitoring_interval.value()
-        if was_monitoring:
-            self.monitoring_timer.stop()
-            self.write_poll_timer.stop()
-            self._log("Safety interlock: monitoring paused while write request is active")
-
-        try:
-            self._modbus_busy = True
-            user_addr = self.write_addr.value()
-            data_type = self.write_data_type.currentText()
-            byte_order = self.write_byte_order.currentText()
-            
-            # Convert user address to protocol address (default to 0-based for legacy operations)
-            op_type = "coils" if operation_type == "coil" else "holding_registers"
-            try:
-                addr = self.convert_to_protocol_address(user_addr, op_type, is_one_based=False)
-            except ValueError as e:
-                self._log(f"Address error: {e}")
-                return
-            
-            success = False
-            input_value = ""
-            raw_value = None
-            operation_name = ""
-
-            if operation_type == "coil":
-                input_value = self.write_single_value.text().strip()
-                if not input_value:
-                    self._log("Please enter a value for coil")
-                    return
-                raw_value = self._convert_input_to_raw(input_value, "Boolean", byte_order)
-                success = self.modbus.write_coil(addr, raw_value)
-                operation_name = "Coil"
-                
-            elif operation_type == "register":
-                input_value = self.write_single_value.text().strip()
-                if not input_value:
-                    self._log("Please enter a value for register")
-                    return
-                raw_value = self._convert_input_to_raw(input_value, data_type, byte_order)
-                
-                if isinstance(raw_value, list):
-                    # Multi-byte value, use write_registers
-                    success = self.modbus.write_registers(addr, raw_value)
-                    operation_name = "Registers"
-                else:
-                    # Single 16-bit value
-                    success = self.modbus.write_register(addr, raw_value)
-                    operation_name = "Register"
-                    
-            elif operation_type == "coils":
-                input_value = self.write_multi_values.text().strip()
-                if not input_value:
-                    self._log("Please enter values for coils")
-                    return
-                values = [bool(int(v.strip())) for v in input_value.split(",")]
-                success = self.modbus.write_coils(addr, values)
-                raw_value = values
-                operation_name = "Coils"
-                
-            elif operation_type == "registers":
-                input_value = self.write_multi_values.text().strip()
-                if not input_value:
-                    self._log("Please enter values for registers")
-                    return
-                values = [int(v.strip()) for v in input_value.split(",")]
-                success = self.modbus.write_registers(addr, values)
-                raw_value = values
-                operation_name = "Registers"
-            
-            # Update write results table
-            status = "Success" if success else "Failed"
-            self._update_write_results_table(addr, input_value, raw_value, status)
-            
-            if success:
-                self._log(f"Wrote {operation_name} {addr} = {input_value} (raw: {raw_value})")
-            else:
-                error_msg = getattr(self.modbus, 'last_error', 'Unknown error')
-                self._log(f"Failed to write {operation_name.lower()}: {error_msg}")
-
-        except ValueError as e:
-            self._log(f"Invalid value format: {e}")
-            self._update_write_results_table(addr, input_value if 'input_value' in locals() else "", "Error", f"Format Error: {e}")
-        except Exception as e:
-            self._log(f"Write operation error: {e}")
-            self._update_write_results_table(addr, input_value if 'input_value' in locals() else "", "Error", f"Error: {e}")
-        finally:
-            self._modbus_busy = False
-            if was_monitoring and self.monitoring_active:
-                self._restart_monitoring_timers(monitor_interval)
-                self._log("Safety interlock: monitoring resumed after write request")
-
-    def _update_write_results_table(self, addr, input_value, raw_value, status):
-        """Update the write results table."""
-        row = self.write_results_table.rowCount()
-        self.write_results_table.insertRow(row)
-        
-        # Address
-        self.write_results_table.setItem(row, 0, QTableWidgetItem(str(addr)))
-        
-        # Input Value
-        self.write_results_table.setItem(row, 1, QTableWidgetItem(str(input_value)))
-        
-        # Raw Value
-        if isinstance(raw_value, list):
-            raw_str = ", ".join([str(v) for v in raw_value])
-        else:
-            raw_str = str(raw_value) if raw_value is not None else ""
-        self.write_results_table.setItem(row, 2, QTableWidgetItem(raw_str))
-        
-        # Status
-        status_item = QTableWidgetItem(status)
-        if status == "Success":
-            status_item.setBackground(QColor("#E8F5E8"))
-        elif status.startswith("Error"):
-            status_item.setBackground(QColor("#FFEBEE"))
-        else:
-            status_item.setBackground(QColor("#FFF3E0"))
-        self.write_results_table.setItem(row, 3, status_item)
-        
-        # Auto-scroll to latest entry
-        self.write_results_table.scrollToBottom()
 
     def _write_results_window_selected(self):
         """Write selected rows from the detached results window."""
@@ -2704,7 +2300,7 @@ Unit ID: {unit_id}<br><br>
         """Show network diagnostics.""" 
         host = self.ip_input.text().strip() or "127.0.0.1"
         port = int(self.port_input.value())
-        unit_id = int(self.unit_id_input.value()) if hasattr(self, 'unit_id_input') else 1
+        unit_id = int(self.unit_input.value())
         self.network_diagnostics.show_diagnostics(host, port, unit_id)
 
     def _show_documentation(self):
@@ -2821,117 +2417,6 @@ class SafetyWarningDialog(QDialog):
                 color: {text};
                 border: 1px solid #B0B0B0;
                                 padding: 10px 18px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {hover};
-            }}
-            QPushButton:pressed {{
-                background-color: {base};
-            }}
-            QPushButton:disabled {{
-                background-color: #F0F0F0;
-                color: #999999;
-                border: 1px solid #C8C8C8;
-            }}
-        """
-
-
-class NetworkDiagnosticsWorker(QThread):
-    output = Signal(str)
-    done = Signal(bool)
-
-    def __init__(self, host: str, port: int, unit_id: int, timeout_s: float, test_modbus: bool):
-        super().__init__()
-        self.host = host
-        self.port = int(port)
-        self.unit_id = int(unit_id)
-        self.timeout_s = float(timeout_s)
-        self.test_modbus = bool(test_modbus)
-
-    def _emit(self, line: str):
-        self.output.emit(line)
-
-    def run(self):
-        ok = True
-        try:
-            host = self.host.strip()
-            if not host:
-                self._emit("ERROR: Host is empty.")
-                self.done.emit(False)
-                return
-
-            self._emit(f"Target: {host}:{self.port} (Unit {self.unit_id})")
-            self._emit(f"Timeout: {self.timeout_s:.1f}s")
-
-            # DNS / address resolution
-            try:
-                infos = socket.getaddrinfo(host, self.port, type=socket.SOCK_STREAM)
-                addrs = []
-                for family, socktype, proto, canonname, sockaddr in infos:
-                    if sockaddr and sockaddr[0] not in addrs:
-                        addrs.append(sockaddr[0])
-                if addrs:
-                    self._emit("Resolve: OK -> " + ", ".join(addrs[:5]))
-                else:
-                    self._emit("Resolve: OK")
-            except Exception as e:
-                ok = False
-                self._emit(f"Resolve: FAIL ({e})")
-                self.done.emit(False)
-                return
-
-            # TCP connect test (port reachability)
-            try:
-                start = time.perf_counter()
-                sock = socket.create_connection((host, self.port), timeout=self.timeout_s)
-                try:
-                    elapsed_ms = (time.perf_counter() - start) * 1000.0
-                    self._emit(f"TCP Connect: OK ({elapsed_ms:.0f} ms)")
-                finally:
-                    try:
-                        sock.close()
-                    except Exception:
-                        pass
-            except Exception as e:
-                ok = False
-                self._emit(f"TCP Connect: FAIL ({e})")
-                self.done.emit(False)
-                return
-
-            if self.test_modbus:
-                self._emit("Modbus Connect: running...")
-                try:
-                    client = ModbusClient(host, self.port, self.unit_id, timeout=self.timeout_s, retries=0)
-                    if client.connect():
-                        self._emit("Modbus Connect: OK")
-                    else:
-                        ok = False
-                        self._emit("Modbus Connect: FAIL (connect returned False)")
-                    client.disconnect()
-                except Exception as e:
-                    ok = False
-                    self._emit(f"Modbus Connect: FAIL ({e})")
-        finally:
-            self.done.emit(ok)
-
-    @staticmethod
-    def _button_style(primary: bool = False) -> str:
-        if primary:
-            base = "#007ACC"
-            hover = "#0066AA"
-            text = "#FFFFFF"
-        else:
-            base = "#E0E0E0"
-            hover = "#D5D5D5"
-            text = "#000000"
-
-        return f"""
-            QPushButton {{
-                background-color: {base};
-                color: {text};
-                border: 1px solid #B0B0B0;
-                                padding: 8px 14px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
