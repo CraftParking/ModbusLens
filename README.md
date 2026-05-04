@@ -8,6 +8,7 @@
 <p align="center">
   <a href="#overview">Overview</a> |
   <a href="#highlights">Highlights</a> |
+  <a href="#screenshots">Screenshots</a> |
   <a href="#features">Features</a> |
   <a href="#installation">Installation</a> |
   <a href="#usage">Usage</a> |
@@ -18,28 +19,62 @@
 
 ## Overview
 
-**ModbusLens** is a desktop tool designed for engineers working with **Modbus TCP devices**, combining communication, monitoring, and network diagnostics in a single interface.
+**ModbusLens** is a desktop tool built for engineers working with **Modbus TCP devices**, combining communication, monitoring, and network diagnostics in a single interface.
 
-Unlike traditional Modbus tools, ModbusLens focuses on **device discovery and troubleshooting**, helping identify and interact with devices even when network details are unknown.
+It is designed not just to communicate with devices, but to **discover and troubleshoot them**, even when network details are unknown.
 
 ---
 
 ## Highlights
 
 - **ARP-Based Device Discovery**  
-  Discover devices without knowing their IP address — especially useful for unknown or misconfigured PLCs.
+  Discover devices without knowing their IP address — ideal for unknown or misconfigured PLCs.
 
 - **Live Continuous Scanning**  
-  Devices appear in real-time without needing repeated scans.
+  Devices appear in real-time without requiring repeated manual scans.
 
 - **Automatic Modbus Detection**  
   Identifies which discovered devices respond to Modbus TCP.
 
 - **Clean, Non-Spam Output**  
-  Uses a unique device registry to avoid duplicate entries during continuous scanning.
+  Uses a unique device registry to prevent duplicate entries during continuous scanning.
 
 - **Subnet Awareness**  
-  Detects subnet mismatches and explains connectivity issues instead of failing silently.
+  Detects subnet mismatches and helps diagnose connectivity issues.
+
+---
+
+## Screenshots
+
+### Main Interface
+
+<p align="center">
+  <img src="assets/Main_window.PNG" width="90%">
+</p>
+
+---
+
+### Address Table (Modbus Read/Write)
+
+<p align="center">
+  <img src="assets/address_table.PNG" width="90%">
+</p>
+
+---
+
+### Tag Monitoring
+
+<p align="center">
+  <img src="assets/tag_address.PNG" width="90%">
+</p>
+
+---
+
+### Network Discovery & Diagnostics (ARP-Based)
+
+<p align="center">
+  <img src="assets/network_diag.PNG" width="90%">
+</p>
 
 ---
 
@@ -62,14 +97,14 @@ Unlike traditional Modbus tools, ModbusLens focuses on **device discovery and tr
 - Automatic Modbus device detection  
 - Filter to show only Modbus devices  
 - Packet capture support (Npcap required)  
-- Vendor identification from MAC address (where available)  
+- Vendor identification (via MAC address where available)  
 - Stop scan control with proper cleanup  
 
 ### User Interface
 - PySide6-based desktop GUI  
 - Connection status indicators  
 - Dedicated diagnostics window  
-- Responsive layout for efficient workflow  
+- Responsive layout  
 
 ---
 
@@ -100,9 +135,9 @@ python gui_main.py
 
 ## Usage
 
-- Enter target IP, port, and unit ID to connect to a Modbus device  
+- Enter target IP, port, and unit ID to connect  
 - Use Address Table for read/write operations  
-- Configure tags and start live monitoring  
+- Configure tags and start monitoring  
 - Open **Diagnostics → Network Discovery & Diagnostics**  
 - Start discovery to identify devices on the network  
 
