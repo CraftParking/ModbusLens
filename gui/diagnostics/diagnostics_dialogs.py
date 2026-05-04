@@ -221,7 +221,9 @@ class DiagnosticsDialogs:
             # Statistics button
             stats_btn = QPushButton("Show Statistics")
             stats_btn.setStyleSheet(self.parent._get_button_style())
-            stats_btn.clicked.connect(advanced_diagnostics.show_statistics_dialog)
+            stats_btn.clicked.connect(
+                lambda: advanced_diagnostics.show_statistics_dialog(getattr(self.parent, 'modbus', None))
+            )
             button_layout.addWidget(stats_btn)
             
             clear_btn = QPushButton("Clear Data")

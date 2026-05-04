@@ -247,15 +247,21 @@ class MonitoringManager:
         """Generate a unique key for a tag."""
         return (tag["name"], tag["type"], str(tag["address"]))
 
-    def read_tag_for_monitoring(self, tag):
+    def read_tag_for_monitoring(self, tag, is_one_based=None):
         """Read data for a specific tag during monitoring."""
+        try:
+            protocol_offset = self.parent._tag_user_address_to_offset(tag)
+        except ValueError as e:
+            self.parent._log(f"Address error for tag {tag['name']}: {e}")
+            return None
+        
         if tag["type"] == "Coil":
-            return self.parent.modbus.read_coils(tag["address"], tag["count"])
+            return self.parent.modbus.read_coils(protocol_offset, tag["count"])
         if tag["type"] == "Discrete Input":
-            return self.parent.modbus.read_discrete_inputs(tag["address"], tag["count"])
+            return self.parent.modbus.read_discrete_inputs(protocol_offset, tag["count"])
         if tag["type"] == "Holding Register":
-            return self.parent.modbus.read_registers(tag["address"], tag["count"])
-        return self.parent.modbus.read_input_registers(tag["address"], tag["count"])
+            return self.parent.modbus.read_registers(protocol_offset, tag["count"])
+        return self.parent.modbus.read_input_registers(protocol_offset, tag["count"])
 
     def format_monitoring_value(self, tag, value):
         """Format a monitoring value for display."""
