@@ -2384,6 +2384,11 @@ class SafetyWarningDialog(QDialog):
         body.setStyleSheet("color: #222222;")
         layout.addWidget(body)
 
+        # Add "Don't show again" checkbox
+        self.dont_show_again = QCheckBox("Don't show this warning again")
+        self.dont_show_again.setStyleSheet("color: #222222;")
+        layout.addWidget(self.dont_show_again)
+
         buttons = QHBoxLayout()
         buttons.addStretch()
 
@@ -2401,6 +2406,19 @@ class SafetyWarningDialog(QDialog):
 
     def closeEvent(self, event):
         event.ignore()
+
+    def should_show_again(self):
+        """Check if the warning should be shown based on user preference."""
+        from PySide6.QtCore import QSettings
+        settings = QSettings("ModbusLens", "ModbusLens")
+        return not settings.value("hide_safety_warning", False, type=bool)
+
+    def save_preference(self):
+        """Save the user's preference to not show the warning again."""
+        if self.dont_show_again.isChecked():
+            from PySide6.QtCore import QSettings
+            settings = QSettings("ModbusLens", "ModbusLens")
+            settings.setValue("hide_safety_warning", True)
 
     @staticmethod
     def _button_style(primary: bool = False, danger: bool = False) -> str:
@@ -2451,8 +2469,10 @@ def main():
         app.setOrganizationName("ModbusLens") 
  
         warning = SafetyWarningDialog()
-        if warning.exec() != QDialog.Accepted:
-            sys.exit(0)
+        if warning.should_show_again():
+            if warning.exec() != QDialog.Accepted:
+                sys.exit(0)
+            warning.save_preference()
 
         window = ModbusGUI() 
         window.show() 
