@@ -3,144 +3,74 @@
 </p>
 
 <h1 align="center">ModbusLens</h1>
-<p align="center">Professional Modbus TCP Client with Advanced Network Diagnostics</p>
-
-<p align="center">
-  <a href="#overview">Overview</a> |
-  <a href="#v100-release">v1.0.0 Release</a> |
-  <a href="#features">Features</a> |
-  <a href="#installation">Installation</a> |
-  <a href="#usage">Usage</a> |
-  <a href="#roadmap">Roadmap</a>
-</p>
+<p align="center">Modbus TCP Client with Network Discovery & Diagnostics</p>
 
 ---
 
 ## Overview
 
-**ModbusLens** is a desktop toolkit for engineers and technicians working with **Modbus TCP** devices. It provides a PySide6 GUI, a CLI entry point, live tag monitoring, diagnostics, and network discovery tools for testing and debugging PLCs, controllers, and other Modbus TCP equipment.
+**ModbusLens** is a desktop tool for testing and diagnosing **Modbus TCP devices** such as PLCs and controllers.
 
-It also includes [ARP-based unknown PLC discovery](#unknown-plc-discovery-with-arp), which can help identify a directly connected PLC even when you do not know its IP address.
+It combines:
+- Modbus communication tools
+- Real-time monitoring
+- Network discovery (ARP-based)
 
-Current protocol support: **Modbus TCP only**.
-
-## Support
-
-If ModbusLens helps your work, you can support development here:
-
-<p>
-  <a href="https://buymeacoffee.com/craftparking">
-    <img src="assets/buy-me-a-coffee.png" alt="Buy Me a Coffee" height="45">
-  </a>
-</p>
+---
 
 ## v1.0.0 Release
 
-The first stable release is available on GitHub:
+- Stable Modbus TCP read/write support  
+- GUI-based testing and monitoring  
+- Network discovery and diagnostics  
 
-- Release tag: `v1.0.0`
-- Windows build: `ModbusLens_V1.0.0.exe`
-- Release page: https://github.com/professoroptimusprime/ModScope/releases/tag/v1.0.0
+Download:  
+https://github.com/professoroptimusprime/ModScope/releases/tag/v1.0.0
 
-### Highlights
+---
 
-- Stable Modbus TCP read/write testing and live monitoring.
-- PySide6 GUI with connection controls, address table, tag table, and status indicators.
-- Real-time tag monitoring with configurable polling intervals.
-- CSV import/export for reusable tag configurations.
-- Detached monitoring results window for viewing live values and selected writes.
-- Network diagnostics with interface selection, scanning, ARP/device discovery, and packet analysis.
-- Diagnostics views for logs, raw data, results, and runtime statistics.
-- Safety checks for connection validation, write/read separation, and operation warnings.
-- Improved packaging support for creating a Windows executable.
+## Key Features
 
-## Features
+### Modbus TCP
+- Read/write coils and registers  
+- Configure IP, port, unit ID  
+- Address table for quick testing  
 
-### Modbus TCP Communication
+### Monitoring
+- Real-time tag monitoring  
+- Configurable polling  
+- CSV import/export  
 
-- Read coils, discrete inputs, holding registers, and input registers.
-- Write single/multiple coils and registers.
-- Configure target IP, port, unit ID, address range, and register count.
-- Run write operations without starting live monitoring.
-- Keep live monitoring focused on read operations.
+### Network Discovery & Diagnostics
+- Continuous ARP-based device discovery  
+- Automatic Modbus device detection  
+- Filter to show only Modbus devices  
+- Live scanning (no repeated manual scans)  
+- Subnet mismatch detection  
+- Packet capture support (Npcap required)  
 
-### GUI Application
+### UI
+- PySide6 desktop interface  
+- Connection status and controls  
+- Dedicated diagnostics window  
 
-- Modern PySide6 interface.
-- Connection status indicator and recent connection history.
-- Address table for quick Modbus operations.
-- Tags tab for structured monitoring configurations.
-- CSV import/export for tag tables.
-- Detached results window for live monitoring output.
-- Responsive layout improvements for desktop use.
-
-### Network Diagnostics
-
-- Select the network interface used for diagnostics from the Diagnostics menu.
-- Continuous ARP discovery with real-time device detection.
-- Automatic Modbus device identification for discovered devices.
-- Filter results to show only Modbus devices.
-- Progress bar with scan status and cycle reporting.
-- Clear Results button to reset discovery data.
-- Packet capture capability detection with automatic mode switching.
-- Npcap installation guidance popup with step-by-step instructions.
-- Install Npcap button for easy access to packet capture dependencies.
-- Subnet mismatch detection for Modbus probing.
-- Clean output with unique device registry to prevent spam.
-- Stop scans manually or automatically on window close.
-- Inspect packet-level Modbus traffic.
-- Identify known industrial vendors from MAC address data.
-
-### Unknown PLC Discovery with ARP
-
-ModbusLens can help identify a PLC on a direct Ethernet connection even when you do not know its IP address.
-
-> **Note:** ARP-based PLC discovery is currently in testing mode. It may not detect every device correctly, and results can vary by PLC model, network adapter, operating system, and local network behavior.
-
-**What is ARP?** ARP, or Address Resolution Protocol, is how devices on a local Ethernet network ask, "Who has this IP address?" and receive a reply that includes the device MAC address. Because many PLCs answer ARP requests or send ARP traffic when connected, ARP can reveal the device on the wire before you know its Modbus settings.
-
-**How PLC discovery works with ARP:** connect your computer directly to the PLC, select that Ethernet adapter in ModbusLens, and run ARP discovery/capture. With only the PLC connected, the ARP messages shown are much easier to trace back to that PLC. You can then use the displayed IP/MAC/vendor clues to continue with Modbus TCP testing.
-
-Basic workflow:
-
-1. Connect your computer directly to the PLC using Ethernet.
-2. Open **Diagnostics > Network Discovery & Diagnostics**.
-3. Select the Ethernet adapter connected to the PLC.
-4. Start ARP discovery/capture.
-5. Watch the ARP messages shown by ModbusLens.
-
-When the PLC sends or responds to ARP traffic, ModbusLens shows the ARP message from that device. In a direct PC-to-PLC connection, this makes the PLC easier to spot because the visible ARP traffic should mainly come from the connected PLC instead of a busy plant network.
-
-This is useful when:
-
-- The PLC IP address is unknown.
-- The PLC has no label or outdated documentation.
-- You want to identify the device MAC address and possible vendor before starting Modbus TCP tests.
-
-### Safety and Reliability
-
-- Safety warnings before sensitive operations.
-- Connection validation before reads/writes.
-- Separate read and write workflows.
-- Busy-range interlocks during polling.
-- Error handling with user-facing messages and diagnostic logs.
+---
 
 ## Installation
 
-### Option 1: Download the v1.0.0 Windows Build
+### Windows (Recommended)
 
-Download `ModbusLens_V1.0.0.exe` from the release page:
-
-```text
+Download:  
 https://github.com/professoroptimusprime/ModScope/releases/tag/v1.0.0
+
+Run:
+```
+ModbusLens_V1.0.0.exe
 ```
 
-### Option 2: Run from Source
+---
 
-Requirements:
-
-- Python 3.8 or higher
-- Windows, Linux, or macOS
+### From Source
 
 ```bash
 git clone https://github.com/professoroptimusprime/ModScope.git
@@ -149,73 +79,33 @@ pip install -r requirements.txt
 python gui_main.py
 ```
 
+---
+
 ## Usage
 
-### GUI Mode
+- Connect to a Modbus device using IP and port  
+- Use Address Table for read/write  
+- Use Tags tab for monitoring  
+- Open **Diagnostics → Network Discovery & Diagnostics**  
+- Start device discovery  
 
-```bash
-python gui_main.py
-```
+---
 
-Use the GUI to:
+## Notes
 
-- Select a network interface.
-- Enter target IP, port, and unit ID.
-- Connect to a Modbus TCP device.
-- Read or write values from the address table.
-- Configure tags and start live monitoring.
-- Import or export tag configurations as CSV.
-- Open diagnostics from the menu.
+- Packet capture features require **Npcap**  
+- Restart the application after installing Npcap  
 
-### CLI Mode
-
-```bash
-python main.py
-```
-
-The CLI provides basic Modbus TCP read/write operations from the terminal.
-
-## Project Structure
-
-```text
-ModbusLens/
-|-- assets/                  # Icons and banner
-|-- core/
-|   `-- modbus_client.py      # Modbus TCP communication
-|-- gui/
-|   |-- main_window.py        # Main GUI application
-|   |-- widgets/              # Address table, status, results window
-|   |-- monitoring/           # Real-time monitoring manager
-|   |-- diagnostics/          # Diagnostics dialogs and tools
-|   `-- network/              # Network diagnostics
-|-- app_paths.py              # Runtime path helpers
-|-- build_exe.py              # PyInstaller build helper
-|-- gui_main.py               # GUI entry point
-|-- main.py                   # CLI entry point
-|-- requirements.txt          # Python dependencies
-`-- README.md
-```
+---
 
 ## Roadmap
 
-Planned future work:
+- Modbus RTU support  
+- Multi-device management  
+- Data logging and visualization  
 
-- Data logging and export improvements.
-- Device configuration profiles.
-- Advanced scripting and automated test sequences.
-- Modbus RTU serial support.
-- Modbus ASCII support.
-- Multi-device management.
-- Data visualization and reporting.
-
-## Contributing
-
-Bug reports and feature requests are welcome through GitHub Issues. Please include reproduction steps, expected behavior, actual behavior, and system details when reporting bugs.
-
-## License
-
-This project is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) for details.
+---
 
 ## Author
 
-**Alvin (CraftParking)** - Lead Developer
+**Alvin (CraftParking)**
