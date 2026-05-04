@@ -3,56 +3,73 @@
 </p>
 
 <h1 align="center">ModbusLens</h1>
-<p align="center">Modbus TCP Client with Network Discovery & Diagnostics</p>
+<p align="center">Professional Modbus TCP Client with Network Discovery & Diagnostics</p>
+
+<p align="center">
+  <a href="#overview">Overview</a> |
+  <a href="#key-highlights">Key Highlights</a> |
+  <a href="#features">Features</a> |
+  <a href="#installation">Installation</a> |
+  <a href="#usage">Usage</a> |
+  <a href="#roadmap">Roadmap</a>
+</p>
 
 ---
 
 ## Overview
 
-**ModbusLens** is a desktop tool for testing and diagnosing **Modbus TCP devices** such as PLCs and controllers.
-
-It combines:
-- Modbus communication tools
-- Real-time monitoring
-- Network discovery (ARP-based)
+**ModbusLens** is a desktop toolkit for engineers and technicians working with **Modbus TCP devices**. It combines communication, monitoring, and network diagnostics into a single application, making it easier to test, analyze, and discover industrial devices.
 
 ---
 
-## v1.0.0 Release
+## Key Highlights
 
-- Stable Modbus TCP read/write support  
-- GUI-based testing and monitoring  
-- Network discovery and diagnostics  
+These are the features that set ModbusLens apart from typical Modbus tools:
 
-Download:  
-https://github.com/professoroptimusprime/ModScope/releases/tag/v1.0.0
+- **ARP-Based Device Discovery**  
+  Discover devices on the network without knowing their IP address. This is especially useful when working with unknown or misconfigured PLCs.
+
+- **Live Continuous Scanning (No Manual Re-scan)**  
+  Devices appear in real-time as they are detected, eliminating the need to repeatedly trigger scans.
+
+- **Automatic Modbus Device Detection**  
+  Identifies which discovered devices actually respond to Modbus TCP.
+
+- **Clean, Non-Spam Output**  
+  Uses a unique device registry to avoid duplicate entries during continuous scanning.
+
+- **Subnet Mismatch Detection**  
+  Clearly indicates when a device is unreachable due to IP network mismatch, helping diagnose connection issues quickly.
 
 ---
 
-## Key Features
+## Features
 
-### Modbus TCP
-- Read/write coils and registers  
-- Configure IP, port, unit ID  
+### Modbus TCP Communication
+- Read coils, discrete inputs, holding registers, and input registers  
+- Write single and multiple coils/registers  
+- Configure IP, port, unit ID, and address ranges  
 - Address table for quick testing  
 
 ### Monitoring
-- Real-time tag monitoring  
-- Configurable polling  
-- CSV import/export  
+- Real-time tag monitoring with configurable polling  
+- Structured tag configuration  
+- CSV import/export support  
+- Detached monitoring results window  
 
 ### Network Discovery & Diagnostics
 - Continuous ARP-based device discovery  
-- Automatic Modbus device detection  
+- Automatic Modbus detection  
 - Filter to show only Modbus devices  
-- Live scanning (no repeated manual scans)  
-- Subnet mismatch detection  
 - Packet capture support (Npcap required)  
+- Stop scan control and safe cleanup  
+- Vendor identification from MAC address (where available)  
 
-### UI
+### User Interface
 - PySide6 desktop interface  
-- Connection status and controls  
+- Connection status indicators  
 - Dedicated diagnostics window  
+- Responsive layout for efficient workflow  
 
 ---
 
@@ -60,12 +77,12 @@ https://github.com/professoroptimusprime/ModScope/releases/tag/v1.0.0
 
 ### Windows (Recommended)
 
-Download:  
-https://github.com/professoroptimusprime/ModScope/releases/tag/v1.0.0
+Download the latest release:  
+https://github.com/professoroptimusprime/ModScope/releases
 
 Run:
 ```
-ModbusLens_V1.0.0.exe
+ModbusLens.exe
 ```
 
 ---
@@ -83,17 +100,17 @@ python gui_main.py
 
 ## Usage
 
-- Connect to a Modbus device using IP and port  
-- Use Address Table for read/write  
-- Use Tags tab for monitoring  
+- Enter target IP, port, and unit ID to connect  
+- Use Address Table for read/write operations  
+- Configure tags and start monitoring  
 - Open **Diagnostics → Network Discovery & Diagnostics**  
-- Start device discovery  
+- Start discovery to identify devices on the network  
 
 ---
 
 ## Notes
 
-- Packet capture features require **Npcap**  
+- Advanced packet capture features require **Npcap**  
 - Restart the application after installing Npcap  
 
 ---
@@ -102,7 +119,8 @@ python gui_main.py
 
 - Modbus RTU support  
 - Multi-device management  
-- Data logging and visualization  
+- Data logging and export  
+- Advanced scripting and automation  
 
 ---
 
