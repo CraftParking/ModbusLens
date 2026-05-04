@@ -3,11 +3,11 @@
 </p>
 
 <h1 align="center">ModbusLens</h1>
-<p align="center">Professional Modbus TCP Client with Network Discovery & Diagnostics</p>
+<p align="center">Modbus TCP Client with Advanced Network Discovery & Diagnostics</p>
 
 <p align="center">
   <a href="#overview">Overview</a> |
-  <a href="#key-highlights">Key Highlights</a> |
+  <a href="#highlights">Highlights</a> |
   <a href="#features">Features</a> |
   <a href="#installation">Installation</a> |
   <a href="#usage">Usage</a> |
@@ -18,34 +18,34 @@
 
 ## Overview
 
-**ModbusLens** is a desktop toolkit for engineers and technicians working with **Modbus TCP devices**. It combines communication, monitoring, and network diagnostics into a single application, making it easier to test, analyze, and discover industrial devices.
+**ModbusLens** is a desktop tool designed for engineers working with **Modbus TCP devices**, combining communication, monitoring, and network diagnostics in a single interface.
+
+Unlike traditional Modbus tools, ModbusLens focuses on **device discovery and troubleshooting**, helping identify and interact with devices even when network details are unknown.
 
 ---
 
-## Key Highlights
-
-These are the features that set ModbusLens apart from typical Modbus tools:
+## Highlights
 
 - **ARP-Based Device Discovery**  
-  Discover devices on the network without knowing their IP address. This is especially useful when working with unknown or misconfigured PLCs.
+  Discover devices without knowing their IP address — especially useful for unknown or misconfigured PLCs.
 
-- **Live Continuous Scanning (No Manual Re-scan)**  
-  Devices appear in real-time as they are detected, eliminating the need to repeatedly trigger scans.
+- **Live Continuous Scanning**  
+  Devices appear in real-time without needing repeated scans.
 
-- **Automatic Modbus Device Detection**  
-  Identifies which discovered devices actually respond to Modbus TCP.
+- **Automatic Modbus Detection**  
+  Identifies which discovered devices respond to Modbus TCP.
 
 - **Clean, Non-Spam Output**  
   Uses a unique device registry to avoid duplicate entries during continuous scanning.
 
-- **Subnet Mismatch Detection**  
-  Clearly indicates when a device is unreachable due to IP network mismatch, helping diagnose connection issues quickly.
+- **Subnet Awareness**  
+  Detects subnet mismatches and explains connectivity issues instead of failing silently.
 
 ---
 
 ## Features
 
-### Modbus TCP Communication
+### Modbus TCP
 - Read coils, discrete inputs, holding registers, and input registers  
 - Write single and multiple coils/registers  
 - Configure IP, port, unit ID, and address ranges  
@@ -59,14 +59,14 @@ These are the features that set ModbusLens apart from typical Modbus tools:
 
 ### Network Discovery & Diagnostics
 - Continuous ARP-based device discovery  
-- Automatic Modbus detection  
+- Automatic Modbus device detection  
 - Filter to show only Modbus devices  
 - Packet capture support (Npcap required)  
-- Stop scan control and safe cleanup  
 - Vendor identification from MAC address (where available)  
+- Stop scan control with proper cleanup  
 
 ### User Interface
-- PySide6 desktop interface  
+- PySide6-based desktop GUI  
 - Connection status indicators  
 - Dedicated diagnostics window  
 - Responsive layout for efficient workflow  
@@ -75,7 +75,7 @@ These are the features that set ModbusLens apart from typical Modbus tools:
 
 ## Installation
 
-### Windows (Recommended)
+### Windows
 
 Download the latest release:  
 https://github.com/professoroptimusprime/ModScope/releases
@@ -100,9 +100,9 @@ python gui_main.py
 
 ## Usage
 
-- Enter target IP, port, and unit ID to connect  
+- Enter target IP, port, and unit ID to connect to a Modbus device  
 - Use Address Table for read/write operations  
-- Configure tags and start monitoring  
+- Configure tags and start live monitoring  
 - Open **Diagnostics → Network Discovery & Diagnostics**  
 - Start discovery to identify devices on the network  
 
@@ -110,7 +110,7 @@ python gui_main.py
 
 ## Notes
 
-- Advanced packet capture features require **Npcap**  
+- Advanced packet capture requires **Npcap**  
 - Restart the application after installing Npcap  
 
 ---
