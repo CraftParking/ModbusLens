@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">ModbusLens</h1>
-<p align="center">Modbus TCP Client with Advanced Network Discovery & Diagnostics</p>
+<p align="center">Free Modbus TCP Client with Advanced Network Discovery & Diagnostics</p>
 
 <p align="center">
   <a href="#overview">Overview</a> |
@@ -21,7 +21,7 @@
 
 ## Overview
 
-**ModbusLens** is a desktop tool built for engineers working with **Modbus TCP devices**, combining communication, monitoring, and network diagnostics in a single interface.
+**ModbusLens** is a **free desktop tool** built for engineers working with **Modbus TCP devices**, combining communication, monitoring, and network diagnostics in a single interface.
 
 It is designed not just to communicate with devices, but to **discover and troubleshoot them**, even when network details are unknown.
 
@@ -206,6 +206,23 @@ python gui_main.py
 - Multi-device management  
 - Data logging and export  
 - Advanced scripting and automation  
+- Graphical data visualization (charts, trends, and live graphs)
+
+---
+
+## Support
+
+ModbusLens is **completely free software**.
+
+If it helps your work and you’d like to support development, you can do so here:
+
+<p>
+  <a href="https://buymeacoffee.com/craftparking">
+    <img src="assets/buy-me-a-coffee.png" alt="Buy Me a Coffee" height="45">
+  </a>
+</p>
+
+Your support helps continue development and improvements.
 
 ---
 
