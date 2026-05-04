@@ -8,6 +8,8 @@ class MonitoringResultsWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.parent_window = parent
+        self._updating_table = False
         self.setWindowTitle("Monitoring Results")
         self.resize(1100, 560)
 
@@ -48,6 +50,7 @@ class MonitoringResultsWindow(QMainWindow):
             }
         """)
 
+        self.table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.table)
         self.setCentralWidget(central_widget)
 
@@ -88,21 +91,28 @@ class MonitoringResultsWindow(QMainWindow):
             7: timestamp,
         }
 
-        for column in range(8):
-            if column == 5 and can_write:
-                # Don't overwrite user's typed value with empty polling updates.
-                if not values_by_column[5] and self.table.item(row, 5) is not None:
-                    existing_item = self.table.item(row, 5)
-                    existing_item.setFlags(existing_item.flags() | Qt.ItemIsEditable)
-                    continue
+        self._updating_table = True
+        try:
+            for column in range(8):
+                if column == 5 and can_write:
+                    # Don't overwrite user's typed value with empty polling updates.
+                    if not values_by_column[5] and self.table.item(row, 5) is not None:
+                        existing_item = self.table.item(row, 5)
+                        existing_item.setFlags(existing_item.flags() | Qt.ItemIsEditable)
+                        self._validate_write_item(existing_item)
+                        continue
 
-            item = QTableWidgetItem(values_by_column[column])
-            if column != 5 or not can_write:
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            if column == 5 and not can_write:
-                item.setBackground(QColor("#F0F0F0"))
-                item.setForeground(QColor("#777777"))
-            self.table.setItem(row, column, item)
+                item = QTableWidgetItem(values_by_column[column])
+                if column != 5 or not can_write:
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                if column == 5 and not can_write:
+                    item.setBackground(QColor("#F0F0F0"))
+                    item.setForeground(QColor("#777777"))
+                self.table.setItem(row, column, item)
+                if column == 5 and can_write:
+                    self._validate_write_item(item)
+        finally:
+            self._updating_table = False
 
     def clear(self):
         self.table.setRowCount(0)
@@ -137,6 +147,45 @@ class MonitoringResultsWindow(QMainWindow):
                 "write_value": self._item_text(row, 5),
             })
         return selected
+
+    def invalid_write_rows(self):
+        invalid = []
+        for row in range(self.table.rowCount()):
+            if self._item_text(row, 1) != "Write":
+                continue
+            ok, message = self._validate_write_row(row)
+            if not ok:
+                invalid.append((row + 1, self._item_text(row, 0), message))
+        return invalid
+
+    def _on_item_changed(self, item):
+        if self._updating_table or item.column() != 5:
+            return
+        self._validate_write_item(item)
+
+    def _validate_write_item(self, item):
+        ok, message = self._validate_write_row(item.row())
+        if ok:
+            item.setBackground(QColor("#FFFFFF"))
+            item.setForeground(QColor("#000000"))
+            item.setToolTip("")
+        else:
+            item.setBackground(QColor("#FFEBEE"))
+            item.setForeground(QColor("#B00020"))
+            item.setToolTip(message)
+
+    def _validate_write_row(self, row):
+        if self._item_text(row, 1) != "Write":
+            return True, ""
+        if not self.parent_window or not hasattr(self.parent_window, "_validate_result_write_value"):
+            return True, ""
+        result_row = {
+            "name": self._item_text(row, 0),
+            "type": self._item_text(row, 2),
+            "address": int(self._item_text(row, 3)),
+            "write_value": self._item_text(row, 5),
+        }
+        return self.parent_window._validate_result_write_value(result_row)
 
     def _find_row(self, tag_name, data_type, address):
         for row in range(self.table.rowCount()):
