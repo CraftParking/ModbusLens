@@ -76,12 +76,21 @@ The first stable release is available on GitHub:
 
 ### Network Diagnostics
 
-- Select the network interface used for diagnostics.
-- Scan IP ranges for Modbus devices.
-- Discover unknown PLCs through ARP messages, even when you do not know the PLC IP address.
+- Select the network interface used for diagnostics from the Diagnostics menu.
+- Continuous ARP discovery with real-time device detection.
+- Automatic Modbus device identification for discovered devices.
+- Filter results to show only Modbus devices.
+- Progress bar with scan status and cycle reporting.
+- Clear Results button to reset discovery data.
+- Packet capture capability detection with Scapy runtime verification.
+- Npcap installation guidance popup with step-by-step instructions.
+- Install Npcap button for easy access to packet capture dependencies.
+- Dynamic mode updates (Advanced/Basic) based on actual system capability.
+- Subnet mismatch detection for Modbus probing.
+- Clean output with unique device registry to prevent spam.
+- Stop scans manually or automatically on window close.
 - Inspect packet-level Modbus traffic.
 - Identify known industrial vendors from MAC address data.
-- Stop scans manually when needed.
 
 ### Unknown PLC Discovery with ARP
 
@@ -96,7 +105,7 @@ ModbusLens can help identify a PLC on a direct Ethernet connection even when you
 Basic workflow:
 
 1. Connect your computer directly to the PLC using Ethernet.
-2. Open **Tools > Network Diagnostics**.
+2. Open **Diagnostics > Network Discovery & Diagnostics**.
 3. Select the Ethernet adapter connected to the PLC.
 4. Start ARP discovery/capture.
 5. Watch the ARP messages shown by ModbusLens.
