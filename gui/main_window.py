@@ -31,6 +31,8 @@ from network.network_diagnostics import NetworkDiagnosticsDialog
 from core.modbus_client import ModbusClient
 from app_paths import resource_path, app_data_dir
 
+__version__ = "1.1.0"
+
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
 
@@ -42,6 +44,11 @@ class ModbusGUI(QMainWindow):
         self.connection_history = []
         self.results_window = None
         
+        # Connection parameters
+        self.target_ip = "127.0.0.1"
+        self.target_port = 502
+        self.target_unit_id = 1
+
         # Initialize extracted components
         self.advanced_diagnostics = AdvancedDiagnostics()
         self.diagnostics_dialogs = DiagnosticsDialogs(self)
@@ -69,24 +76,6 @@ class ModbusGUI(QMainWindow):
         self.diagnostics_dialogs.setup_diagnostics_widgets()  # Initialize diagnostics widgets early
         self._load_settings()
         
-        # Initialize network interface selection
-        self.selected_network_interface = None
-    
-    def on_network_interface_changed(self, display_name):
-        """Handle network interface selection change."""
-        try:
-            from .network.network_diagnostics import get_network_interfaces
-            interfaces = get_network_interfaces()
-            
-            for interface in interfaces:
-                if interface['display_name'] == display_name:
-                    self.selected_network_interface = interface
-                    self.ip_input.setText(interface['ipv4'])
-                    self._log(f"Selected network interface: {interface['name']} - {interface['ipv4']}")
-                    break
-        except ImportError:
-            pass
-
     def convert_to_protocol_address(self, user_address, operation_type=None, is_one_based=False):
         """Convert user-entered address to a 0-based Modbus protocol offset.
         
@@ -110,33 +99,6 @@ class ModbusGUI(QMainWindow):
             raise ValueError(f"Invalid address: {user_address} converts to negative protocol offset {protocol_offset}")
         
         return protocol_offset
-
-    def refresh_network_interfaces(self):
-        """Refresh the list of network interfaces in main window."""
-        try:
-            from .network.network_diagnostics import get_network_interfaces
-            
-            # Save current selection
-            current_name = self.network_interface_combo.currentText()
-            
-            # Refresh interfaces
-            interfaces = get_network_interfaces()
-            
-            # Update combo box
-            self.network_interface_combo.clear()
-            for interface in interfaces:
-                self.network_interface_combo.addItem(interface['display_name'], interface['name'])
-            self.network_interface_combo.setEnabled(bool(interfaces))
-            
-            # Try to restore previous selection
-            index = self.network_interface_combo.findText(current_name)
-            if index >= 0:
-                self.network_interface_combo.setCurrentIndex(index)
-            
-            self._log(f"Network interfaces refreshed. Found {len(interfaces)} interfaces.")
-            
-        except ImportError:
-            self._log("Network interface refresh not available")
 
     def _setup_window(self):
         """Setup main window properties."""
@@ -170,6 +132,7 @@ class ModbusGUI(QMainWindow):
 
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
+        tools_menu.addAction("Connection Settings", self._show_connection_settings)
         tools_menu.addAction("Connection Profiles", self._manage_profiles)
         tools_menu.addAction("Data Templates", self._manage_templates)
         tools_menu.addAction("Scripting Console", self._show_scripting_console)
@@ -208,252 +171,65 @@ class ModbusGUI(QMainWindow):
         self._setup_operations_section(main_layout)
 
     def _setup_connection_section(self, parent_layout):
-        """Setup connection section with modern design."""
+        """Setup compact connection bar."""
         connection_frame = QFrame()
-        connection_frame.setFrameStyle(QFrame.StyledPanel)
+        connection_frame.setObjectName("connectionBar")
         connection_frame.setStyleSheet("""
-            QFrame {
-                background-color: #F7F7F7;
-                border: 1px solid #CCCCCC;
+            QFrame#connectionBar {
+                background-color: #FFFFFF;
+                border: 1px solid #E0E0E0;
+                border-radius: 6px;
             }
         """)
+        connection_frame.setFixedHeight(50)
 
-        layout = QHBoxLayout(connection_frame)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(15)
+        main_layout = QHBoxLayout(connection_frame)
+        main_layout.setContentsMargins(15, 5, 15, 5)
+        main_layout.setSpacing(15)
 
-        # Status indicator
-        status_layout = QVBoxLayout()
-        status_layout.setAlignment(Qt.AlignCenter)
-        status_layout.setSpacing(8)
-
-        status_label = QLabel("Connection Status")
-        status_label.setStyleSheet("color: #333333; font-weight: bold; font-size: 11px;")
-        status_layout.addWidget(status_label)
-
+        # 1. Status Section (Left)
         self.status_indicator = StatusIndicator()
-        status_layout.addWidget(self.status_indicator)
+        main_layout.addWidget(self.status_indicator)
 
-        layout.addLayout(status_layout)
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        sep.setStyleSheet("color: #E0E0E0;")
+        main_layout.addWidget(sep)
 
-        # Connection inputs
-        inputs_layout = QGridLayout()
-        inputs_layout.setSpacing(10)
-        inputs_layout.setContentsMargins(0, 0, 0, 0)
-
-        # IP input
-        ip_label = QLabel("IP Address:")
-        ip_label.setStyleSheet("color: #333333;")
-        inputs_layout.addWidget(ip_label, 0, 0)
-
-        self.ip_input = QLineEdit("127.0.0.1")
-        self.ip_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                                padding: 5px;
-            }
-        """)
-        inputs_layout.addWidget(self.ip_input, 0, 1)
-
-        # Port input
-        port_label = QLabel("Port:")
-        port_label.setStyleSheet("color: #333333;")
-        inputs_layout.addWidget(port_label, 1, 0)
-
-        self.port_input = QSpinBox()
-        self.port_input.setRange(1, 65535)
-        self.port_input.setValue(502)
-        self.port_input.setStyleSheet("""
-            QSpinBox {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                                padding: 5px;
-            }
-        """)
-        inputs_layout.addWidget(self.port_input, 1, 1)
-
-        # Unit ID input
-        unit_label = QLabel("Unit ID:")
-        unit_label.setStyleSheet("color: #333333;")
-        inputs_layout.addWidget(unit_label, 0, 2)
-
-        self.unit_input = QSpinBox()
-        self.unit_input.setRange(1, 247)
-        self.unit_input.setValue(1)
-        self.unit_input.setStyleSheet("""
-            QSpinBox {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                                padding: 5px;
-            }
-        """)
-        inputs_layout.addWidget(self.unit_input, 0, 3)
-
-        # Connection history
-        history_label = QLabel("Recent:")
-        history_label.setStyleSheet("color: #333333;")
-        inputs_layout.addWidget(history_label, 1, 2)
-
-        self.connection_history_combo = QComboBox()
-        self.connection_history_combo.setStyleSheet("""
-            QComboBox {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                padding: 5px;
-            }
-        """)
-        inputs_layout.addWidget(self.connection_history_combo, 1, 3)
-
-        self.delete_history_btn = QPushButton()
-        pixmap = QPixmap(18, 18)
-        pixmap.fill(Qt.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor("#4A4A4A"), 1.8)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(pen)
-        painter.drawLine(5, 6, 13, 6)
-        painter.drawLine(7, 4, 11, 4)
-        painter.drawLine(6, 8, 7, 15)
-        painter.drawLine(12, 8, 11, 15)
-        painter.drawLine(8, 9, 8, 14)
-        painter.drawLine(10, 9, 10, 14)
-        painter.drawLine(7, 15, 11, 15)
-        painter.end()
-        self.delete_history_btn.setIcon(QIcon(pixmap))
-        self.delete_history_btn.setIconSize(pixmap.size())
-        self.delete_history_btn.setToolTip("Delete History")
-        self.delete_history_btn.setFixedSize(34, 30)
-        self.delete_history_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F5F5F5;
-                border: 1px solid #C8C8C8;
-                padding: 4px;
-            }
-            QPushButton:hover {
-                background-color: #FFECEC;
-                border-color: #D66A6A;
-            }
-            QPushButton:pressed {
-                background-color: #FFDADA;
-            }
-            QPushButton:disabled {
-                background-color: #F0F0F0;
-                border-color: #D0D0D0;
-            }
-        """)
-        inputs_layout.addWidget(self.delete_history_btn, 1, 4)
-
-        layout.addLayout(inputs_layout)
-
-        # Network Interface Selection
-        interface_layout = QHBoxLayout()
-        interface_layout.setSpacing(15)
+        # 2. Connection Info Label
+        self.connection_info_label = QLabel()
+        self.connection_info_label.setStyleSheet("color: #444444; font-weight: 500; font-size: 12px;")
+        self._update_connection_info()
+        main_layout.addWidget(self.connection_info_label)
         
-        interface_label = QLabel("Network Interface:")
-        interface_label.setStyleSheet("color: #333333; font-weight: bold;")
-        interface_label.setMinimumWidth(120)  # Ensure label has consistent width
-        interface_layout.addWidget(interface_label)
+        main_layout.addStretch()
 
-        interface_controls_layout = QVBoxLayout()
-        interface_controls_layout.setSpacing(6)
-        
-        self.network_interface_combo = QComboBox()
-        self.network_interface_combo.setMinimumWidth(200)  # Reduced from 250
-        self.network_interface_combo.setMaximumWidth(300)  # Set maximum width
-        self.network_interface_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.network_interface_combo.setStyleSheet(self._get_input_style())
-        
-        # Populate network interfaces
-        try:
-            from .network.network_diagnostics import get_network_interfaces
-            interfaces = get_network_interfaces()
-            for interface in interfaces:
-                self.network_interface_combo.addItem(interface['display_name'], interface['name'])
-            self.network_interface_combo.setEnabled(bool(interfaces))
-        except ImportError:
-            # Fallback if network_diagnostics not available
-            self.network_interface_combo.addItem("Default Interface", "default")
-        
-        self.network_interface_combo.currentTextChanged.connect(self.on_network_interface_changed)
-        interface_controls_layout.addWidget(self.network_interface_combo)
-        
-        # Refresh button with proper sizing
-        refresh_interface_btn = QPushButton("Refresh")
-        refresh_interface_btn.setStyleSheet(self._get_button_style())
-        refresh_interface_btn.clicked.connect(self.refresh_network_interfaces)
-        refresh_interface_btn.setMinimumWidth(80)
-        refresh_interface_btn.setMaximumWidth(80)
-        interface_controls_layout.addWidget(refresh_interface_btn, 0, Qt.AlignLeft)
-        interface_layout.addLayout(interface_controls_layout)
-        interface_layout.addStretch()
-        
-        layout.addLayout(interface_layout)
-
-        # Control buttons
-        buttons_layout = QVBoxLayout()
-        buttons_layout.setSpacing(10)
+        # 3. Control Buttons
+        self.settings_btn = QPushButton("Settings")
+        self.settings_btn.setFixedSize(90, 30)
+        self.settings_btn.setStyleSheet(self._get_button_style(small=True))
+        self.settings_btn.clicked.connect(self._show_connection_settings)
+        main_layout.addWidget(self.settings_btn)
 
         self.connect_btn = QPushButton("Connect") 
-        self.connect_btn.setStyleSheet(""" 
-            QPushButton { 
-                background-color: #E0E0E0; 
-                color: #000000; 
-                border: 1px solid #B0B0B0; 
-                 
-                padding: 10px 20px; 
-                font-weight: bold; 
-                font-size: 12px; 
-            } 
-            QPushButton:hover { 
-                background-color: #D5D5D5; 
-            } 
-            QPushButton:pressed { 
-                background-color: #C0C0C0; 
-            } 
-            QPushButton:disabled {
-                background-color: #F0F0F0;
-                color: #999999;
-                border: 1px solid #C8C8C8;
-            }
-        """) 
-        buttons_layout.addWidget(self.connect_btn) 
+        self.connect_btn.setFixedSize(90, 30)
+        self.connect_btn.setStyleSheet(self._get_button_style(small=True))
+        main_layout.addWidget(self.connect_btn) 
  
         self.disconnect_btn = QPushButton("Disconnect") 
-        self.disconnect_btn.setStyleSheet(""" 
-            QPushButton { 
-                background-color: #E0E0E0; 
-                color: #000000; 
-                border: 1px solid #B0B0B0; 
-                 
-                padding: 10px 20px; 
-                font-weight: bold; 
-                font-size: 12px; 
-            } 
-            QPushButton:hover { 
-                background-color: #D5D5D5; 
-            } 
-            QPushButton:pressed { 
-                background-color: #C0C0C0; 
-            } 
-            QPushButton:disabled {
-                background-color: #F0F0F0;
-                color: #999999;
-                border: 1px solid #C8C8C8;
-            }
-        """) 
+        self.disconnect_btn.setFixedSize(90, 30)
+        self.disconnect_btn.setStyleSheet(self._get_button_style(small=True))
         self.disconnect_btn.setEnabled(False) 
-        buttons_layout.addWidget(self.disconnect_btn) 
-
-        layout.addLayout(buttons_layout)
+        main_layout.addWidget(self.disconnect_btn) 
 
         parent_layout.addWidget(connection_frame)
+
+    def _update_connection_info(self):
+        """Update the connection info label text."""
+        if hasattr(self, 'connection_info_label'):
+            self.connection_info_label.setText(f"{self.target_ip}:{self.target_port} (Unit {self.target_unit_id})")
 
     def _setup_operations_section(self, parent_layout):
         """Setup operations section with full height for address tables."""
@@ -565,6 +341,7 @@ class ModbusGUI(QMainWindow):
 
         self.tag_offset_checkbox = QCheckBox("1-Based Addressing")
         self.tag_offset_checkbox.setToolTip("When enabled, tag address 1 is sent as protocol offset 0")
+        self.tag_offset_checkbox.setEnabled(False)
         self.tag_offset_checkbox.toggled.connect(self._on_tag_address_mode_changed)
         buttons_layout.addWidget(self.tag_offset_checkbox)
 
@@ -714,7 +491,8 @@ class ModbusGUI(QMainWindow):
         self.connection_status = QLabel("Not Connected")
         self.status_bar.addWidget(self.connection_status)
 
-        self.status_bar.addPermanentWidget(QLabel("ModbusLens v1.0"))
+        version = QApplication.applicationVersion()
+        self.status_bar.addPermanentWidget(QLabel(f"ModbusLens v{version}"))
 
     def _get_input_style(self):
         """Get consistent input widget style."""
@@ -1005,8 +783,6 @@ class ModbusGUI(QMainWindow):
         # Connection signals
         self.connect_btn.clicked.connect(self._connect)
         self.disconnect_btn.clicked.connect(self._disconnect)
-        self.connection_history_combo.currentTextChanged.connect(self._load_connection_from_history)
-        self.delete_history_btn.clicked.connect(self._delete_selected_history)
 
         # Monitoring tab signals (keep existing monitoring functionality)
         if hasattr(self, 'tag_start_monitoring_btn'):
@@ -1023,6 +799,18 @@ class ModbusGUI(QMainWindow):
         # Note: Read/Write operation signals removed - now handled in unified Modbus Address tab
         # Note: Data type change signals removed - now handled in unified Modbus Address tab
 
+    def _show_connection_settings(self):
+        """Show the connection settings dialog."""
+        dialog = ConnectionSettingsDialog(self, self.connection_history, self.target_ip, self.target_port, self.target_unit_id)
+        if dialog.exec() == QDialog.Accepted:
+            vals = dialog.get_values()
+            self.target_ip = vals['ip']
+            self.target_port = vals['port']
+            self.target_unit_id = vals['unit']
+            self.connection_history = vals['history']
+            self._update_connection_info()
+            self._save_settings()
+
     def _on_monitoring_table_item_changed(self, item):
         # Cache manual edits to the "Write Value" column so polling never overwrites user input.
         if self._updating_monitoring_table or item is None:
@@ -1030,15 +818,15 @@ class ModbusGUI(QMainWindow):
         if item.column() != 5:
             return
 
+        table = item.tableWidget()
+        if table is None:
+            return
+
         row = item.row()
-        tag_name = self._table_item_text(self.monitoring_table, row, 0).strip()
-        data_type = self._table_item_text(self.monitoring_table, row, 2).strip()
-        address = self._table_item_text(self.monitoring_table, row, 3).strip()
-        mode = self._table_item_text(self.monitoring_table, row, 1).strip()
-        tag_name = self._table_item_text(self.monitoring_tag_table, row, 0).strip()
-        data_type = self._table_item_text(self.monitoring_tag_table, row, 2).strip()
-        address = self._table_item_text(self.monitoring_tag_table, row, 3).strip()
-        mode = self._table_item_text(self.monitoring_tag_table, row, 1).strip()
+        tag_name = self._table_item_text(table, row, 0).strip()
+        mode = self._table_item_text(table, row, 1).strip()
+        data_type = self._table_item_text(table, row, 2).strip()
+        address = self._table_item_text(table, row, 3).strip()
         if not tag_name or not data_type or not address or mode != "Write":
             return
 
@@ -1047,30 +835,34 @@ class ModbusGUI(QMainWindow):
     def _connect(self):
         """Connect to Modbus server."""
         try:
+            ip, port, unit_id = self.target_ip, self.target_port, self.target_unit_id
+
+            self.status_indicator.set_connection_info(f"Connecting to {ip}:{port}...")
             self.status_indicator.set_status("connecting")
             self._set_connection_controls(connected=False, connecting=True)
-
-            ip = self.ip_input.text().strip()
-            port = self.port_input.value()
-            unit_id = self.unit_input.value()
 
             self.modbus = ModbusClient(ip, port, unit_id)
 
             if self.modbus.connect():
+                conn_info = f"{ip}:{port} (Unit {unit_id})"
+                self.status_indicator.set_connection_info(conn_info)
                 self.status_indicator.set_status("connected")
-                self.connection_status.setText(f"Connected: {ip}:{port} (Unit {unit_id})")
+                self.connection_status.setText(f"Connected: {conn_info}")
                 self._set_connection_controls(connected=True)
 
                 # Add to connection history
                 connection_string = f"{ip}:{port}:{unit_id}"
-                if connection_string not in self.connection_history:
-                    self.connection_history.insert(0, connection_string)
-                    self._refresh_connection_history_combo()
-                    self._save_settings()
+                if connection_string in self.connection_history:
+                    self.connection_history.remove(connection_string)
+                
+                self.connection_history.insert(0, connection_string)
+                self.connection_history = self.connection_history[:10]
+                self._save_settings()
 
                 self._log(f"Connected to Modbus server at {ip}:{port} (Unit ID: {unit_id})")
             else:
                 self.status_indicator.set_status("error")
+                self.status_indicator.set_connection_info("Connection failed")
                 self._set_connection_controls(connected=False)
                 self._log("Failed to connect to Modbus server")
                 # Show connection failure dialog
@@ -1078,6 +870,7 @@ class ModbusGUI(QMainWindow):
 
         except Exception as e:
             self.status_indicator.set_status("error")
+            self.status_indicator.set_connection_info("Error encountered")
             self._set_connection_controls(connected=False)
             self._log(f"Connection error: {e}")
             # Show connection error dialog
@@ -1090,6 +883,7 @@ class ModbusGUI(QMainWindow):
             self.modbus = None
 
         self.status_indicator.set_status("disconnected")
+        self.status_indicator.set_connection_info("")
         self.connection_status.setText("Not Connected")
 
         self._set_connection_controls(connected=False)
@@ -1240,50 +1034,53 @@ Unit ID: {unit_id}<br><br>
             QMessageBox.critical(self, "Error", f"Failed to import tags: {e}")
 
     def _set_connection_controls(self, connected: bool, connecting: bool = False):
+        """Update UI control states based on connection status."""
         if connecting:
             self.connect_btn.setEnabled(False)
             self.disconnect_btn.setEnabled(False)
+            self.settings_btn.setEnabled(False)
             # STRICT: Always disable monitoring checkbox during connection
+
+            # During connection attempt, disable all monitoring entry points
             if hasattr(self, 'address_table_widget'):
                 self.address_table_widget.monitoring_checkbox.setEnabled(False)
-                self.address_table_widget.interval_input.setEnabled(False)
-                # Disable all address table controls when connecting
-                self.address_table_widget.function_combo.setEnabled(False)
-                self.address_table_widget.address_input.setEnabled(False)
-                self.address_table_widget.count_input.setEnabled(False)
-                self.address_table_widget.offset_checkbox.setEnabled(False)
-                self.address_table_widget.create_btn.setEnabled(False)
-            if hasattr(self, 'tag_offset_checkbox'):
-                self.tag_offset_checkbox.setEnabled(False)
+            
+            if hasattr(self, 'tag_start_monitoring_btn'):
+                self.tag_start_monitoring_btn.setEnabled(False)
+            
             return
         
+
         self.connect_btn.setEnabled(not connected)
         self.disconnect_btn.setEnabled(connected)
+        self.settings_btn.setEnabled(not connected)
         
         # STRICT: Disable all functions when there is no Modbus connection
+
+        # Update Address Table controls
         if hasattr(self, 'address_table_widget'):
-            self.address_table_widget.monitoring_checkbox.setEnabled(connected)
-            # Enable interval input only when connected and monitoring is checked
-            self.address_table_widget.interval_input.setEnabled(connected and self.address_table_widget.monitoring_checkbox.isChecked())
-            
-            # Disable/enable all address table controls based on connection
             self.address_table_widget.function_combo.setEnabled(connected)
             self.address_table_widget.address_input.setEnabled(connected)
             self.address_table_widget.count_input.setEnabled(connected)
             self.address_table_widget.offset_checkbox.setEnabled(connected)
             self.address_table_widget.create_btn.setEnabled(connected)
-            
-            # If disconnected, uncheck and disable monitoring
-            if not connected and self.address_table_widget.monitoring_checkbox.isChecked():
-                self.address_table_widget.monitoring_checkbox.setChecked(False)
+            self.address_table_widget.update_monitoring_availability()
         
         # Also disable tag monitoring controls when not connected
+
+        # Update Tag monitoring controls
         if hasattr(self, 'tag_start_monitoring_btn'):
             self.tag_start_monitoring_btn.setEnabled(connected)
+            
         if hasattr(self, 'tag_stop_monitoring_btn'):
             self.tag_stop_monitoring_btn.setEnabled(False)
+            # Ensure stop is disabled if we are not connected
+            if not connected:
+                self.tag_stop_monitoring_btn.setEnabled(False)
+
         if hasattr(self, 'tag_offset_checkbox'):
-            self.tag_offset_checkbox.setEnabled(not self.monitoring_active)
+            # Only allow editing address mode if not currently monitoring
+            self.tag_offset_checkbox.setEnabled(connected and not self.monitoring_active)
 
     def on_tab_changed(self, index):
         """Handle tab change to implement smart monitoring interlock."""
@@ -1302,10 +1099,7 @@ Unit ID: {unit_id}<br><br>
                 
                 # Enable address table monitoring controls if connected
                 if hasattr(self, 'address_table_widget'):
-                    if hasattr(self, 'modbus') and self.modbus and self.modbus.is_connected():
-                        self.address_table_widget.monitoring_checkbox.setEnabled(True)
-                        # Keep interval input state based on checkbox
-                        self.address_table_widget.interval_input.setEnabled(self.address_table_widget.monitoring_checkbox.isChecked())
+                    self.address_table_widget.update_monitoring_availability()
             
             elif tab_text == "Monitoring":
                 # Auto-disable live monitoring when going to tags tab
@@ -1313,12 +1107,7 @@ Unit ID: {unit_id}<br><br>
                     if self.address_table_widget.monitoring_checkbox.isChecked():
                         # Uncheck to disable live monitoring
                         self.address_table_widget.monitoring_checkbox.setChecked(False)
-                    # Keep checkbox enabled but unchecked
-                    if hasattr(self, 'modbus') and self.modbus and self.modbus.is_connected():
-                        self.address_table_widget.monitoring_checkbox.setEnabled(True)
-                    else:
-                        self.address_table_widget.monitoring_checkbox.setEnabled(False)
-                    self.address_table_widget.interval_input.setEnabled(False)
+                    self.address_table_widget.update_monitoring_availability()
                 
                 # Enable tag monitoring controls
                 if hasattr(self, 'tag_start_monitoring_btn'):
@@ -1351,42 +1140,6 @@ Unit ID: {unit_id}<br><br>
         except Exception as e:
             self.log(f"Error stopping all monitoring: {e}", "ERROR")
     
-    def _load_connection_from_history(self, connection_string):
-        if not connection_string or ":" not in connection_string:
-            return
-
-        try:
-            parts = connection_string.split(":")
-            if len(parts) >= 3:
-                self.ip_input.setText(parts[0])
-                self.port_input.setValue(int(parts[1]))
-                self.unit_input.setValue(int(parts[2]))
-        except (ValueError, IndexError):
-            pass
-
-    def _delete_selected_history(self):
-        """Delete the currently selected connection history entry."""
-        connection_string = self.connection_history_combo.currentText().strip()
-        if not connection_string:
-            return
-
-        self.connection_history = [
-            connection for connection in self.connection_history
-            if connection != connection_string
-        ]
-        self._refresh_connection_history_combo()
-        self._save_settings()
-        self._log(f"Deleted connection history entry: {connection_string}")
-
-    def _refresh_connection_history_combo(self):
-        current_text = self.connection_history_combo.currentText()
-        self.connection_history_combo.blockSignals(True)
-        self.connection_history_combo.clear()
-        self.connection_history_combo.addItems(self.connection_history[:10])
-        if current_text in self.connection_history:
-            self.connection_history_combo.setCurrentText(current_text)
-        self.connection_history_combo.blockSignals(False)
-
     def _write_results_window_selected(self):
         """Write selected rows from the detached results window."""
         if not self._check_connection():
@@ -2237,8 +1990,7 @@ Unit ID: {unit_id}<br><br>
             history_file = app_data_dir() / "connection_history.txt"
             if history_file.exists():
                 with open(history_file, 'r') as f:
-                    self.connection_history = [line.strip() for line in f.readlines() if line.strip()]
-                self._refresh_connection_history_combo()
+                    self.connection_history = [line.strip() for line in f.readlines() if line.strip()][:10]
         except Exception:
             pass
 
@@ -2249,7 +2001,7 @@ Unit ID: {unit_id}<br><br>
             config_dir.mkdir(parents=True, exist_ok=True)
             history_file = config_dir / "connection_history.txt"
             with open(history_file, 'w') as f:
-                for connection in self.connection_history[:20]:  # Save last 20
+                for connection in self.connection_history[:10]:  # Save last 10
                     f.write(f"{connection}\n")
         except Exception:
             pass
@@ -2304,10 +2056,7 @@ Unit ID: {unit_id}<br><br>
 
     def _network_diagnostics(self): 
         """Show network diagnostics.""" 
-        host = self.ip_input.text().strip() or "127.0.0.1"
-        port = int(self.port_input.value())
-        unit_id = int(self.unit_input.value())
-        self.network_diagnostics.show_diagnostics(host, port, unit_id)
+        self.network_diagnostics.show_diagnostics(self.target_ip, self.target_port, self.target_unit_id)
 
     def _show_documentation(self):
         """Show documentation."""
@@ -2315,29 +2064,45 @@ Unit ID: {unit_id}<br><br>
 
     def _show_about(self):
         """Show about dialog."""
-        QMessageBox.about(self, "About ModbusLens",
-                         "<b>ModbusLens v1.0</b><br><br>"
-                         "Professional Modbus TCP Client<br>"
-                         "Made by Alvin A D<br><br>"
-                         "Available features:<br>"
-                         "&bull; Modbus TCP read operations (coils, discrete inputs, holding registers, input registers)<br>"
-                         "&bull; Modbus TCP write operations (single/multiple coils, single/multiple registers)<br>"
-                         "&bull; Real-time monitoring with tag table (read and write modes)<br>"
-                         "&bull; Detached monitoring results window with write-selected action<br>"
-                         "&bull; Recent connection history (per-user)<br>"
-                         "&bull; Network diagnostics (DNS + TCP + optional Modbus connect)<br><br>"
-                         "Planned / unavailable features:<br>"
-                         "&bull; Save session / load session<br>"
-                         "&bull; Export data<br>"
-                         "&bull; Theme toggle<br>"
-                         "&bull; Connection profiles<br>"
-                         "&bull; Data templates<br>"
-                         "&bull; Scripting console<br>"
-                         "&bull; Documentation viewer<br><br>"
-                         "If you find this tool helpful, consider supporting the developer:<br>"
-                         "<a href=\"https://buymeacoffee.com/craftparking\">Buy Me a Coffee</a><br><br>"
-                         "GitHub: <a href=\"https://github.com/CraftParking/ModbusLens\">https://github.com/CraftParking/ModbusLens</a><br><br>"
-                         "&copy; 2026 ModbusLens Team")
+        version = QApplication.applicationVersion()
+        
+        about_text = (
+            f"<h3>ModbusLens v{version}</h3>"
+            "<p><b>ModbusLens is free software</b> professional Modbus TCP client designed for engineers working with industrial automation systems.</p>"
+            
+            "<h4>Key Features</h4>"
+            "<ul>"
+            "<li>Modbus TCP read/write (coils, inputs, registers)</li>"
+            "<li>Tag-based real-time monitoring</li>"
+            "<li>Detached monitoring results window</li>"
+            "<li>Network discovery & diagnostics (ARP + Modbus detection)</li>"
+            "</ul>"
+            
+            "<h4>Upcoming Features</h4>"
+            "<ul>"
+            "<li>Modbus RTU support</li>"
+            "<li>Multi-device management</li>"
+            "<li>Data logging and export</li>"
+            "<li>Advanced scripting and automation</li>"
+            "<li>Graphical data visualization (charts, trends, live graphs)</li>"
+            "</ul>"
+            
+            "<h4>Support</h4>"
+            "<p>If you find this tool useful, you can support development:<br>"
+            "<a href=\"https://buymeacoffee.com/craftparking\">Buy Me a Coffee</a></p>"
+            
+            "<h4>Links</h4>"
+            "<p>GitHub: <a href=\"https://github.com/CraftParking/ModbusLens\">https://github.com/CraftParking/ModbusLens</a></p>"
+            
+            "<h4>License</h4>"
+            "<p>License: Apache License 2.0</p>"
+            
+            "<p style='margin-top: 15px;'><i>Note: Verify behavior before use in critical industrial systems.</i></p>"
+            "<hr>"
+            "<p align='center' style='color: #666666;'>© 2026 ModbusLens | CraftParking</p>"
+        )
+        
+        QMessageBox.about(self, "About ModbusLens", about_text)
 
     def closeEvent(self, event): 
         """Handle application close event.""" 
@@ -2457,6 +2222,94 @@ class SafetyWarningDialog(QDialog):
         """
 
 
+class ConnectionSettingsDialog(QDialog):
+    """Dialog for advanced Modbus connection configuration."""
+    def __init__(self, parent, history, ip, port, unit):
+        super().__init__(parent)
+        self.setWindowTitle("Connection Settings")
+        self.setMinimumWidth(450)
+        self.history = history[:]
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        
+        # 1. Basic configuration
+        basic_group = QGroupBox("Target Device")
+        grid = QGridLayout(basic_group)
+        grid.setSpacing(10)
+        
+        grid.addWidget(QLabel("IP Address:"), 0, 0)
+        self.ip_input = QLineEdit(ip)
+        self.ip_input.setStyleSheet(parent._get_input_style())
+        grid.addWidget(self.ip_input, 0, 1)
+        
+        grid.addWidget(QLabel("Port:"), 1, 0)
+        self.port_input = QSpinBox()
+        self.port_input.setRange(1, 65535)
+        self.port_input.setValue(port)
+        self.port_input.setStyleSheet(parent._get_input_style())
+        grid.addWidget(self.port_input, 1, 1)
+        
+        grid.addWidget(QLabel("Unit ID:"), 2, 0)
+        self.unit_input = QSpinBox()
+        self.unit_input.setRange(1, 247)
+        self.unit_input.setValue(unit)
+        self.unit_input.setStyleSheet(parent._get_input_style())
+        grid.addWidget(self.unit_input, 2, 1)
+        layout.addWidget(basic_group)
+        
+        # 2. Network selection
+        iface_group = QGroupBox("Network Interface")
+        iface_layout = QHBoxLayout(iface_group)
+        self.iface_combo = QComboBox()
+        self.iface_combo.setStyleSheet(parent._get_input_style())
+        
+        try:
+            from network.network_diagnostics import get_network_interfaces
+            interfaces = get_network_interfaces()
+            for i in interfaces:
+                self.iface_combo.addItem(i['display_name'], i['ipv4'])
+        except:
+            self.iface_combo.addItem("Default Interface", "127.0.0.1")
+            
+        self.iface_combo.currentTextChanged.connect(lambda t: self.ip_input.setText(self.iface_combo.currentData()))
+        iface_layout.addWidget(self.iface_combo)
+        layout.addWidget(iface_group)
+        
+        # 3. History
+        hist_group = QGroupBox("Recent Connections")
+        hist_layout = QHBoxLayout(hist_group)
+        self.hist_combo = QComboBox()
+        self.hist_combo.setStyleSheet(parent._get_input_style())
+        self.hist_combo.addItems(self.history)
+        self.hist_combo.currentTextChanged.connect(self._on_history_select)
+        hist_layout.addWidget(self.hist_combo)
+        layout.addWidget(hist_group)
+        
+        # Buttons
+        btns = QHBoxLayout()
+        btns.addStretch()
+        save_btn = QPushButton("Save Settings")
+        save_btn.clicked.connect(self.accept)
+        btns.addWidget(save_btn)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(cancel_btn)
+        layout.addLayout(btns)
+
+    def _on_history_select(self, text):
+        if not text or ":" not in text:
+            return
+        parts = text.split(":")
+        if len(parts) >= 3:
+            self.ip_input.setText(parts[0])
+            self.port_input.setValue(int(parts[1]))
+            self.unit_input.setValue(int(parts[2]))
+
+    def get_values(self):
+        return {'ip': self.ip_input.text(), 'port': self.port_input.value(), 'unit': self.unit_input.value(), 'history': self.history}
+
+
 def main(): 
     try: 
         # Check if QApplication already exists (e.g., in IDE environments) 
@@ -2465,7 +2318,7 @@ def main():
             app = QApplication(sys.argv)
 
         app.setApplicationName("ModbusLens") 
-        app.setApplicationVersion("1.0") 
+        app.setApplicationVersion(__version__) 
         app.setOrganizationName("ModbusLens") 
  
         warning = SafetyWarningDialog()
