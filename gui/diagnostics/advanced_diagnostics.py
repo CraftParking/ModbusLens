@@ -244,7 +244,7 @@ class AdvancedDiagnostics:
         self.advanced_diagnostics = checked
         mode = "enabled" if checked else "disabled"
         
-    def show_statistics_dialog(self):
+    def show_statistics_dialog(self, modbus_client=None):
         """Show statistics dialog."""
         # This method will be called from the main window
         # We need to create the dialog here since we don't have access to parent
@@ -277,7 +277,7 @@ class AdvancedDiagnostics:
         """)
         
         # Generate statistics report
-        stats_report = self.generate_statistics_report()
+        stats_report = self.generate_statistics_report(modbus_client)
         stats_text.setPlainText(stats_report)
         layout.addWidget(stats_text)
         

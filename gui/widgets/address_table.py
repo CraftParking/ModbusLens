@@ -37,6 +37,9 @@ class AddressTableWidget(QWidget):
         self.monitoring_timer.timeout.connect(self.update_table_data)
 
         self.current_data = {}
+        
+        self.range_is_one_based = False
+        self._building_table = False
 
         
 
@@ -102,9 +105,10 @@ class AddressTableWidget(QWidget):
 
         self.address_input = QSpinBox()
 
-        self.address_input.setRange(0, 65535)
+        self.address_input.setRange(1, 65536)
 
-        self.address_input.setValue(0)
+        self.address_input.setValue(1)
+        self.address_input.valueChanged.connect(self.on_address_range_changed)
 
         address_layout.addWidget(self.address_input)
 
@@ -117,8 +121,15 @@ class AddressTableWidget(QWidget):
         self.count_input = QSpinBox()
         self.count_input.setRange(1, 2000)  # Modbus standard allows up to 2000 registers/coils
         self.count_input.setValue(1)  # Default to 1 for new layout
+        self.count_input.valueChanged.connect(self.on_address_range_changed)
 
         address_layout.addWidget(self.count_input)
+
+        # Address offset mode
+        self.offset_checkbox = QCheckBox("1-Based Addressing")
+        self.offset_checkbox.setToolTip("When enabled, user address 1 is sent as protocol offset 0")
+        self.offset_checkbox.stateChanged.connect(self.on_offset_checkbox_changed)
+        address_layout.addWidget(self.offset_checkbox)
 
         
 
@@ -234,8 +245,7 @@ class AddressTableWidget(QWidget):
 
         self.table = QTableWidget()
 
-        self.table.setColumnCount(2)  # Only Address and Value columns
-
+        self.table.setColumnCount(2)  # Address, Value columns
         self.table.setHorizontalHeaderLabels(["Address", "Value"])
 
         self.table.setAlternatingRowColors(True)
@@ -328,6 +338,7 @@ class AddressTableWidget(QWidget):
         self.address_input.setEnabled(False)
         self.count_input.setEnabled(False)
         self.create_btn.setEnabled(False)
+        self.offset_checkbox.setEnabled(False)
         self.monitoring_checkbox.setEnabled(False)
         self.interval_input.setEnabled(False)
 
@@ -349,47 +360,67 @@ class AddressTableWidget(QWidget):
 
             self.count_input.setEnabled(False)
 
+        self.ensure_address_mode_bounds()
+        if hasattr(self, 'current_count') and self.table.rowCount() > 0:
+            self.log(f"Function changed to {function_text}; rebuilding address table")
+            self.create_address_table()
+
+    def get_operation_type(self, function):
+        """Return the Modbus operation type for address conversion."""
+        if "Coil" in function:
+            return "coils"
+        if "Discrete Input" in function:
+            return "discrete_inputs"
+        if "Input Register" in function:
+            return "input_registers"
+        if "Register" in function:
+            return "holding_registers"
+        return None
+
+    def get_function_code(self, function=None):
+        """Return the Modbus function code selected in the Address Table."""
+        function = function or self.function_combo.currentText()
+        try:
+            return int(function.rsplit("(", 1)[1].rstrip(")"))
+        except (IndexError, ValueError):
+            return None
+
+    def ensure_address_mode_bounds(self):
+        """Keep the address input range unambiguous for 0-based vs 1-based mode."""
+        current_value = self.address_input.value()
+        maximum = 65536 if self.range_is_one_based else 65535
+        self.address_input.setRange(1, maximum)
+        if current_value < 1:
+            self.address_input.setValue(1)
+
+    def get_user_address_for_row(self, row):
+        """Return the user-facing address represented by a table row."""
+        return self.current_start_address + row
+
+    def convert_user_address_to_offset(self, user_address, function=None):
+        """Convert a user-facing Address Table address to a 0-based protocol offset."""
+        function = function or self.current_function
+        offset = user_address - 1 if self.range_is_one_based else user_address
+
+        if offset < 0:
+            raise ValueError(f"Invalid address: {user_address} converts to negative protocol offset {offset}")
+        if offset > 65535:
+            raise ValueError(f"Invalid address: {user_address} converts to protocol offset {offset} above 65535")
+        return offset
+
+    def on_address_range_changed(self, *_args):
+        """Keep range-level offset state valid when the start/count controls change."""
+        if hasattr(self, 'current_count') and self.table.rowCount() > 0:
+            self.current_start_address = self.address_input.value()
+            self.current_count = self.count_input.value()
+            self.refresh_address_column()
+
             
 
     def get_modbus_address(self, address: int, function: str) -> str:
 
-        """Get proper Modbus address format based on function type.
-
-        
-
-        Modbus Address Formats:
-
-        - Coils (Read/Write): 000001-065536
-
-        - Discrete Inputs: 100001-165536
-
-        - Holding Registers: 400001-465536
-
-        - Input Registers: 300001-365536
-
-        """
-
-        # Explicit function name matching for all 8 functions
-
-        if function == "Read Coils (1)" or function == "Write Single Coil (5)" or function == "Write Multiple Coils (15)":
-
-            return f"{address + 1:06d}"  # 000001 format
-
-        elif function == "Read Holding Registers (3)" or function == "Write Single Register (6)" or function == "Write Multiple Registers (16)":
-
-            return f"{400000 + address + 1:06d}"  # 400001 format
-
-        elif function == "Read Discrete Inputs (2)":
-
-            return f"{100000 + address + 1:06d}"  # 100001 format
-
-        elif function == "Read Input Registers (4)":
-
-            return f"{300000 + address + 1:06d}"  # 300001 format
-
-        else:
-
-            return str(address)  # Fallback to simple address
+        """Return the user-facing address text without Modbus range prefixes."""
+        return str(address)
 
     
 
@@ -398,6 +429,8 @@ class AddressTableWidget(QWidget):
         """Create the address table based on input parameters."""
 
         function = self.function_combo.currentText()
+
+        self.ensure_address_mode_bounds()
 
         start_address = self.address_input.value()
 
@@ -417,7 +450,13 @@ class AddressTableWidget(QWidget):
 
         # Validate inputs
 
-        if start_address + count > 65536:
+        try:
+            start_offset = self.convert_user_address_to_offset(start_address, function)
+        except ValueError as e:
+            self.log(f"Address error: {e}")
+            return
+
+        if start_offset + count > 65536:
 
             self.log(f"Error: Address range exceeds 65535")
 
@@ -433,10 +472,12 @@ class AddressTableWidget(QWidget):
 
         # Clear existing data
 
+        self._building_table = True
         self.table.setRowCount(0)
 
         self.current_data.clear()
-
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Address", "Value"])
         
 
         # Set up table rows
@@ -456,9 +497,7 @@ class AddressTableWidget(QWidget):
             address = start_address + i
 
             modbus_address = self.get_modbus_address(address, function)
-
             
-
             # Address column (read-only) - show proper Modbus address
 
             address_item = QTableWidgetItem(modbus_address)
@@ -470,7 +509,6 @@ class AddressTableWidget(QWidget):
             self.table.setItem(i, 0, address_item)
 
             
-
             # Value column (editable only for write functions, read-only for read functions)
 
             if is_write and "Coil" in function:
@@ -479,25 +517,19 @@ class AddressTableWidget(QWidget):
                 checkbox.setChecked(False)  # Default to false
                 checkbox.setStyleSheet("QCheckBox { margin-left: 5px; }")
                 self.table.setCellWidget(i, 1, checkbox)
-                # Connect checkbox state change to write function
+                # Connect checkbox state change to handle write
                 checkbox.stateChanged.connect(lambda state, row=i: self.on_coil_checkbox_changed(row, state))
             else:
-                # Use regular text item for registers and read functions
+                # Use text field for other cases
                 value_item = QTableWidgetItem("")
-                
                 if is_write:
                     value_item.setFlags(value_item.flags() | Qt.ItemIsEditable)
-                    # Light blue background for writable values
-                    value_item.setBackground(QColor("#E6F3FF"))  # Light blue for editable
                 else:
                     value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
-                    # White background for read-only values
-                    value_item.setBackground(QColor("#FFFFFF"))  # White for read-only
-                
                 self.table.setItem(i, 1, value_item)
 
-
-
+        self._building_table = False
+            
         # STRICT: Do NOT enable monitoring controls - only enable when there's active connection
 
         # The monitoring checkbox will be enabled by _set_connection_controls when connected
@@ -565,6 +597,25 @@ class AddressTableWidget(QWidget):
         self.log(f"Created table: {function} from address {start_address}, count {count}")
 
         
+
+    def on_offset_checkbox_changed(self, state):
+        """Handle range-level offset checkbox state change."""
+        self.range_is_one_based = (state == 2)  # Qt.Checked is 2
+        self.ensure_address_mode_bounds()
+        self.refresh_address_column()
+        self.log(f"Address range offset mode: {'1-based' if self.range_is_one_based else '0-based'}")
+
+    def refresh_address_column(self):
+        """Refresh displayed addresses after function or offset changes."""
+        if not hasattr(self, 'current_start_address') or not hasattr(self, 'current_count'):
+            return
+
+        function = getattr(self, 'current_function', self.function_combo.currentText())
+        for row in range(min(self.table.rowCount(), self.current_count)):
+            address = self.current_start_address + row
+            address_item = self.table.item(row, 0)
+            if address_item:
+                address_item.setText(self.get_modbus_address(address, function))
 
     def toggle_monitoring(self, state):
         """Toggle live monitoring on/off with interlock (read functions only)."""
@@ -739,70 +790,43 @@ class AddressTableWidget(QWidget):
 
             return
 
-            
-
         if not self.parent_window.modbus.is_connected():
-
             self.log("Error: Modbus connection lost")
-
             self.stop_monitoring()
-
             return
 
-            
-
         try:
-
-            # Read data based on function type
-
-            if "Coils" in self.current_function:
-
-                if "Read Coils" in self.current_function:
-
-                    data = self.parent_window.modbus.read_coils(self.current_start_address, self.current_count)
-
-                else:
-
-                    return  # Write operations don't need polling
-
-            elif "Discrete Inputs" in self.current_function:
-
-                data = self.parent_window.modbus.read_discrete_inputs(self.current_start_address, self.current_count)
-
-            elif "Holding Registers" in self.current_function:
-
-                data = self.parent_window.modbus.read_registers(self.current_start_address, self.current_count)
-
-            elif "Input Registers" in self.current_function:
-
-                data = self.parent_window.modbus.read_input_registers(self.current_start_address, self.current_count)
-
-            else:
-
+            try:
+                protocol_offset = self.convert_user_address_to_offset(self.current_start_address, self.current_function)
+            except ValueError as e:
+                self.parent_window._log(f"Address error: {e}")
                 return
 
-                
+            # Read data based on function type
+            if "Coils" in self.current_function:
+                if "Read Coils" in self.current_function:
+                    data = self.parent_window.modbus.read_coils(protocol_offset, self.current_count)
+                else:
+                    return  # Write operations don't need polling
+            elif "Discrete Inputs" in self.current_function:
+                data = self.parent_window.modbus.read_discrete_inputs(protocol_offset, self.current_count)
+            elif "Holding Registers" in self.current_function:
+                data = self.parent_window.modbus.read_registers(protocol_offset, self.current_count)
+            elif "Input Registers" in self.current_function:
+                data = self.parent_window.modbus.read_input_registers(protocol_offset, self.current_count)
+            else:
+                return
 
             if data is not None:
-
                 self.update_table_values(data)
-
                 self.log(f"Updated {len(data) if isinstance(data, list) else 1} values")
-
             else:
-
                 error_msg = getattr(self.parent_window.modbus, 'last_error', 'Unknown error')
-
                 self.log(f"Read failed: {error_msg}")
 
-                
-
         except Exception as e:
-
             self.log(f"Monitoring error: {e}")
-
             # Stop monitoring on errors to prevent continuous failures
-
             self.stop_monitoring()
 
             
@@ -892,6 +916,10 @@ class AddressTableWidget(QWidget):
     def on_cell_changed(self, row, column):
 
         """Handle cell value changes for write operations only."""
+
+        if self._building_table:
+
+            return
 
         if column != 1:  # Only value column is writable for operations
 
@@ -1007,16 +1035,28 @@ class AddressTableWidget(QWidget):
                 self.log("Error: Not connected to Modbus device for write operation")
                 return False
             
+            if self.get_operation_type(self.current_function) is None:
+                self.log(f"ERROR: Could not determine operation type from function: {self.current_function}")
+                return False
+            
+            try:
+                protocol_offset = self.convert_user_address_to_offset(address, self.current_function)
+            except ValueError as e:
+                self.log(f"Address error: {e}")
+                return False
+            
+            self.log(f"Writing value={value} to protocol offset={protocol_offset}")
+            
             if "Write Single Coil" in self.current_function:
-                return self.parent_window.modbus.write_coil(address, value)
+                return self.parent_window.modbus.write_coil(protocol_offset, value)
             elif "Write Single Register" in self.current_function:
-                return self.parent_window.modbus.write_register(address, value)
+                return self.parent_window.modbus.write_register(protocol_offset, value)
             elif "Write Multiple Coils" in self.current_function:
                 # For multiple coils, write a single coil as a list
-                return self.parent_window.modbus.write_coils(address, [value])
+                return self.parent_window.modbus.write_coils(protocol_offset, [value])
             elif "Write Multiple Registers" in self.current_function:
                 # For multiple registers, write a single register as a list
-                return self.parent_window.modbus.write_registers(address, [value])
+                return self.parent_window.modbus.write_registers(protocol_offset, [value])
             else:
                 self.log(f"Error: Write operation not supported for function: {self.current_function}")
                 return False
@@ -1031,7 +1071,10 @@ class AddressTableWidget(QWidget):
         try:
             # Only process changes for write functions
             if not hasattr(self, 'current_function') or not self.current_function:
+                self.log("ERROR: No current_function set")
                 return
+            
+            self.log(f"Current function: {self.current_function}")
                 
             is_write = "Write" in self.current_function
             if not is_write:
@@ -1043,9 +1086,10 @@ class AddressTableWidget(QWidget):
             # Get the address for this row
             address = self.current_start_address + row
             
+            self.log(f"Coil checkbox changed: {'ON' if value else 'OFF'} at address {address}")
+            
             # Store the value in current_data
             self.current_data[address] = value
-            self.log(f"Coil checkbox changed: {'ON' if value else 'OFF'} at address {address}")
             
             # Write to device immediately
             success = self.write_value_to_device(address, value)

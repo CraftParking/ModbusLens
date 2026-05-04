@@ -263,7 +263,7 @@ def lookup_mac_vendor(mac_address):
 
 
 def get_network_interfaces():
-    """Get list of available network interfaces."""
+    """Get list of ALL available network interfaces, including disconnected ones."""
     interfaces = []
     
     if PSUTIL_AVAILABLE:
@@ -272,49 +272,154 @@ def get_network_interfaces():
             net_if_addrs = psutil.net_if_addrs()
             net_if_stats = psutil.net_if_stats()
             
+            print(f"[DEBUG] PSUTIL: Found {len(net_if_addrs)} interfaces")
+            
             for interface_name, addresses in net_if_addrs.items():
                 # Get interface stats
                 stats = net_if_stats.get(interface_name)
-                if stats and stats.isup:  # Only include active interfaces
-                    # Get IPv4 addresses for this interface
-                    ipv4_addresses = []
-                    for addr in addresses:
-                        if addr.family == socket.AF_INET:
-                            ipv4_addresses.append(addr.address)
-                    
-                    if ipv4_addresses:  # Only include interfaces with IPv4 addresses
-                        # Get MAC address
-                        mac_address = 'Unknown'
-                        for addr in addresses:
-                            if hasattr(addr, 'family') and addr.family == psutil.AF_LINK:
-                                mac_address = addr.address
-                                break
-                        
-                        # Format display name
-                        display_name = f"{interface_name} ({ipv4_addresses[0]})"
-                        if mac_address != 'Unknown':
-                            vendor = lookup_mac_vendor(mac_address)
-                            if vendor != 'Unknown':
-                                display_name += f" - {vendor}"
-                        
-                        interfaces.append({
-                            'name': interface_name,
-                            'display_name': display_name,
-                            'ipv4': ipv4_addresses[0],
-                            'mac': mac_address,
-                            'vendor': lookup_mac_vendor(mac_address)
-                        })
+                
+                # Get IPv4 addresses for this interface
+                ipv4_addresses = []
+                for addr in addresses:
+                    if addr.family == socket.AF_INET:
+                        ipv4_addresses.append(addr.address)
+                
+                # Get MAC address
+                mac_address = 'Unknown'
+                for addr in addresses:
+                    if hasattr(addr, 'family') and addr.family == psutil.AF_LINK:
+                        mac_address = addr.address
+                        break
+                
+                # Format display name - show IP if available, otherwise "No IP"
+                if ipv4_addresses:
+                    ip_display = ipv4_addresses[0]
+                else:
+                    ip_display = "No IP"
+                
+                display_name = f"{interface_name} ({ip_display})"
+                
+                # Add vendor if MAC is known
+                if mac_address != 'Unknown':
+                    vendor = lookup_mac_vendor(mac_address)
+                    if vendor != 'Unknown':
+                        display_name += f" - {vendor}"
+                
+                # Add status indicator if available
+                if stats:
+                    status = " (Active)" if stats.isup else " (Inactive)"
+                    display_name += status
+                
+                print(f"[DEBUG] PSUTIL adding: {display_name}")
+                interfaces.append({
+                    'name': interface_name,
+                    'display_name': display_name,
+                    'ipv4': ipv4_addresses[0] if ipv4_addresses else None,
+                    'mac': mac_address,
+                    'vendor': lookup_mac_vendor(mac_address)
+                })
             
         except Exception as e:
+            print(f"[DEBUG] PSUTIL error: {e}")
             pass  # Fall back to basic detection
     
-    # Fallback method without psutil
+    # Windows fallback using ipconfig /all to get ALL adapters
+    if platform.system().lower() == 'windows':
+        try:
+            print("[DEBUG] Using Windows ipconfig fallback")
+            result = subprocess.run(['ipconfig', '/all'], capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                lines = result.stdout.split('\n')
+                print(f"[DEBUG] ipconfig returned {len(lines)} lines")
+                current_interface = None
+                current_mac = None
+                current_ips = []
+                
+                for line in lines:
+                    line_stripped = line.strip()
+                    # Debug: print lines containing IP-related keywords
+                    if 'IPv4' in line or 'Autoconfiguration' in line:
+                        print(f"[DEBUG] Line with IP keyword: {repr(line)}, current_interface={current_interface}")
+                    
+                    if line_stripped and not line_stripped.startswith(' '):
+                        # Interface name line - save previous interface if exists
+                        if current_interface:
+                            # Check if already exists
+                            already_exists = any(iface['name'] == current_interface for iface in interfaces)
+                            if not already_exists:
+                                # Determine IP to display
+                                ip_display = current_ips[0] if current_ips else "No IP"
+                                display_name = f'{current_interface} ({ip_display})'
+                                
+                                # Add vendor if MAC is available
+                                if current_mac:
+                                    vendor = lookup_mac_vendor(current_mac)
+                                    if vendor != 'Unknown':
+                                        display_name += f' - {vendor}'
+                                
+                                print(f"[DEBUG] Windows adding: {display_name}")
+                                interfaces.append({
+                                    'name': current_interface,
+                                    'display_name': display_name,
+                                    'ipv4': current_ips[0] if current_ips else None,
+                                    'mac': current_mac or 'Unknown',
+                                    'vendor': lookup_mac_vendor(current_mac) if current_mac else 'Unknown'
+                                })
+                        
+                        # Start new interface - only if it's an actual adapter name
+                        # Match: "Ethernet adapter", "Wireless LAN adapter", etc.
+                        if re.match(r'^(Ethernet|Wireless LAN|Bluetooth Network|PPP adapter|Tunnel adapter)', line_stripped, re.IGNORECASE):
+                            current_interface = line_stripped.split(':')[0].strip()
+                            current_mac = None
+                            current_ips = []
+                            print(f"[DEBUG] Found adapter: {current_interface}")
+                        # Don't reset current_interface for other lines like "Description"
+                    
+                    elif 'Physical Address' in line_stripped and current_interface:
+                        # Extract MAC address
+                        mac_match = re.search(r'([0-9a-fA-F]{2}[:-]){5}([0-9a-fA-F]{2})', line_stripped)
+                        if mac_match:
+                            current_mac = mac_match.group(0).replace('-', ':').upper()
+                    
+                    elif ('IPv4 Address' in line or 'Autoconfiguration IPv4 Address' in line) and current_interface:
+                        # Extract IP address
+                        ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+                        if ip_match:
+                            ip = ip_match.group(1)
+                            if ip not in current_ips:
+                                current_ips.append(ip)
+                                print(f"[DEBUG] Found IP for {current_interface}: {ip}")
+                
+                # Don't forget the last interface
+                if current_interface:
+                    already_exists = any(iface['name'] == current_interface for iface in interfaces)
+                    if not already_exists:
+                        ip_display = current_ips[0] if current_ips else "No IP"
+                        display_name = f'{current_interface} ({ip_display})'
+                        
+                        if current_mac:
+                            vendor = lookup_mac_vendor(current_mac)
+                            if vendor != 'Unknown':
+                                display_name += f' - {vendor}'
+                        
+                        interfaces.append({
+                            'name': current_interface,
+                            'display_name': display_name,
+                            'ipv4': current_ips[0] if current_ips else None,
+                            'mac': current_mac or 'Unknown',
+                            'vendor': lookup_mac_vendor(current_mac) if current_mac else 'Unknown'
+                        })
+            else:
+                pass
+                
+        except Exception as e:
+            pass
+    
+    # Ultimate fallback if nothing found
     if not interfaces:
         try:
             hostname = socket.gethostname()
             local_ip = socket.gethostbyname(hostname)
-            
-            # Add default interface
             interfaces.append({
                 'name': 'default',
                 'display_name': f'Default Interface ({local_ip})',
@@ -322,40 +427,7 @@ def get_network_interfaces():
                 'mac': '00:00:00:00:00:00',
                 'vendor': 'Unknown'
             })
-            
-            # Try to get additional interfaces using system commands
-            if platform.system().lower() == 'windows':
-                try:
-                    # Use ipconfig to get network interfaces
-                    result = subprocess.run(['ipconfig'], capture_output=True, text=True, timeout=10)
-                    if result.returncode == 0:
-                        lines = result.stdout.split('\n')
-                        current_interface = None
-                        
-                        for line in lines:
-                            line = line.strip()
-                            if line and not line.startswith(' '):
-                                # Interface name line
-                                if ':' in line:
-                                    current_interface = line.split(':')[0].strip()
-                            elif 'IPv4 Address' in line and current_interface:
-                                # Extract IP address
-                                ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
-                                if ip_match:
-                                    ip = ip_match.group(1)
-                                    if ip != local_ip:  # Don't duplicate default
-                                        interfaces.append({
-                                            'name': current_interface,
-                                            'display_name': f'{current_interface} ({ip})',
-                                            'ipv4': ip,
-                                            'mac': 'Unknown',
-                                            'vendor': 'Unknown'
-                                        })
-                except:
-                    pass
-            
-        except Exception as e:
-            # Ultimate fallback
+        except:
             interfaces.append({
                 'name': 'loopback',
                 'display_name': 'Loopback (127.0.0.1)',

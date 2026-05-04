@@ -5,6 +5,7 @@ import socket
 import struct
 import os
 import csv
+import math
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -64,6 +65,7 @@ class ModbusGUI(QMainWindow):
         self._active_ranges = []
         self.monitoring_active = False
         self._write_poll_in_progress = False
+        self.tag_address_one_based = False
         
         self.monitoring_timer = QTimer(self)
         self.monitoring_timer.timeout.connect(self._update_monitored_data)
@@ -90,13 +92,40 @@ class ModbusGUI(QMainWindow):
             for interface in interfaces:
                 if interface['display_name'] == display_name:
                     self.selected_network_interface = interface
-                    # Auto-fill IP with interface's IPv4 address
-                    self.ip_input.setText(interface['ipv4'])
-                    self._log(f"Selected network interface: {interface['name']} - {interface['ipv4']}")
+                    # Auto-fill IP with interface's IPv4 address if available
+                    if interface['ipv4']:
+                        self.ip_input.setText(interface['ipv4'])
+                        self._log(f"Selected network interface: {interface['name']} - {interface['ipv4']}")
+                    else:
+                        self._log(f"Selected network interface: {interface['name']} (No IP - disconnected)")
                     break
         except ImportError:
-            self._log("Network interface selection not available")
-    
+            pass
+
+    def convert_to_protocol_address(self, user_address, operation_type=None, is_one_based=False):
+        """Convert user-entered address to a 0-based Modbus protocol offset.
+        
+        Args:
+            user_address: The address entered by the user
+            operation_type: The type of operation (coils, discrete_inputs, input_registers, holding_registers)
+            is_one_based: If True, use 1-based (datasheet) addressing; if False, use 0-based (protocol)
+            
+        Returns:
+            The protocol offset to use in Modbus communication
+            
+        Raises:
+            ValueError: If the converted address is negative
+        """
+        if is_one_based:
+            protocol_offset = user_address - 1
+        else:  # 0-based
+            protocol_offset = user_address
+
+        if protocol_offset < 0:
+            raise ValueError(f"Invalid address: {user_address} converts to negative protocol offset {protocol_offset}")
+        
+        return protocol_offset
+
     def refresh_network_interfaces(self):
         """Refresh the list of network interfaces in main window."""
         try:
@@ -308,6 +337,9 @@ class ModbusGUI(QMainWindow):
         interface_label.setStyleSheet("color: #333333; font-weight: bold;")
         interface_label.setMinimumWidth(120)  # Ensure label has consistent width
         interface_layout.addWidget(interface_label)
+
+        interface_controls_layout = QVBoxLayout()
+        interface_controls_layout.setSpacing(6)
         
         self.network_interface_combo = QComboBox()
         self.network_interface_combo.setMinimumWidth(200)  # Reduced from 250
@@ -326,10 +358,7 @@ class ModbusGUI(QMainWindow):
             self.network_interface_combo.addItem("Default Interface", "default")
         
         self.network_interface_combo.currentTextChanged.connect(self.on_network_interface_changed)
-        interface_layout.addWidget(self.network_interface_combo)
-        
-        # Add stretch to push refresh button to the right
-        interface_layout.addStretch()
+        interface_controls_layout.addWidget(self.network_interface_combo)
         
         # Refresh button with proper sizing
         refresh_interface_btn = QPushButton("Refresh")
@@ -337,7 +366,9 @@ class ModbusGUI(QMainWindow):
         refresh_interface_btn.clicked.connect(self.refresh_network_interfaces)
         refresh_interface_btn.setMinimumWidth(80)
         refresh_interface_btn.setMaximumWidth(80)
-        interface_layout.addWidget(refresh_interface_btn)
+        interface_controls_layout.addWidget(refresh_interface_btn, 0, Qt.AlignLeft)
+        interface_layout.addLayout(interface_controls_layout)
+        interface_layout.addStretch()
         
         layout.addLayout(interface_layout)
 
@@ -507,6 +538,11 @@ class ModbusGUI(QMainWindow):
         self.tag_monitoring_interval.setStyleSheet(self._get_input_style())
         self.tag_monitoring_interval.setMinimumWidth(80)
         buttons_layout.addWidget(self.tag_monitoring_interval)
+
+        self.tag_offset_checkbox = QCheckBox("1-Based Addressing")
+        self.tag_offset_checkbox.setToolTip("When enabled, tag address 1 is sent as protocol offset 0")
+        self.tag_offset_checkbox.toggled.connect(self._on_tag_address_mode_changed)
+        buttons_layout.addWidget(self.tag_offset_checkbox)
 
         control_layout.addLayout(buttons_layout)
         layout.addWidget(control_group)
@@ -725,13 +761,14 @@ class ModbusGUI(QMainWindow):
             return w
         if widget_type == "spinbox": 
             w = QSpinBox() 
-            w.setRange(0, 65535) 
-            w.setValue(value if value is not None else 0) 
+            maximum = 65536 if getattr(self, "tag_address_one_based", False) else 65535
+            w.setRange(1, maximum)
+            w.setValue(value if value is not None else 1)
             w.setStyleSheet(self._get_input_style()) 
             return w 
         return None 
  
-    def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=0, count=1, value_format=None, comment=""): 
+    def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None, comment=""): 
         row = self.monitoring_tag_table.rowCount() 
         self.monitoring_tag_table.insertRow(row) 
 
@@ -766,6 +803,36 @@ class ModbusGUI(QMainWindow):
 
         self._coerce_monitoring_tag_count(row)
         self._ensure_unique_monitoring_tag_address(row)
+
+    def _on_tag_address_mode_changed(self, checked):
+        """Toggle Tags between user-facing 1-based and protocol 0-based address input."""
+        self.tag_address_one_based = bool(checked)
+        maximum = 65536 if self.tag_address_one_based else 65535
+
+        try:
+            self._updating_tag_table = True
+            for row in range(self.monitoring_tag_table.rowCount()):
+                address_widget = self.monitoring_tag_table.cellWidget(row, 3)
+                if not address_widget or not hasattr(address_widget, "setRange"):
+                    continue
+                current = address_widget.value()
+                address_widget.setRange(1, maximum)
+                if current < 1:
+                    address_widget.setValue(1)
+        finally:
+            self._updating_tag_table = False
+
+        self._log(f"Tag address mode: {'1-based' if self.tag_address_one_based else '0-based'}")
+
+    def _tag_user_address_to_offset(self, tag):
+        """Convert a tag's user-facing address to the 0-based Modbus protocol offset."""
+        user_address = int(tag["address"])
+        offset = user_address - 1 if self.tag_address_one_based else user_address
+        if offset < 0:
+            raise ValueError(f"address {user_address} converts to negative protocol offset {offset}")
+        if offset > 65535:
+            raise ValueError(f"address {user_address} converts to protocol offset {offset} above 65535")
+        return offset
 
     def _find_monitoring_tag_row(self, widget, column):
         for row in range(self.monitoring_tag_table.rowCount()):
@@ -1208,40 +1275,7 @@ Unit ID: {unit_id}<br><br>
 
     def _get_monitoring_tags(self):
         """Get all monitoring tags from the table."""
-        tags = []
-        row_count = self.monitoring_tag_table.rowCount()
-        
-        for row in range(row_count):
-            try:
-                name = self._table_item_text(self.monitoring_tag_table, row, 0).strip()
-                if not name:
-                    name = f"Tag_{row+1}"
-                
-                tag = {
-                    'name': name,
-                    'mode': self._table_item_text(self.monitoring_tag_table, row, 1) or 'Read',
-                    'type': self._table_item_text(self.monitoring_tag_table, row, 2) or 'Coil',
-                    'address': self._table_item_text(self.monitoring_tag_table, row, 3) or str(row),
-                    'count': self._table_item_text(self.monitoring_tag_table, row, 4) or '1',
-                    'format': self._table_item_text(self.monitoring_tag_table, row, 5) or 'Bool',
-                    'comment': self._table_item_text(self.monitoring_tag_table, row, 6) or ''
-                }
-                
-                tags.append(tag)
-                
-            except Exception as e:
-                tag = {
-                    'name': f"Tag_{row+1}",
-                    'mode': 'Read',
-                    'type': 'Coil',
-                    'address': str(row),
-                    'count': '1',
-                    'format': 'Bool',
-                    'comment': ''
-                }
-                tags.append(tag)
-        
-        return tags
+        return self.monitoring_manager.get_monitoring_tags()
 
     def _table_item_text(self, table, row, column):
         """Get text from a table cell widget."""
@@ -1368,7 +1402,10 @@ Unit ID: {unit_id}<br><br>
                 self.address_table_widget.function_combo.setEnabled(False)
                 self.address_table_widget.address_input.setEnabled(False)
                 self.address_table_widget.count_input.setEnabled(False)
+                self.address_table_widget.offset_checkbox.setEnabled(False)
                 self.address_table_widget.create_btn.setEnabled(False)
+            if hasattr(self, 'tag_offset_checkbox'):
+                self.tag_offset_checkbox.setEnabled(False)
             return
         
         self.connect_btn.setEnabled(not connected)
@@ -1384,6 +1421,7 @@ Unit ID: {unit_id}<br><br>
             self.address_table_widget.function_combo.setEnabled(connected)
             self.address_table_widget.address_input.setEnabled(connected)
             self.address_table_widget.count_input.setEnabled(connected)
+            self.address_table_widget.offset_checkbox.setEnabled(connected)
             self.address_table_widget.create_btn.setEnabled(connected)
             
             # If disconnected, uncheck and disable monitoring
@@ -1395,6 +1433,8 @@ Unit ID: {unit_id}<br><br>
             self.tag_start_monitoring_btn.setEnabled(connected)
         if hasattr(self, 'tag_stop_monitoring_btn'):
             self.tag_stop_monitoring_btn.setEnabled(False)
+        if hasattr(self, 'tag_offset_checkbox'):
+            self.tag_offset_checkbox.setEnabled(not self.monitoring_active)
 
     def on_tab_changed(self, index):
         """Handle tab change to implement smart monitoring interlock."""
@@ -1508,10 +1548,17 @@ Unit ID: {unit_id}<br><br>
 
         try:
             self._modbus_busy = True
-            start_addr = self.read_start_addr.value()
+            user_start_addr = self.read_start_addr.value()
             count = self.read_count.value()
             data_type = self.read_data_type.currentText()
             byte_order = self.read_byte_order.currentText()
+            
+            # Convert user address to protocol address (default to 0-based for legacy operations)
+            try:
+                start_addr = self.convert_to_protocol_address(user_start_addr, operation_type, is_one_based=False)
+            except ValueError as e:
+                self._log(f"Address error: {e}")
+                return
             
             if start_addr + count - 1 > 65535:
                 self._log("Read operation blocked: address range exceeds 65535")
@@ -1534,11 +1581,11 @@ Unit ID: {unit_id}<br><br>
                 operation_name = "Input Registers"
             
             if raw_data is not None:
-                self._log(f"Read {len(raw_data)} {operation_name.lower()} from {start_addr}: {raw_data}")
-                self._display_raw_data(f"{operation_name}[{start_addr}:{start_addr+count-1}]", raw_data)
+                self._log(f"Read {len(raw_data)} {operation_name.lower()} from {user_start_addr} (protocol {start_addr}): {raw_data}")
+                self._display_raw_data(f"{operation_name}[{user_start_addr}:{user_start_addr+count-1}]", raw_data)
                 
                 # Update results table with formatted data
-                self._update_read_results_table(start_addr, raw_data, data_type, byte_order)
+                self._update_read_results_table(user_start_addr, raw_data, data_type, byte_order)
             else:
                 extra = f" ({self.modbus.last_error})" if getattr(self.modbus, "last_error", None) else ""
                 self._log(f"Failed to read {operation_name.lower()}{extra}")
@@ -1623,9 +1670,17 @@ Unit ID: {unit_id}<br><br>
 
         try:
             self._modbus_busy = True
-            addr = self.write_addr.value()
+            user_addr = self.write_addr.value()
             data_type = self.write_data_type.currentText()
             byte_order = self.write_byte_order.currentText()
+            
+            # Convert user address to protocol address (default to 0-based for legacy operations)
+            op_type = "coils" if operation_type == "coil" else "holding_registers"
+            try:
+                addr = self.convert_to_protocol_address(user_addr, op_type, is_one_based=False)
+            except ValueError as e:
+                self._log(f"Address error: {e}")
+                return
             
             success = False
             input_value = ""
@@ -1744,6 +1799,17 @@ Unit ID: {unit_id}<br><br>
             QMessageBox.warning(self, "No Result Selected", "Please select at least one write-mode result row.")
             return
 
+        invalid_rows = self.results_window.invalid_write_rows()
+        selected_row_numbers = {row["row"] + 1 for row in selected_rows}
+        selected_invalid_rows = [row for row in invalid_rows if row[0] in selected_row_numbers]
+        if selected_invalid_rows:
+            details = "\n".join(
+                f"Row {row_number} ({tag_name}): {message}"
+                for row_number, tag_name, message in selected_invalid_rows[:8]
+            )
+            QMessageBox.warning(self, "Invalid Write Value", details)
+            return
+
         tags_by_key = {self._tag_key(tag): tag for tag in self._get_monitoring_tags()}
         wrote_any = False
         was_monitoring = self.monitoring_active
@@ -1805,6 +1871,31 @@ Unit ID: {unit_id}<br><br>
     def _result_key(self, result_row):
         return (result_row["name"], result_row["type"], str(result_row["address"]))
 
+    def _validate_result_write_value(self, result_row):
+        tags_by_key = {self._tag_key(tag): tag for tag in self._get_monitoring_tags()}
+        tag = tags_by_key.get(self._result_key(result_row))
+        if not tag:
+            return False, "matching tag configuration was not found"
+        if tag["mode"] != "Write":
+            return False, "tag is not in Write mode"
+        if tag["type"] in ("Discrete Input", "Input Register"):
+            return False, f"{tag['type']} is read-only"
+
+        write_value = str(result_row.get("write_value", "")).strip()
+        if not write_value:
+            return False, "write value is empty"
+
+        try:
+            if tag["type"] == "Coil":
+                values = self._parse_coil_values(write_value)
+                self._fit_write_values(values, tag["count"])
+            else:
+                value_format = (tag.get("format") or "U16").strip().upper()
+                self._parse_register_values(write_value, value_format, tag["count"])
+        except ValueError as e:
+            return False, str(e)
+        return True, ""
+
     def _write_tag(self, tag):
         if tag["type"] in ("Discrete Input", "Input Register"):
             raise ValueError(f"{tag['type']} is read-only")
@@ -1814,13 +1905,14 @@ Unit ID: {unit_id}<br><br>
 
         if tag["type"] == "Coil":
             values = self._parse_coil_values(tag["write_value"])
+            protocol_offset = self._tag_user_address_to_offset(tag)
             if tag["count"] == 1:
                 desired_value = values[0]
                 current_value = self._read_tag_value(tag)
                 if current_value == desired_value:
                     return True, desired_value, "Skipped write; value already matches"
 
-                if not self.modbus.write_coil(tag["address"], desired_value):
+                if not self.modbus.write_coil(protocol_offset, desired_value):
                     return False, desired_value, "Write failed"
 
                 verified_value = self._read_tag_value(tag)
@@ -1833,7 +1925,7 @@ Unit ID: {unit_id}<br><br>
             if current_values == values:
                 return True, values, "Skipped write; values already match"
 
-            if not self.modbus.write_coils(tag["address"], values):
+            if not self.modbus.write_coils(protocol_offset, values):
                 return False, values, "Write failed"
 
             verified_values = self._read_tag_value(tag)
@@ -1843,6 +1935,7 @@ Unit ID: {unit_id}<br><br>
 
         value_format = (tag.get("format") or "U16").strip().upper()
         desired_registers = self._parse_register_values(tag["write_value"], value_format, tag["count"])
+        protocol_offset = self._tag_user_address_to_offset(tag)
 
         current_registers = self._read_tag_value(tag)
         if tag["count"] == 1 and not isinstance(current_registers, list):
@@ -1854,10 +1947,10 @@ Unit ID: {unit_id}<br><br>
             return True, self._format_written_value(tag, desired_registers), "Skipped write; value already matches"
 
         if tag["count"] == 1:
-            if not self.modbus.write_register(tag["address"], desired_registers[0]):
+            if not self.modbus.write_register(protocol_offset, desired_registers[0]):
                 return False, self._format_written_value(tag, desired_registers), "Write failed"
         else:
-            if not self.modbus.write_registers(tag["address"], desired_registers):
+            if not self.modbus.write_registers(protocol_offset, desired_registers):
                 return False, self._format_written_value(tag, desired_registers), "Write failed"
 
         verified_registers = self._read_tag_value(tag)
@@ -1874,11 +1967,16 @@ Unit ID: {unit_id}<br><br>
             )
         return True, self._format_written_value(tag, desired_registers), "Write verified"
 
-    def _read_tag_value(self, tag):
+    def _read_tag_value(self, tag, is_one_based=None):
+        try:
+            protocol_offset = self._tag_user_address_to_offset(tag)
+        except ValueError as e:
+            raise ValueError(f"Address error for tag {tag['name']}: {e}")
+        
         if tag["type"] == "Coil":
-            value = self.modbus.read_coils(tag["address"], tag["count"])
+            value = self.modbus.read_coils(protocol_offset, tag["count"])
         elif tag["type"] == "Holding Register":
-            value = self.modbus.read_registers(tag["address"], tag["count"])
+            value = self.modbus.read_registers(protocol_offset, tag["count"])
         else:
             raise ValueError(f"{tag['type']} cannot be written")
 
@@ -1894,6 +1992,8 @@ Unit ID: {unit_id}<br><br>
         values = []
         for raw_value in value_text.split(","):
             value = raw_value.strip().lower()
+            if not value:
+                continue
             if value in ("1", "true", "on"):
                 values.append(True)
             elif value in ("0", "false", "off"):
@@ -1924,8 +2024,13 @@ Unit ID: {unit_id}<br><br>
         registers = []
         for token in raw:
             if base_format == "HEX":
-                num = int(token, 16)
-                registers.append(num & 0xFFFF)
+                raw_hex = token[2:] if token.lower().startswith("0x") else token
+                if not raw_hex or any(ch not in "0123456789abcdefABCDEF" for ch in raw_hex):
+                    raise ValueError("HEX values must use hexadecimal digits only")
+                num = int(raw_hex, 16)
+                if num < 0 or num > 0xFFFF:
+                    raise ValueError("HEX out of range (0x0000..0xFFFF)")
+                registers.append(num)
                 continue
             if base_format == "S16":
                 num = int(token, 10)
@@ -1952,6 +2057,8 @@ Unit ID: {unit_id}<br><br>
             if base_format in ("U32", "S32", "F32"):
                 if base_format == "F32":
                     num = float(token)
+                    if not math.isfinite(num):
+                        raise ValueError("F32 must be a finite number")
                     u32 = int.from_bytes(struct.pack(">f", num), "big", signed=False)
                 else:
                     num = int(token, 10)
@@ -1974,8 +2081,7 @@ Unit ID: {unit_id}<br><br>
                     registers.append(lo)
                 continue
 
-            # Fallback to raw 16-bit ints
-            registers.append(int(token, 10) & 0xFFFF)
+            raise ValueError(f"unsupported data format: {value_format}")
 
         if len(registers) != register_count:
             raise ValueError(f"expected {register_count} register value(s), got {len(registers)}")
@@ -2004,11 +2110,15 @@ Unit ID: {unit_id}<br><br>
         return values
 
     def _validate_tag_request(self, tag, operation):
-        if tag["address"] < 0 or tag["address"] > 65535:
-            raise ValueError("address must be between 0 and 65535")
+        user_address = int(tag["address"])
+        maximum_address = 65536 if self.tag_address_one_based else 65535
+        if user_address < 1 or user_address > maximum_address:
+            raise ValueError(f"address must be between 1 and {maximum_address}")
+
+        start_offset = self._tag_user_address_to_offset(tag)
         if tag["count"] < 1:
             raise ValueError("count must be at least 1")
-        if tag["address"] + tag["count"] - 1 > 65535:
+        if start_offset + tag["count"] - 1 > 65535:
             raise ValueError("address range exceeds 65535")
 
         if operation == "read":
@@ -2054,11 +2164,12 @@ Unit ID: {unit_id}<br><br>
         self._modbus_busy = False
 
     def _operation_range(self, tag, operation):
+        start_offset = self._tag_user_address_to_offset(tag)
         return {
             "operation": operation,
             "space": tag["type"],
-            "start": tag["address"],
-            "end": tag["address"] + tag["count"] - 1,
+            "start": start_offset,
+            "end": start_offset + tag["count"] - 1,
             "tag": tag["name"],
         }
 
@@ -2129,7 +2240,7 @@ Unit ID: {unit_id}<br><br>
         seen = {}
         duplicates = []
         for tag in tags:
-            key = (tag["type"], int(tag["address"]))
+            key = (tag["type"], self._tag_user_address_to_offset(tag))
             if key in seen:
                 other = seen[key]
                 duplicates.append(
@@ -2148,8 +2259,8 @@ Unit ID: {unit_id}<br><br>
         for tag_type, group in by_type.items():
             ranges = []
             for tag in group:
-                start = int(tag["address"])
-                end = int(tag["address"]) + int(tag["count"]) - 1
+                start = self._tag_user_address_to_offset(tag)
+                end = start + int(tag["count"]) - 1
                 ranges.append((start, end, tag["name"]))
 
             ranges.sort(key=lambda x: (x[0], x[1]))
@@ -2191,6 +2302,8 @@ Unit ID: {unit_id}<br><br>
         self.monitoring_tag_table.setEnabled(enabled)
         self.add_tag_btn.setEnabled(enabled)
         self.remove_tag_btn.setEnabled(enabled and bool(self._get_selected_tag_rows()))
+        if hasattr(self, 'tag_offset_checkbox'):
+            self.tag_offset_checkbox.setEnabled(enabled)
 
     def _restart_monitoring_timers(self, read_interval):
         tags = self._get_monitoring_tags()
@@ -2322,13 +2435,14 @@ Unit ID: {unit_id}<br><br>
                 self.write_poll_timer.start(1000)
 
     def _read_tag_for_monitoring(self, tag):
+        protocol_offset = self._tag_user_address_to_offset(tag)
         if tag["type"] == "Coil":
-            return self.modbus.read_coils(tag["address"], tag["count"])
+            return self.modbus.read_coils(protocol_offset, tag["count"])
         if tag["type"] == "Discrete Input":
-            return self.modbus.read_discrete_inputs(tag["address"], tag["count"])
+            return self.modbus.read_discrete_inputs(protocol_offset, tag["count"])
         if tag["type"] == "Holding Register":
-            return self.modbus.read_registers(tag["address"], tag["count"])
-        return self.modbus.read_input_registers(tag["address"], tag["count"])
+            return self.modbus.read_registers(protocol_offset, tag["count"])
+        return self.modbus.read_input_registers(protocol_offset, tag["count"])
 
     def _format_monitoring_value(self, tag, value):
         if value is None:
@@ -2373,7 +2487,13 @@ Unit ID: {unit_id}<br><br>
 
         if value_format in ("U16", "BOOL"):
             if value_format == "BOOL":
-                return [bool(int(r)) for r in registers]
+                values = []
+                for r in registers:
+                    raw = int(r)
+                    if raw not in (0, 1):
+                        raise ValueError(f"BOOL register value must be 0 or 1, got {raw}")
+                    values.append(bool(raw))
+                return values
             return [int(r) & 0xFFFF for r in registers]
 
         if value_format in ("U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP"):
