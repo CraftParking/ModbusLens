@@ -173,11 +173,11 @@ class ModbusGUI(QMainWindow):
         tools_menu.addAction("Connection Profiles", self._manage_profiles)
         tools_menu.addAction("Data Templates", self._manage_templates)
         tools_menu.addAction("Scripting Console", self._show_scripting_console)
-        tools_menu.addSeparator()
-        tools_menu.addAction("Network Diagnostics", self._network_diagnostics)
         
         # Diagnostics menu
         diagnostics_menu = menubar.addMenu("&Diagnostics")
+        diagnostics_menu.addAction("Network Discovery & Diagnostics", self._network_diagnostics)
+        diagnostics_menu.addSeparator()
         diagnostics_menu.addAction("Results Log", self._show_diagnostics_results)
         diagnostics_menu.addAction("Communication Log", self._show_diagnostics_logs)
         diagnostics_menu.addAction("Raw Data", self._show_diagnostics_raw_data)
@@ -1017,6 +1017,8 @@ class ModbusGUI(QMainWindow):
             self.open_results_btn.clicked.connect(self._show_results_window)
         if hasattr(self, 'monitoring_table'):
             self.monitoring_table.itemChanged.connect(self._on_monitoring_table_item_changed)
+        if hasattr(self, 'monitoring_tag_table'):
+            self.monitoring_tag_table.itemChanged.connect(self._on_monitoring_table_item_changed)
 
         # Note: Read/Write operation signals removed - now handled in unified Modbus Address tab
         # Note: Data type change signals removed - now handled in unified Modbus Address tab
@@ -1033,6 +1035,10 @@ class ModbusGUI(QMainWindow):
         data_type = self._table_item_text(self.monitoring_table, row, 2).strip()
         address = self._table_item_text(self.monitoring_table, row, 3).strip()
         mode = self._table_item_text(self.monitoring_table, row, 1).strip()
+        tag_name = self._table_item_text(self.monitoring_tag_table, row, 0).strip()
+        data_type = self._table_item_text(self.monitoring_tag_table, row, 2).strip()
+        address = self._table_item_text(self.monitoring_tag_table, row, 3).strip()
+        mode = self._table_item_text(self.monitoring_tag_table, row, 1).strip()
         if not tag_name or not data_type or not address or mode != "Write":
             return
 
