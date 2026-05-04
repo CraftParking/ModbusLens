@@ -1,4 +1,3 @@
-import time
 import struct
 
 
@@ -80,7 +79,7 @@ class AdvancedDiagnostics:
                         try:
                             float_val = struct.unpack('>f', struct.pack('>I', combined))[0]
                             lines.append(f"Float32: {float_val}")
-                        except:
+                        except struct.error:
                             pass
             else:
                 lines.append(f"Data Type: Single Value")
@@ -242,7 +241,6 @@ class AdvancedDiagnostics:
     def toggle_advanced_diagnostics(self, checked):
         """Toggle advanced diagnostics mode."""
         self.advanced_diagnostics = checked
-        mode = "enabled" if checked else "disabled"
         
     def show_statistics_dialog(self, modbus_client=None):
         """Show statistics dialog."""

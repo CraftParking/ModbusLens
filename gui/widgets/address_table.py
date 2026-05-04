@@ -1,14 +1,14 @@
 from PySide6.QtWidgets import (
 
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
 
     QPushButton, QTableWidget, QHeaderView, QComboBox, QSpinBox,
 
-    QCheckBox, QGroupBox, QSplitter, QTextEdit, QTableWidgetItem, QSizePolicy, QAbstractItemView
+    QCheckBox, QGroupBox, QTextEdit, QTableWidgetItem, QSizePolicy, QAbstractItemView
 
 )
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 
 from PySide6.QtGui import QColor
 
@@ -831,58 +831,6 @@ class AddressTableWidget(QWidget):
 
             
 
-    def update_demo_data(self):
-
-        """Update table with demo data when not connected to Modbus device."""
-
-        import random
-
-        
-
-        for i in range(self.current_count):
-
-            # Generate random demo values based on function type
-
-            if "Coils" in self.current_function:
-
-                demo_value = random.choice([True, False])
-
-                display_value = "1" if demo_value else "0"
-
-            elif "Registers" in self.current_function:
-
-                demo_value = random.randint(0, 65535)
-
-                display_value = str(demo_value)
-
-            else:
-
-                demo_value = random.randint(0, 255)
-
-                display_value = str(demo_value)
-
-            
-
-            # Update value column (column 1)
-
-            value_item = self.table.item(i, 1)
-
-            if value_item:
-
-                value_item.setText(display_value)
-
-                value_item.setBackground(QColor("#E8F5E8"))  # Light green for demo data
-
-                
-
-            # Store current value with original address as key
-
-            original_address = self.current_start_address + i
-
-            self.current_data[original_address] = demo_value
-
-            
-
     def update_table_values(self, data):
 
         """Update table with new data."""
@@ -979,8 +927,6 @@ class AddressTableWidget(QWidget):
             
             if success:
                 self.log(f"Wrote {value} to address {address}")
-                # Update hex and binary representations
-                self.update_cell_formats(row, value)
             else:
                 self.log(f"Write failed to address {address}: {getattr(self.parent_window.modbus, 'last_error', 'Unknown error')}")
 
@@ -997,26 +943,6 @@ class AddressTableWidget(QWidget):
                 self.table.item(row, 1).setText(str(self.current_data[address]))
 
                 
-
-    def update_cell_formats(self, row, value):
-
-        """Update hex and binary format cells."""
-
-        hex_item = self.table.item(row, 2)
-
-        if hex_item:
-
-            hex_item.setText(f"0x{int(value):04X}" if isinstance(value, (int, bool)) else "")
-
-            
-
-        binary_item = self.table.item(row, 3)
-
-        if binary_item:
-
-            binary_item.setText(format(int(value), '016b') if isinstance(value, (int, bool)) else "")
-
-            
 
     def write_value_to_device(self, address, value):
         """Write a single value to the Modbus device."""
