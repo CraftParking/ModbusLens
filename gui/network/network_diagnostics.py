@@ -1290,7 +1290,7 @@ class NetworkDiagnosticsDialog:
             self.discover_btn.clicked.connect(lambda: self.discover_devices())
             button_layout.addWidget(self.discover_btn)
             
-            self.capture_btn = QPushButton("Capture Packets")
+            self.capture_btn = QPushButton("ARP Mode")
             self.capture_btn.setStyleSheet(self.parent._get_button_style())
             self.capture_btn.clicked.connect(lambda: self.capture_packets())
             button_layout.addWidget(self.capture_btn)
