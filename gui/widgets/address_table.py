@@ -360,10 +360,30 @@ class AddressTableWidget(QWidget):
 
             self.count_input.setEnabled(False)
 
+        self.update_monitoring_availability()
         self.ensure_address_mode_bounds()
         if hasattr(self, 'current_count') and self.table.rowCount() > 0:
             self.log(f"Function changed to {function_text}; rebuilding address table")
             self.create_address_table()
+
+    def is_read_function(self, function=None):
+        """Return True when the selected function supports live monitoring."""
+        function = function or self.function_combo.currentText()
+        return "Read" in function
+
+    def has_active_connection(self):
+        """Return True when the parent window has an active Modbus connection."""
+        if not self.parent_window or not getattr(self.parent_window, 'modbus', None):
+            return False
+        return bool(self.parent_window.modbus.is_connected())
+
+    def update_monitoring_availability(self):
+        """Enable live monitoring only for read functions on an active connection."""
+        can_monitor = self.has_active_connection() and self.is_read_function()
+        if not can_monitor and self.monitoring_checkbox.isChecked():
+            self.monitoring_checkbox.setChecked(False)
+        self.monitoring_checkbox.setEnabled(can_monitor)
+        self.interval_input.setEnabled(can_monitor and self.monitoring_checkbox.isChecked())
 
     def get_operation_type(self, function):
         """Return the Modbus operation type for address conversion."""
@@ -419,8 +439,16 @@ class AddressTableWidget(QWidget):
 
     def get_modbus_address(self, address: int, function: str) -> str:
 
-        """Return the user-facing address text without Modbus range prefixes."""
-        return str(address)
+        """Return the user-facing Modbus reference address for the selected function."""
+        operation_type = self.get_operation_type(function)
+        reference_bases = {
+            "coils": 0,
+            "discrete_inputs": 10000,
+            "input_registers": 30000,
+            "holding_registers": 40000,
+        }
+        base = reference_bases.get(operation_type, 0)
+        return f"{base + address:05d}"
 
     
 
@@ -544,37 +572,7 @@ class AddressTableWidget(QWidget):
 
         # Only enable if there's an active connection (check main window connection state)
 
-        if hasattr(self, 'parent_window') and self.parent_window:
-
-            # Check if the main window indicates a successful connection
-
-            if hasattr(self.parent_window, 'modbus') and self.parent_window.modbus:
-
-                # Check if connected (using the main window's connection state)
-
-                connect_btn_enabled = self.parent_window.connect_btn.isEnabled()
-
-                disconnect_btn_enabled = self.parent_window.disconnect_btn.isEnabled()
-
-                
-
-                # If disconnect button is enabled, we have an active connection
-
-                if disconnect_btn_enabled:
-
-                    self.monitoring_checkbox.setEnabled(True)
-
-                else:
-
-                    self.monitoring_checkbox.setEnabled(False)
-
-            else:
-
-                self.monitoring_checkbox.setEnabled(False)
-
-        else:
-
-            self.monitoring_checkbox.setEnabled(False)
+        self.update_monitoring_availability()
 
         
 
