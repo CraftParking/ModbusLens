@@ -1378,23 +1378,23 @@ class NetworkDiagnosticsDialog:
             # Stop packet capture
             if self.capturer and self.capturer.isRunning():
                 self.capturer.stop()
-                self.capturer.wait()
+                self.capturer.wait(1000)  # Wait with timeout
             
             # Stop device scanner
             if self.scanner and self.scanner.isRunning():
                 self.scanner.stop()
-                self.scanner.wait()
+                self.scanner.wait(1000)  # Wait with timeout
             
             # Stop Modbus prober
             if self.modbus_prober and self.modbus_prober.isRunning():
                 self.modbus_prober.stop()
-                self.modbus_prober.wait()
+                self.modbus_prober.wait(1000)  # Wait with timeout
             
             # Stop diagnostics worker
             if self.worker and self.worker.isRunning():
                 self.worker.should_stop = True
                 self.worker.quit()
-                self.worker.wait()
+                self.worker.wait(1000)  # Wait with timeout
             
             # Disable Modbus filter
             self.disable_modbus_filter()
@@ -1406,7 +1406,7 @@ class NetworkDiagnosticsDialog:
             
             # Re-enable buttons
             self.capture_btn.setEnabled(True)
-            self.capture_btn.setText("Capture Packets")
+            self.capture_btn.setText("ARP Mode")
             self.test_btn.setEnabled(True)
             self.test_btn.setText("Run Tests")
             self.discover_btn.setEnabled(True)
@@ -1865,7 +1865,7 @@ class NetworkDiagnosticsDialog:
         self.progress_bar.setVisible(False)
         self.progress_bar.setRange(0, 100)  # Reset to default range
         self.capture_btn.setEnabled(True)
-        self.capture_btn.setText("Capture Packets")
+        self.capture_btn.setText("ARP Mode")
         self.test_btn.setEnabled(True)
         self.discover_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)  # Disable stop button when complete
