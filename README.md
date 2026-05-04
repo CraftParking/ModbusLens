@@ -8,11 +8,13 @@
 <p align="center">
   <a href="#overview">Overview</a> |
   <a href="#highlights">Highlights</a> |
+  <a href="#how-it-works">How It Works</a> |
   <a href="#screenshots">Screenshots</a> |
   <a href="#features">Features</a> |
   <a href="#installation">Installation</a> |
   <a href="#usage">Usage</a> |
-  <a href="#roadmap">Roadmap</a>
+  <a href="#notes">Notes</a> |
+  <a href="#upcoming-features">Upcoming Features</a>
 </p>
 
 ---
@@ -41,6 +43,31 @@ It is designed not just to communicate with devices, but to **discover and troub
 
 - **Subnet Awareness**  
   Detects subnet mismatches and helps diagnose connectivity issues.
+
+---
+
+## How It Works
+
+### ARP-Based Discovery
+
+ModbusLens uses **ARP (Address Resolution Protocol)** to identify devices on your local network.
+
+- Each device has an **IP address** and a **MAC address**
+- ARP maps IP addresses to MAC addresses
+- The tool sends ARP requests across the subnet (e.g., 192.168.1.x)
+- Active devices respond with their MAC address
+- Devices are discovered **even if their IP is unknown beforehand**
+
+After discovery:
+- Each device is tested for **Modbus TCP communication**
+- Results are shown in real-time
+
+### Why this approach is useful
+
+- No need to manually scan IP ranges  
+- Helps locate unknown or misconfigured PLCs  
+- Works reliably within local networks  
+- Faster than traditional ping-only scanning  
 
 ---
 
@@ -145,12 +172,33 @@ python gui_main.py
 
 ## Notes
 
-- Advanced packet capture requires **Npcap**  
+- Advanced packet capture features require **Npcap (WinPcap-compatible driver)**  
+  Download: https://npcap.com/#download  
+
+- During installation, enable:  
+  - WinPcap API-compatible mode  
+  - Raw 802.11 support (optional but recommended)  
+
 - Restart the application after installing Npcap  
+
+- If you see errors like:
+  ```
+  No libpcap provider available
+  ```
+  or
+  ```
+  Scapy not available
+  ```
+  then:
+  - Install Npcap  
+  - Install Scapy using:
+    ```
+    pip install scapy
+    ```
 
 ---
 
-## Roadmap
+## Upcoming Features
 
 - Modbus RTU support  
 - Multi-device management  
