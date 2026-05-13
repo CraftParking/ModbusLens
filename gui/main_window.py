@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPalette
 
 # Add the gui directory to the path for relative imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -34,6 +34,157 @@ from app_paths import resource_path, app_data_dir
 __version__ = "1.1.0"
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
+
+
+def apply_fixed_light_theme(app):
+    """
+    Apply a fixed light theme to the Qt application.
+    This forces the application to always use a light theme regardless of OS settings.
+    """
+    # Force Fusion style for consistent appearance across platforms
+    app.setStyle("Fusion")
+    
+    # Create custom light palette with explicit colors
+    palette = QPalette()
+    
+    # Window colors
+    palette.setColor(QPalette.Window, QColor(240, 240, 240))  # Main window background
+    palette.setColor(QPalette.WindowText, QColor(0, 0, 0))    # Window text
+    
+    # Base colors (for text widgets, tables, etc.)
+    palette.setColor(QPalette.Base, QColor(255, 255, 255))    # Input widget background
+    palette.setColor(QPalette.AlternateBase, QColor(245, 245, 245))  # Alternate row colors
+    palette.setColor(QPalette.Text, QColor(0, 0, 0))           # Text color
+    palette.setColor(QPalette.BrightText, QColor(255, 255, 255))  # Bright text
+    
+    # Button colors
+    palette.setColor(QPalette.Button, QColor(240, 240, 240))  # Button background
+    palette.setColor(QPalette.ButtonText, QColor(0, 0, 0))    # Button text
+    
+    # Highlight colors (selection)
+    palette.setColor(QPalette.Highlight, QColor(0, 122, 204))  # Selection background
+    palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))  # Selected text
+    
+    # Tooltip colors
+    palette.setColor(QPalette.ToolTipBase, QColor(255, 255, 220))  # Tooltip background
+    palette.setColor(QPalette.ToolTipText, QColor(0, 0, 0))        # Tooltip text
+    
+    # Disabled colors
+    palette.setColor(QPalette.Disabled, QPalette.WindowText, QColor(128, 128, 128))
+    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(128, 128, 128))
+    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(128, 128, 128))
+    palette.setColor(QPalette.Disabled, QPalette.Highlight, QColor(200, 200, 200))
+    palette.setColor(QPalette.Disabled, QPalette.HighlightedText, QColor(128, 128, 128))
+    
+    # Apply the palette
+    app.setPalette(palette)
+    
+    # Store the style name before applying stylesheet (Qt quirk: stylesheet clears style name)
+    # This is a known Qt behavior - applying stylesheets can override the style name
+    # but the visual appearance of the Fusion style remains due to the palette
+    style_name = app.style().objectName()
+    
+    # Apply minimal stylesheet to ensure light theme consistency
+    # The palette does most of the work, this just ensures specific widgets behave correctly
+    app.setStyleSheet("""
+        /* Minimal light theme styling - palette does most of the work */
+        
+        QMainWindow {
+            background-color: #F0F0F0;
+        }
+        
+        QMenuBar {
+            background-color: #F0F0F0;
+            color: #000000;
+            border-bottom: 1px solid #CCCCCC;
+        }
+        
+        QMenuBar::item:selected {
+            background-color: #E0E0E0;
+        }
+        
+        QMenu {
+            background-color: #FFFFFF;
+            color: #000000;
+            border: 1px solid #CCCCCC;
+        }
+        
+        QMenu::item:selected {
+            background-color: #007ACC;
+            color: #FFFFFF;
+        }
+        
+        QStatusBar {
+            background-color: #F0F0F0;
+            color: #000000;
+            border-top: 1px solid #CCCCCC;
+        }
+        
+        QTabWidget::pane {
+            border: 1px solid #CCCCCC;
+            background-color: #FFFFFF;
+        }
+        
+        QTabBar::tab {
+            background-color: #F5F5F5;
+            color: #333333;
+            padding: 8px 16px;
+            border: 1px solid #CCCCCC;
+            margin-right: 2px;
+        }
+        
+        QTabBar::tab:selected {
+            background-color: #FFFFFF;
+            color: #333333;
+            border-bottom: 1px solid #FFFFFF;
+        }
+        
+        QTabBar::tab:hover {
+            background-color: #E8E8E8;
+        }
+        
+        QGroupBox {
+            font-weight: bold;
+            color: #222222;
+            border: 1px solid #CCCCCC;
+            margin-top: 1ex;
+            background-color: #F8F8F8;
+        }
+        
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            left: 10px;
+            padding: 0 10px 0 10px;
+        }
+        
+        QTableWidget {
+            background-color: #FFFFFF;
+            color: #000000;
+            border: 1px solid #CCCCCC;
+            gridline-color: #E0E0E0;
+        }
+        
+        QHeaderView::section {
+            background-color: #E9E9E9;
+            color: #000000;
+            border: 1px solid #CCCCCC;
+            padding: 5px;
+        }
+        
+        QTableWidget::item:selected {
+            background-color: #007ACC;
+            color: #FFFFFF;
+        }
+        
+        QTableWidget::item:selected:!active {
+            background-color: #B3D7FF;
+            color: #000000;
+        }
+    """)
+    
+    # Note: Despite the style name becoming empty after stylesheet application,
+    # the Fusion style visual characteristics are preserved through the palette
+    # and the minimal stylesheet ensures light theme consistency
 
 
 class ModbusGUI(QMainWindow):
@@ -571,27 +722,35 @@ class ModbusGUI(QMainWindow):
         return None 
  
     def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None, comment=""): 
-        row = self.monitoring_tag_table.rowCount() 
-        self.monitoring_tag_table.insertRow(row) 
+        # Get selected row for insertion, or append to end if none selected
+        selected_rows = self._get_selected_tag_rows()
+        if selected_rows:
+            # Insert at the first selected row position
+            insert_row = min(selected_rows)
+        else:
+            # Append to end if no row selected
+            insert_row = self.monitoring_tag_table.rowCount()
+        
+        self.monitoring_tag_table.insertRow(insert_row) 
 
         if value_format is None:
             value_format = "Bool" if tag_type in ("Coil", "Discrete Input") else "U16"
  
-        self.monitoring_tag_table.setCellWidget(row, 0, self._create_monitoring_tag_widget("lineedit", tag_name)) 
-        self.monitoring_tag_table.setCellWidget(row, 1, self._create_monitoring_tag_widget("mode_combo", mode)) 
+        self.monitoring_tag_table.setCellWidget(insert_row, 0, self._create_monitoring_tag_widget("lineedit", tag_name)) 
+        self.monitoring_tag_table.setCellWidget(insert_row, 1, self._create_monitoring_tag_widget("mode_combo", mode)) 
         type_widget = self._create_monitoring_tag_widget("type_combo", tag_type)
-        self.monitoring_tag_table.setCellWidget(row, 2, type_widget) 
+        self.monitoring_tag_table.setCellWidget(insert_row, 2, type_widget) 
  
         address_widget = self._create_monitoring_tag_widget("spinbox", address) 
-        self.monitoring_tag_table.setCellWidget(row, 3, address_widget) 
+        self.monitoring_tag_table.setCellWidget(insert_row, 3, address_widget) 
 
         count_widget = self._create_monitoring_tag_widget("spinbox", count) 
         count_widget.setRange(1, 125) 
-        self.monitoring_tag_table.setCellWidget(row, 4, count_widget) 
+        self.monitoring_tag_table.setCellWidget(insert_row, 4, count_widget) 
 
         format_widget = self._create_monitoring_tag_widget("format_combo", value_format)
-        self.monitoring_tag_table.setCellWidget(row, 5, format_widget)
-        self.monitoring_tag_table.setCellWidget(row, 6, self._create_monitoring_tag_widget("lineedit", comment)) 
+        self.monitoring_tag_table.setCellWidget(insert_row, 5, format_widget)
+        self.monitoring_tag_table.setCellWidget(insert_row, 6, self._create_monitoring_tag_widget("lineedit", comment)) 
 
         # Keep "count" valid for 32-bit formats (U32/S32/F32 require even register count).
         if hasattr(format_widget, "currentTextChanged"):
@@ -603,8 +762,12 @@ class ModbusGUI(QMainWindow):
         if hasattr(type_widget, "currentTextChanged"):
             type_widget.currentTextChanged.connect(self._on_monitoring_tag_address_or_type_changed)
 
-        self._coerce_monitoring_tag_count(row)
-        self._ensure_unique_monitoring_tag_address(row)
+        self._coerce_monitoring_tag_count(insert_row)
+        self._ensure_unique_monitoring_tag_address(insert_row)
+        
+        # Auto-select the newly inserted row
+        self.monitoring_tag_table.selectRow(insert_row)
+        self.monitoring_tag_table.setCurrentCell(insert_row, 0)
 
     def _on_tag_address_mode_changed(self, checked):
         """Toggle Tags between user-facing 1-based and protocol 0-based address input."""
@@ -2320,6 +2483,9 @@ def main():
         app.setApplicationName("ModbusLens") 
         app.setApplicationVersion(__version__) 
         app.setOrganizationName("ModbusLens") 
+        
+        # Apply fixed light theme before creating any widgets
+        apply_fixed_light_theme(app)
  
         warning = SafetyWarningDialog()
         if warning.should_show_again():
