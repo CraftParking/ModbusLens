@@ -1,12 +1,19 @@
 import struct
 
 
+MAX_TRACKED_RESPONSE_TIMES = 500
+
+
 class AdvancedDiagnostics:
     """Advanced diagnostics and statistics for Modbus communication troubleshooting."""
 
     def __init__(self):
         self.advanced_diagnostics = False
-        self.modbus_stats = {
+        self.modbus_stats = self._default_stats()
+
+    @staticmethod
+    def _default_stats():
+        return {
             'total_requests': 0,
             'successful_requests': 0,
             'failed_requests': 0,
@@ -82,9 +89,12 @@ class AdvancedDiagnostics:
                         except struct.error:
                             pass
             else:
-                lines.append(f"Data Type: Single Value")
+                lines.append("Data Type: Single Value")
                 lines.append(f"Raw Value: {data}")
-                lines.append(f"Hex: 0x{int(data):04X} ({int(data)})" if isinstance(data, int) else f"Value: {data}")
+                if isinstance(data, int):
+                    lines.append(f"Hex: 0x{data:04X} ({data})")
+                else:
+                    lines.append(f"Value: {data}")
         
         # Communication statistics
         lines.append("\nCOMMUNICATION STATS:")
@@ -228,27 +238,17 @@ class AdvancedDiagnostics:
 
     def reset_statistics(self):
         """Reset all Modbus statistics."""
-        self.modbus_stats = {
-            'total_requests': 0,
-            'successful_requests': 0,
-            'failed_requests': 0,
-            'exception_responses': 0,
-            'response_times': [],
-            'function_codes': {},
-            'exception_codes': {}
-        }
+        self.modbus_stats = self._default_stats()
 
     def toggle_advanced_diagnostics(self, checked):
         """Toggle advanced diagnostics mode."""
         self.advanced_diagnostics = checked
-        
-    def show_statistics_dialog(self, modbus_client=None):
+
+    def show_statistics_dialog(self, modbus_client=None, parent=None):
         """Show statistics dialog."""
-        # This method will be called from the main window
-        # We need to create the dialog here since we don't have access to parent
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QHBoxLayout, QPushButton
-        
-        stats_dialog = QDialog()
+
+        stats_dialog = QDialog(parent)
         stats_dialog.setWindowTitle("Modbus Communication Statistics")
         stats_dialog.setGeometry(300, 300, 600, 500)
         
@@ -282,8 +282,12 @@ class AdvancedDiagnostics:
         # Buttons
         button_layout = QHBoxLayout()
         
+        def reset_and_refresh():
+            self.reset_statistics()
+            stats_text.setPlainText(self.generate_statistics_report(modbus_client))
+
         reset_btn = QPushButton("Reset Statistics")
-        reset_btn.clicked.connect(self.reset_statistics)
+        reset_btn.clicked.connect(reset_and_refresh)
         button_layout.addWidget(reset_btn)
         
         close_btn = QPushButton("Close")
@@ -303,6 +307,8 @@ class AdvancedDiagnostics:
         
         if response_time is not None:
             self.modbus_stats['response_times'].append(response_time)
+            if len(self.modbus_stats['response_times']) > MAX_TRACKED_RESPONSE_TIMES:
+                self.modbus_stats['response_times'] = self.modbus_stats['response_times'][-MAX_TRACKED_RESPONSE_TIMES:]
         
         if function_code is not None:
             self.modbus_stats['function_codes'][function_code] = self.modbus_stats['function_codes'].get(function_code, 0) + 1
