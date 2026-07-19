@@ -116,8 +116,8 @@ class AddressTableWidget(QWidget):
         layout.addLayout(control_layout)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Address", "Value"])
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Address", "Value", "Hex"])
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -292,8 +292,8 @@ class AddressTableWidget(QWidget):
         self._building_table = True
         self.table.setRowCount(0)
         self.current_data.clear()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Address", "Value"])
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Address", "Value", "Hex"])
         self.table.setRowCount(count)
 
         is_write = "Write" in function
@@ -320,6 +320,10 @@ class AddressTableWidget(QWidget):
                 else:
                     value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(i, 1, value_item)
+
+            hex_item = QTableWidgetItem("")
+            hex_item.setFlags(hex_item.flags() & ~Qt.ItemIsEditable)
+            self.table.setItem(i, 2, hex_item)
 
         self._building_table = False
 
@@ -462,6 +466,10 @@ class AddressTableWidget(QWidget):
             self.log(f"Monitoring error: {e}")
             self.stop_monitoring()
 
+    @staticmethod
+    def _format_hex(value):
+        return f"0x{int(value) & 0xFFFF:04X}"
+
     def update_table_values(self, data):
         for i in range(min(len(data), self.current_count)):
             value = data[i] if isinstance(data, list) else data
@@ -470,6 +478,11 @@ class AddressTableWidget(QWidget):
             if value_item and not value_item.flags() & Qt.ItemIsEditable:
                 value_item.setText(str(int(value)))
                 value_item.setBackground(QColor("#E8F5E8"))
+
+            hex_item = self.table.item(i, 2)
+            if hex_item:
+                hex_item.setText(self._format_hex(value))
+                hex_item.setBackground(QColor("#E8F5E8"))
 
             original_address = self.current_start_address + i
             self.current_data[original_address] = value
@@ -500,6 +513,9 @@ class AddressTableWidget(QWidget):
 
             success = self.write_value_to_device(address, value)
             if success:
+                hex_item = self.table.item(row, 2)
+                if hex_item:
+                    hex_item.setText(self._format_hex(value))
                 self.log(f"Wrote {value} to address {address}")
             else:
                 self.log(f"Write failed to address {address}: {getattr(self.parent_window.modbus, 'last_error', 'Unknown error')}")

@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Import extracted components
 from widgets.status_indicator import StatusIndicator
 from widgets.address_table import AddressTableWidget
+from widgets.trend_widget import TrendWidget
 from diagnostics.advanced_diagnostics import AdvancedDiagnostics
 from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
 from monitoring.monitoring_manager import MonitoringManager
@@ -413,7 +414,10 @@ class ModbusGUI(QMainWindow):
 
         # Monitoring tab
         self._setup_monitoring_tab()
-        
+
+        # Trend tab
+        self._setup_trend_tab()
+
         # Connect tab change signal for interlock
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
@@ -425,6 +429,11 @@ class ModbusGUI(QMainWindow):
         # Create the address table widget
         self.address_table_widget = AddressTableWidget(self)
         self.tab_widget.addTab(self.address_table_widget, "Address Table")
+
+    def _setup_trend_tab(self):
+        """Setup Trend tab with live/historical multi-pen graphing."""
+        self.trend_widget = TrendWidget(self)
+        self.tab_widget.addTab(self.trend_widget, "Trend")
 
     def _setup_monitoring_tab(self):
         """Setup monitoring tab with real-time data display."""
@@ -518,9 +527,9 @@ class ModbusGUI(QMainWindow):
         tag_layout.setSpacing(10)
         tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
 
-        self.monitoring_tag_table = QTableWidget() 
-        self.monitoring_tag_table.setColumnCount(10) 
-        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Write Value", "Comment", "Timestamp"]) 
+        self.monitoring_tag_table = QTableWidget()
+        self.monitoring_tag_table.setColumnCount(11)
+        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp"])
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True) 
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.monitoring_tag_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -752,9 +761,12 @@ class ModbusGUI(QMainWindow):
         format_widget = self._create_monitoring_tag_widget("format_combo", value_format)
         self.monitoring_tag_table.setCellWidget(insert_row, 5, format_widget)
         self.monitoring_tag_table.setCellWidget(insert_row, 6, self._create_monitoring_tag_widget("lineedit", ""))  # Read Value
-        self.monitoring_tag_table.setCellWidget(insert_row, 7, self._create_monitoring_tag_widget("lineedit", ""))  # Write Value
-        self.monitoring_tag_table.setCellWidget(insert_row, 8, self._create_monitoring_tag_widget("lineedit", comment))  # Comment
-        self.monitoring_tag_table.setCellWidget(insert_row, 9, self._create_monitoring_tag_widget("lineedit", ""))  # Timestamp 
+        raw_hex_widget = self._create_monitoring_tag_widget("lineedit", "")
+        raw_hex_widget.setReadOnly(True)
+        self.monitoring_tag_table.setCellWidget(insert_row, 7, raw_hex_widget)  # Raw (Hex)
+        self.monitoring_tag_table.setCellWidget(insert_row, 8, self._create_monitoring_tag_widget("lineedit", ""))  # Write Value
+        self.monitoring_tag_table.setCellWidget(insert_row, 9, self._create_monitoring_tag_widget("lineedit", comment))  # Comment
+        self.monitoring_tag_table.setCellWidget(insert_row, 10, self._create_monitoring_tag_widget("lineedit", ""))  # Timestamp
 
         # Keep "count" valid for 32-bit formats (U32/S32/F32 require even register count).
         if hasattr(format_widget, "currentTextChanged"):
@@ -1270,7 +1282,7 @@ Unit ID: {unit_id}<br><br>
         tags_to_write = []
         for row in selected_rows:
             mode_widget = self.monitoring_tag_table.cellWidget(row, 1)
-            write_value_widget = self.monitoring_tag_table.cellWidget(row, 7)
+            write_value_widget = self.monitoring_tag_table.cellWidget(row, 8)
             
             if not mode_widget or not write_value_widget:
                 continue
@@ -1292,8 +1304,8 @@ Unit ID: {unit_id}<br><br>
             address_widget = self.monitoring_tag_table.cellWidget(row, 3)
             count_widget = self.monitoring_tag_table.cellWidget(row, 4)
             format_widget = self.monitoring_tag_table.cellWidget(row, 5)
-            comment_widget = self.monitoring_tag_table.cellWidget(row, 8)
-            
+            comment_widget = self.monitoring_tag_table.cellWidget(row, 9)
+
             if not all([name_widget, type_widget, address_widget, count_widget, format_widget, comment_widget]):
                 continue
                 
@@ -1339,12 +1351,12 @@ Unit ID: {unit_id}<br><br>
                         wrote_any = True
                         timestamp = time.strftime("%H:%M:%S")
                         # Update the Write Value column in the integrated table
-                        write_value_widget = self.monitoring_tag_table.cellWidget(tag["row"], 7)
+                        write_value_widget = self.monitoring_tag_table.cellWidget(tag["row"], 8)
                         if write_value_widget:
                             write_value_widget.setText(str(written_value))
-                        
+
                         # Update timestamp
-                        timestamp_widget = self.monitoring_tag_table.cellWidget(tag["row"], 9)
+                        timestamp_widget = self.monitoring_tag_table.cellWidget(tag["row"], 10)
                         if timestamp_widget:
                             timestamp_widget.setText(timestamp)
                             
@@ -1517,8 +1529,11 @@ Unit ID: {unit_id}<br><br>
                     registers.append(1)
                 elif lowered in ("0", "false", "off"):
                     registers.append(0)
+                elif all(ch in "01" for ch in token) and 1 <= len(token) <= 16:
+                    # A full 16-bit pattern (e.g. 0000000000000101) sets individual bits directly
+                    registers.append(int(token, 2))
                 else:
-                    raise ValueError("BOOL values must be 0/1, true/false, or on/off")
+                    raise ValueError("BOOL values must be 0/1, true/false, on/off, or a bit pattern like 0000000000000101")
                 continue
 
             if base_format in ("U32", "S32", "F32"):
@@ -1818,7 +1833,7 @@ Unit ID: {unit_id}<br><br>
         try:
             for tag in tags:
                 try:
-                    self._validate_tag_request(tag, "write")
+                    self._validate_tag_request(tag, "read")
                     if not self._begin_modbus_operation(tag, "read"):
                         self._log(f"Safety interlock: skipped write-tag read for {tag['name']} because the range is busy")
                         continue
@@ -1829,9 +1844,10 @@ Unit ID: {unit_id}<br><br>
                         self._end_modbus_operation(tag, "read")
 
                     display_value = self._format_monitoring_value(tag, value)
+                    raw_hex = self.monitoring_manager.format_raw_hex(tag, value)
                     self._add_monitoring_row(
                         tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                        tag["comment"], timestamp
+                        tag["comment"], timestamp, raw_hex
                     )
                 except Exception as e:
                     poll_failed = True
@@ -1910,13 +1926,9 @@ Unit ID: {unit_id}<br><br>
 
         if value_format in ("U16", "BOOL"):
             if value_format == "BOOL":
-                values = []
-                for r in registers:
-                    raw = int(r)
-                    if raw not in (0, 1):
-                        raise ValueError(f"BOOL register value must be 0 or 1, got {raw}")
-                    values.append(bool(raw))
-                return values
+                # A register is a 16-bit word, not a single flag; show every bit (bit15..bit0)
+                # so the user can read individual status/alarm bits out of it.
+                return [format(int(r) & 0xFFFF, "016b") for r in registers]
             return [int(r) & 0xFFFF for r in registers]
 
         if value_format in ("U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP"):
@@ -1943,10 +1955,9 @@ Unit ID: {unit_id}<br><br>
 
         return [int(r) & 0xFFFF for r in registers]
 
-    def _add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp):
-        """Add or update a tag row in the monitoring results table."""
-        # Delegate to the monitoring manager
-        self.monitoring_manager.add_monitoring_row(tag_name, mode, data_type, address, read_value, write_value, comment, timestamp)
+    def _add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex=""):
+        """Add or update a tag row in the integrated Tags table."""
+        self.monitoring_manager.add_monitoring_row(tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex)
 
     def _check_connection(self):
         """Check if connected to Modbus server."""

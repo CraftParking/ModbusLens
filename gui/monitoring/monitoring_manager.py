@@ -25,10 +25,11 @@ class MonitoringManager:
             count_widget = self.parent.monitoring_tag_table.cellWidget(row, 4)
             format_widget = self.parent.monitoring_tag_table.cellWidget(row, 5)
             read_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 6)
-            write_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 7)
-            comment_widget = self.parent.monitoring_tag_table.cellWidget(row, 8)
+            raw_hex_widget = self.parent.monitoring_tag_table.cellWidget(row, 7)
+            write_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 8)
+            comment_widget = self.parent.monitoring_tag_table.cellWidget(row, 9)
 
-            if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, format_widget, read_value_widget, write_value_widget, comment_widget)):
+            if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, format_widget, read_value_widget, raw_hex_widget, write_value_widget, comment_widget)):
                 continue
 
             name = name_widget.text().strip()
@@ -59,7 +60,7 @@ class MonitoringManager:
             })
         return tags
 
-    def add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp):
+    def add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex=""):
         """Add or update a tag row in the integrated Tags table."""
         key = (tag_name, data_type, str(address))
         
@@ -96,18 +97,23 @@ class MonitoringManager:
             if read_value_widget:
                 read_value_widget.setText(read_value)
 
+        if raw_hex:
+            raw_hex_widget = target_table.cellWidget(target_row, 7)
+            if raw_hex_widget:
+                raw_hex_widget.setText(raw_hex)
+
         # Only touch the write column if we have something meaningful to show,
         # so polling doesn't stomp on a value the user is currently typing.
         if write_value:
-            write_value_widget = target_table.cellWidget(target_row, 7)
+            write_value_widget = target_table.cellWidget(target_row, 8)
             if write_value_widget:
                 write_value_widget.setText(write_value)
         elif initial_write_value:
-            write_value_widget = target_table.cellWidget(target_row, 7)
+            write_value_widget = target_table.cellWidget(target_row, 8)
             if write_value_widget and not write_value_widget.text():
                 write_value_widget.setText(initial_write_value)
 
-        timestamp_widget = target_table.cellWidget(target_row, 9)
+        timestamp_widget = target_table.cellWidget(target_row, 10)
         if timestamp_widget:
             timestamp_widget.setText(timestamp)
 
@@ -163,6 +169,15 @@ class MonitoringManager:
         else:
             return ", ".join(str(v) for v in decoded)
 
+    def format_raw_hex(self, tag, value):
+        """Format the raw register/bit value(s), independent of the tag's decoded format."""
+        if value is None:
+            return ""
+        values = value[: tag["count"]] if isinstance(value, list) else [value]
+        if tag["type"] in ("Coil", "Discrete Input"):
+            return ", ".join("1" if bool(v) else "0" for v in values)
+        return ", ".join(f"0x{int(v) & 0xFFFF:04X}" for v in values)
+
     def update_monitored_data(self):
         """Update monitored data in the table."""
         if not self.parent.modbus or not self.parent.monitoring_active:
@@ -205,13 +220,14 @@ class MonitoringManager:
                         break
 
                     display_value = self.format_monitoring_value(tag, value)
-                    
+                    raw_hex = self.format_raw_hex(tag, value)
+
                     # Display raw data in diagnostics for Tags monitoring
                     self.parent._display_raw_data(f"Tag[{tag['name']}]", value)
-                    
+
                     self.add_monitoring_row(
                         tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                        tag["comment"], timestamp
+                        tag["comment"], timestamp, raw_hex
                     )
                 except Exception as e:
                     poll_failed = True
