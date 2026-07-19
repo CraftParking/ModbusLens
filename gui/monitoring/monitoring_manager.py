@@ -1,3 +1,5 @@
+import csv
+import os
 import time
 from PySide6.QtWidgets import QTableWidget, QHeaderView, QAbstractItemView, QTableWidgetItem
 
@@ -14,6 +16,37 @@ class MonitoringManager:
         self._monitoring_max_failures = 3
         self._write_poll_in_progress = False
         self.tag_alarms = {}  # row index -> alarm config dict
+        self._log_file = None
+        self._log_writer = None
+
+    def start_csv_logging(self, file_path):
+        """Start appending one row per poll tick to file_path."""
+        is_new_or_empty = True
+        try:
+            is_new_or_empty = os.path.getsize(file_path) == 0
+        except OSError:
+            pass  # file doesn't exist yet -- treat as new
+
+        self._log_file = open(file_path, "a", newline="", encoding="utf-8")
+        self._log_writer = csv.writer(self._log_file)
+        if is_new_or_empty:
+            self._log_writer.writerow(["Timestamp", "Tag Name", "Mode", "Type", "Address", "Value", "Raw Hex"])
+            self._log_file.flush()
+
+    def stop_csv_logging(self):
+        if self._log_file:
+            self._log_file.close()
+        self._log_file = None
+        self._log_writer = None
+
+    def is_logging(self):
+        return self._log_writer is not None
+
+    def _log_row(self, tag, timestamp, value_text, raw_hex):
+        if not self._log_writer:
+            return
+        self._log_writer.writerow([timestamp, tag["name"], tag["mode"], tag["type"], tag["address"], value_text, raw_hex])
+        self._log_file.flush()
 
     def handle_row_inserted(self, row):
         """Keep tag_alarms aligned with table rows after a new row is inserted at `row`."""
@@ -241,6 +274,7 @@ class MonitoringManager:
         self.parent.monitoring_timer.stop()
         poll_failed = False
         timestamp = time.strftime("%H:%M:%S")
+        log_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         try:
             for tag in tags:
                 try:
@@ -260,6 +294,7 @@ class MonitoringManager:
                             tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "",
                             tag["comment"], timestamp
                         )
+                        self._log_row(tag, log_timestamp, "ERROR", "")
                         extra = ""
                         if self.parent.modbus is not None and getattr(self.parent.modbus, "last_error", None):
                             extra = f" ({self.parent.modbus.last_error})"
@@ -277,6 +312,7 @@ class MonitoringManager:
                         tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
                         tag["comment"], timestamp, raw_hex, in_alarm
                     )
+                    self._log_row(tag, log_timestamp, display_value, raw_hex)
                 except Exception as e:
                     poll_failed = True
                     self.parent._log(f"Monitoring error for {tag['name']}: {e}")
