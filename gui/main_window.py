@@ -483,6 +483,11 @@ class ModbusGUI(QMainWindow):
         self.write_selected_btn.setMinimumWidth(120)
         buttons_layout.addWidget(self.write_selected_btn)
 
+        self.tags_log_btn = QPushButton("Log to CSV")
+        self.tags_log_btn.setStyleSheet(self._get_button_style())
+        self.tags_log_btn.setMinimumWidth(120)
+        buttons_layout.addWidget(self.tags_log_btn)
+
         # Add stretch to push interval controls to the right
         buttons_layout.addStretch()
 
@@ -999,6 +1004,28 @@ class ModbusGUI(QMainWindow):
             self.tag_stop_monitoring_btn.clicked.connect(self._stop_monitoring)
         if hasattr(self, 'write_selected_btn'):
             self.write_selected_btn.clicked.connect(self._write_selected_tags)
+        if hasattr(self, 'tags_log_btn'):
+            self.tags_log_btn.clicked.connect(self._toggle_tags_logging)
+
+    def _toggle_tags_logging(self):
+        """Start or stop CSV logging of every Tags poll tick."""
+        if self.monitoring_manager.is_logging():
+            self.monitoring_manager.stop_csv_logging()
+            self.tags_log_btn.setText("Log to CSV")
+            self._log("Stopped logging Tags data to CSV")
+            return
+
+        from PySide6.QtWidgets import QFileDialog
+        file_path, _ = QFileDialog.getSaveFileName(self, "Log Tags to CSV", "tags_log.csv", "CSV Files (*.csv)")
+        if not file_path:
+            return
+        try:
+            self.monitoring_manager.start_csv_logging(file_path)
+        except OSError as e:
+            QMessageBox.warning(self, "Logging Failed", f"Could not open file for logging: {e}")
+            return
+        self.tags_log_btn.setText("Stop Logging")
+        self._log(f"Logging Tags data to {file_path}")
 
     def _show_connection_settings(self):
         """Show the connection settings dialog."""

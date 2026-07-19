@@ -1,3 +1,7 @@
+import csv
+import os
+import time
+
 from PySide6.QtCore import Qt, QTimer, QDateTime
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
@@ -302,6 +306,9 @@ class TrendWidget(QWidget):
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self._poll_pens)
 
+        self._log_file = None
+        self._log_writer = None
+
         self._setup_ui()
         self._apply_graph_settings()
 
@@ -361,6 +368,11 @@ class TrendWidget(QWidget):
         toolbar.addWidget(self.stop_btn)
 
         toolbar.addStretch()
+
+        self.log_btn = QPushButton("Log to CSV")
+        self.log_btn.setStyleSheet(self._button_style())
+        self.log_btn.clicked.connect(self._toggle_logging)
+        toolbar.addWidget(self.log_btn)
 
         self.print_btn = QPushButton("Print")
         self.print_btn.setStyleSheet(self._button_style())
@@ -581,6 +593,7 @@ class TrendWidget(QWidget):
         now = QDateTime.currentDateTime()
         now_ms = now.toMSecsSinceEpoch()
         got_point = False
+        log_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
         for pen in self.pens:
             if not (pen.is_active() and pen.series is not None):
@@ -591,6 +604,7 @@ class TrendWidget(QWidget):
             pen.series.append(now_ms, value)
             self._trim_series(pen.series)
             got_point = True
+            self._log_pen_value(pen, log_timestamp, value)
 
         if got_point:
             self._update_y_range()
@@ -643,6 +657,41 @@ class TrendWidget(QWidget):
             hi += 1
         margin = (hi - lo) * 0.1
         self.axis_y.setRange(lo - margin, hi + margin)
+
+    # --- Logging ---
+
+    def _toggle_logging(self):
+        if self._log_writer is not None:
+            self._log_file.close()
+            self._log_file = None
+            self._log_writer = None
+            self.log_btn.setText("Log to CSV")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(self, "Log Trend to CSV", "trend_log.csv", "CSV Files (*.csv)")
+        if not file_path:
+            return
+        try:
+            is_new_or_empty = True
+            try:
+                is_new_or_empty = os.path.getsize(file_path) == 0
+            except OSError:
+                pass
+            self._log_file = open(file_path, "a", newline="", encoding="utf-8")
+            self._log_writer = csv.writer(self._log_file)
+            if is_new_or_empty:
+                self._log_writer.writerow(["Timestamp", "Pen Name", "Type", "Address", "Value"])
+                self._log_file.flush()
+        except OSError as e:
+            QMessageBox.warning(self, "Logging Failed", f"Could not open file for logging: {e}")
+            return
+        self.log_btn.setText("Stop Logging")
+
+    def _log_pen_value(self, pen, timestamp, value):
+        if not self._log_writer:
+            return
+        self._log_writer.writerow([timestamp, pen.name, pen.type, pen.address, value])
+        self._log_file.flush()
 
     # --- Print ---
 
