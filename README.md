@@ -32,6 +32,7 @@
 - Continuous live scanning (no repeated manual scans)
 - Clean, non-spam device listing
 - Integrated diagnostics + communication
+- Live/historical trend graphing with up to 20 pens
 
 ---
 
@@ -83,14 +84,23 @@
 
 ### Data Handling
 - BOOL, U16/S16, U32/S32, F32, HEX support  
+- BOOL on a register shows the full 16-bit pattern, not just a single flag  
 - Word order handling (*_SWAP)  
-- Improved 0-based / 1-based addressing  
+- 0-based / 1-based addressing, selectable per Address Table range and per Tag  
 
 ### Monitoring
-- Real-time tag monitoring  
-- Detached results window  
+- Real-time tag monitoring, with Read Value/Write Value/Timestamp built into the same Tags table  
+- Insert new tags anywhere in the list, not just at the end  
+- Write to a tag while monitoring stays active  
 - CSV import/export  
 - Improved stability  
+
+### Trend
+- Up to 20 pens, each bound to its own address/type/format  
+- Live mode (follows the current time) or Historical mode (view stays put while data keeps recording)  
+- Adjustable time window, zoom in/out  
+- Graph Properties: axis titles, background/axis/grid colors, grid on/off, Y-axis auto or manual range  
+- Print to PNG or PDF  
 
 ### Network Diagnostics
 - ARP-based discovery  
@@ -98,11 +108,12 @@
 - Packet capture (Npcap required)  
 - Device filtering (Modbus only)  
 
-### UI Improvements (v1.1.0)
+### UI Improvements
 - Cleaner layout with compact connection bar  
 - Improved status indicators  
 - Better spacing and readability  
-- More focused workspace (Address/Tags priority)  
+- More focused workspace (Address/Tags/Trend priority)  
+- Forces a light theme even when Windows is set to dark mode  
 
 ---
 
@@ -141,7 +152,7 @@ pip install scapy
 
 - Modbus RTU support  
 - Multi-device management  
-- Graphical visualization (charts/trends)  
+- Modbus server/slave mode  
 - Data logging  
 - Scripting & automation  
 
