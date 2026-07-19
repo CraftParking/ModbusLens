@@ -13,6 +13,52 @@ class MonitoringManager:
         self._monitoring_failure_count = 0
         self._monitoring_max_failures = 3
         self._write_poll_in_progress = False
+        self.tag_alarms = {}  # row index -> alarm config dict
+
+    def handle_row_inserted(self, row):
+        """Keep tag_alarms aligned with table rows after a new row is inserted at `row`."""
+        self.tag_alarms = {(r + 1 if r >= row else r): cfg for r, cfg in self.tag_alarms.items()}
+
+    def handle_row_removed(self, row):
+        """Keep tag_alarms aligned with table rows after the row at `row` is removed."""
+        self.tag_alarms.pop(row, None)
+        self.tag_alarms = {(r - 1 if r > row else r): cfg for r, cfg in self.tag_alarms.items()}
+
+    def check_alarm(self, tag, value):
+        """Return True if this tag's current value violates its configured alarm."""
+        alarm = self.tag_alarms.get(tag["row"])
+        if not alarm or not alarm.get("enabled") or value is None:
+            return False
+
+        is_bool_like = tag["type"] in ("Coil", "Discrete Input") or (tag.get("format") or "").strip().upper() == "BOOL"
+        if is_bool_like:
+            raw = value[0] if isinstance(value, list) else value
+            return bool(raw) == alarm.get("bool_state", True)
+
+        registers = value[: tag["count"]] if isinstance(value, list) else [value]
+        value_format = (tag.get("format") or "U16").strip().upper()
+        try:
+            decoded = self.parent._decode_register_values(registers, value_format)
+            numeric = float(decoded[0] if isinstance(decoded, list) else decoded)
+        except (ValueError, TypeError):
+            return False
+
+        if alarm.get("high_enabled") and numeric > alarm.get("high", float("inf")):
+            return True
+        if alarm.get("low_enabled") and numeric < alarm.get("low", float("-inf")):
+            return True
+        return False
+
+    def _apply_alarm_style(self, widget, in_alarm):
+        if widget is None:
+            return
+        if in_alarm:
+            widget.setStyleSheet(
+                "background-color: #FFCDD2; color: #B71C1C; font-weight: bold; "
+                "border: 1px solid #E57373; padding: 5px;"
+            )
+        else:
+            widget.setStyleSheet(self.parent._get_input_style())
 
     def get_monitoring_tags(self):
         """Get all configured monitoring tags from the tag table."""
@@ -60,7 +106,7 @@ class MonitoringManager:
             })
         return tags
 
-    def add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex=""):
+    def add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex="", in_alarm=False):
         """Add or update a tag row in the integrated Tags table."""
         key = (tag_name, data_type, str(address))
         
@@ -96,6 +142,7 @@ class MonitoringManager:
             read_value_widget = target_table.cellWidget(target_row, 6)
             if read_value_widget:
                 read_value_widget.setText(read_value)
+                self._apply_alarm_style(read_value_widget, in_alarm)
 
         if raw_hex:
             raw_hex_widget = target_table.cellWidget(target_row, 7)
@@ -221,13 +268,14 @@ class MonitoringManager:
 
                     display_value = self.format_monitoring_value(tag, value)
                     raw_hex = self.format_raw_hex(tag, value)
+                    in_alarm = self.check_alarm(tag, value)
 
                     # Display raw data in diagnostics for Tags monitoring
                     self.parent._display_raw_data(f"Tag[{tag['name']}]", value)
 
                     self.add_monitoring_row(
                         tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                        tag["comment"], timestamp, raw_hex
+                        tag["comment"], timestamp, raw_hex, in_alarm
                     )
                 except Exception as e:
                     poll_failed = True

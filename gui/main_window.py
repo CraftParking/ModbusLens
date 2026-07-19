@@ -9,9 +9,9 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QTableWidget,
-    QComboBox, QSpinBox, QTabWidget, QGroupBox,
+    QComboBox, QSpinBox, QDoubleSpinBox, QTabWidget, QGroupBox,
     QApplication, QMessageBox, QDialog, QCheckBox,
-    QAbstractItemView, QFrame, QGridLayout, QSizePolicy
+    QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPalette
@@ -530,8 +530,10 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table = QTableWidget()
         self.monitoring_tag_table.setColumnCount(11)
         self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp"])
-        self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True) 
+        self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.monitoring_tag_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.monitoring_tag_table.customContextMenuRequested.connect(self._show_tag_context_menu)
         self.monitoring_tag_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.monitoring_tag_table.setMinimumHeight(200)  # Ensure minimum height
         self.monitoring_tag_table.setMaximumHeight(16777215)  # Remove maximum height constraint
@@ -741,7 +743,8 @@ class ModbusGUI(QMainWindow):
             # Append to end if no row selected
             insert_row = self.monitoring_tag_table.rowCount()
         
-        self.monitoring_tag_table.insertRow(insert_row) 
+        self.monitoring_tag_table.insertRow(insert_row)
+        self.monitoring_manager.handle_row_inserted(insert_row)
 
         if value_format is None:
             value_format = "Bool" if tag_type in ("Coil", "Discrete Input") else "U16"
@@ -929,7 +932,31 @@ class ModbusGUI(QMainWindow):
         selected_rows = sorted(self._get_selected_tag_rows(), reverse=True)
         for row in selected_rows:
             self.monitoring_tag_table.removeRow(row)
+            self.monitoring_manager.handle_row_removed(row)
         self._update_tag_buttons_state()
+
+    def _show_tag_context_menu(self, pos):
+        row = self.monitoring_tag_table.rowAt(pos.y())
+        if row < 0:
+            return
+        menu = QMenu(self)
+        alarm_action = menu.addAction("Configure Alarm...")
+        action = menu.exec(self.monitoring_tag_table.viewport().mapToGlobal(pos))
+        if action == alarm_action:
+            self._configure_tag_alarm(row)
+
+    def _configure_tag_alarm(self, row):
+        tags_by_row = {tag["row"]: tag for tag in self._get_monitoring_tags()}
+        tag = tags_by_row.get(row)
+        if not tag:
+            QMessageBox.warning(self, "No Tag", "This row doesn't have a configured tag yet.")
+            return
+
+        existing = self.monitoring_manager.tag_alarms.get(row)
+        dialog = AlarmConfigDialog(tag, existing, self)
+        if dialog.exec() == QDialog.Accepted:
+            self.monitoring_manager.tag_alarms[row] = dialog.values()
+            self._log(f"Alarm configured for {tag['name']}")
 
     def _remove_all_monitoring_tags(self):
         """Remove all tags from the monitoring table."""
@@ -942,6 +969,7 @@ class ModbusGUI(QMainWindow):
         )
         if reply == QMessageBox.Yes:
             self.monitoring_tag_table.setRowCount(0)
+            self.monitoring_manager.tag_alarms.clear()
             self._update_tag_buttons_state()
             self._log("All tags removed")
 
@@ -2298,6 +2326,72 @@ class SafetyWarningDialog(QDialog):
                 border: 1px solid #C8C8C8;
             }}
         """
+
+
+class AlarmConfigDialog(QDialog):
+    """Configure a High/Low (or ON/OFF) alarm threshold for one Tags row."""
+
+    def __init__(self, tag, existing_alarm, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Configure Alarm - {tag['name']}")
+        existing_alarm = existing_alarm or {}
+        self.is_bool_like = tag["type"] in ("Coil", "Discrete Input") or (tag.get("format") or "").strip().upper() == "BOOL"
+
+        layout = QVBoxLayout(self)
+
+        self.enable_checkbox = QCheckBox("Enable Alarm")
+        self.enable_checkbox.setChecked(existing_alarm.get("enabled", False))
+        layout.addWidget(self.enable_checkbox)
+
+        if self.is_bool_like:
+            state_row = QHBoxLayout()
+            state_row.addWidget(QLabel("Alarm when value is:"))
+            self.state_combo = QComboBox()
+            self.state_combo.addItems(["ON / True", "OFF / False"])
+            self.state_combo.setCurrentIndex(0 if existing_alarm.get("bool_state", True) else 1)
+            state_row.addWidget(self.state_combo)
+            layout.addLayout(state_row)
+        else:
+            high_row = QHBoxLayout()
+            self.high_enable = QCheckBox("High Limit:")
+            self.high_enable.setChecked(existing_alarm.get("high_enabled", False))
+            high_row.addWidget(self.high_enable)
+            self.high_spin = QDoubleSpinBox()
+            self.high_spin.setRange(-1e9, 1e9)
+            self.high_spin.setValue(existing_alarm.get("high", 0.0))
+            high_row.addWidget(self.high_spin)
+            layout.addLayout(high_row)
+
+            low_row = QHBoxLayout()
+            self.low_enable = QCheckBox("Low Limit:")
+            self.low_enable.setChecked(existing_alarm.get("low_enabled", False))
+            low_row.addWidget(self.low_enable)
+            self.low_spin = QDoubleSpinBox()
+            self.low_spin.setRange(-1e9, 1e9)
+            self.low_spin.setValue(existing_alarm.get("low", 0.0))
+            low_row.addWidget(self.low_spin)
+            layout.addLayout(low_row)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(ok_btn)
+        button_row.addWidget(cancel_btn)
+        layout.addLayout(button_row)
+
+    def values(self):
+        result = {"enabled": self.enable_checkbox.isChecked()}
+        if self.is_bool_like:
+            result["bool_state"] = self.state_combo.currentIndex() == 0
+        else:
+            result["high_enabled"] = self.high_enable.isChecked()
+            result["high"] = self.high_spin.value()
+            result["low_enabled"] = self.low_enable.isChecked()
+            result["low"] = self.low_spin.value()
+        return result
 
 
 class ConnectionSettingsDialog(QDialog):
