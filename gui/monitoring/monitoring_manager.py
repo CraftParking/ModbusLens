@@ -24,9 +24,11 @@ class MonitoringManager:
             address_widget = self.parent.monitoring_tag_table.cellWidget(row, 3)
             count_widget = self.parent.monitoring_tag_table.cellWidget(row, 4)
             format_widget = self.parent.monitoring_tag_table.cellWidget(row, 5)
-            comment_widget = self.parent.monitoring_tag_table.cellWidget(row, 6)
+            read_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 6)
+            write_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 7)
+            comment_widget = self.parent.monitoring_tag_table.cellWidget(row, 8)
 
-            if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, format_widget, comment_widget)):
+            if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, format_widget, read_value_widget, write_value_widget, comment_widget)):
                 continue
 
             name = name_widget.text().strip()
@@ -58,7 +60,7 @@ class MonitoringManager:
         return tags
 
     def add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp):
-        """Add or update a tag row in the monitoring results table."""
+        """Add or update a tag row in the integrated Tags table."""
         key = (tag_name, data_type, str(address))
         
         # Store read value in cache for Tags monitoring
@@ -71,181 +73,51 @@ class MonitoringManager:
         cached_write_value = self._monitoring_write_value_cache.get(key, "")
         initial_write_value = write_value if write_value else cached_write_value
 
-        # Always use the diagnostics results table for monitoring data
-        target_table = None
-        if hasattr(self.parent, 'diagnostics_results_table'):
-            target_table = self.parent.diagnostics_results_table
-        else:
-            # Create the table if it doesn't exist
-            self.parent.diagnostics_results_table = QTableWidget()
-            self.parent.diagnostics_results_table.setColumnCount(8)
-            self.parent.diagnostics_results_table.setHorizontalHeaderLabels([
-                "Tag Name", "Mode", "Type", "Address", "Read Value", "Write Value", "Comment", "Timestamp"
-            ])
-            self.parent.diagnostics_results_table.setAlternatingRowColors(True)
-            self.parent.diagnostics_results_table.setSortingEnabled(False)
-            self.parent.diagnostics_results_table.setSelectionBehavior(QTableWidget.SelectRows)
-            self.parent.diagnostics_results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-            self.parent.diagnostics_results_table.setStyleSheet("""
-                QTableWidget {
-                    background-color: #FFFFFF;
-                    color: #000000;
-                    gridline-color: #D0D0D0;
-                    border: 1px solid #CCCCCC;
-                }
-                QHeaderView::section {
-                    background-color: #E9E9E9;
-                    color: #000000;
-                    border: 1px solid #CCCCCC;
-                    padding: 6px;
-                    font-weight: bold;
-                }
-            """)
-            target_table = self.parent.diagnostics_results_table
-            
-        row_count = target_table.rowCount()
+        # Update the integrated Tags table directly
+        target_table = self.parent.monitoring_tag_table
 
-        self.parent._updating_monitoring_table = True
-        try:
-            # Look for existing row with same tag name, type, and address
-            existing_row = -1
-            for row in range(row_count):
-                name_item = target_table.item(row, 0)
-                type_item = target_table.item(row, 2)
-                address_item = target_table.item(row, 3)
-                if (
-                    name_item and type_item and address_item
-                    and name_item.text() == tag_name
-                    and type_item.text() == data_type
-                    and address_item.text() == str(address)
-                ):
-                    existing_row = row
+        # Find the row for this tag
+        target_row = None
+        for row in range(target_table.rowCount()):
+            name_widget = target_table.cellWidget(row, 0)
+            if name_widget and name_widget.text().strip() == tag_name:
+                type_widget = target_table.cellWidget(row, 2)
+                address_widget = target_table.cellWidget(row, 3)
+                if (type_widget and type_widget.currentText() == data_type and 
+                    address_widget and address_widget.value() == address):
+                    target_row = row
                     break
-            
-            if existing_row >= 0:
-                # Update existing row
-                row = existing_row
-                
-                # Don't mutate the row while the user is typing a write value; it cancels the editor.
-                if (
-                    target_table.state() == QAbstractItemView.EditingState
-                    and target_table.currentRow() == row
-                    and target_table.currentColumn() == 5
-                ):
-                    return
 
-                target_table.setItem(row, 1, QTableWidgetItem(mode))
-                target_table.setItem(row, 3, QTableWidgetItem(str(address)))
-                if read_value:
-                    target_table.setItem(row, 4, QTableWidgetItem(read_value))
+        if target_row is None:
+            return  # Tag not found in table
 
-                # Only set the write column if we have a meaningful value to show.
-                # This avoids stomping on user edits during polling.
-                if write_value:
-                    target_table.setItem(row, 5, QTableWidgetItem(write_value))
-                elif initial_write_value and target_table.item(row, 5) is None:
-                    target_table.setItem(row, 5, QTableWidgetItem(initial_write_value))
+        if read_value:
+            read_value_widget = target_table.cellWidget(target_row, 6)
+            if read_value_widget:
+                read_value_widget.setText(read_value)
 
-                target_table.setItem(row, 6, QTableWidgetItem(comment))
-                target_table.setItem(row, 7, QTableWidgetItem(timestamp))
-                
-                # Update results window for existing row
-                if self.parent.results_window is not None:
-                    self.parent.results_window.update_row(
-                        tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
-                    )
-            else:
-                # Add new row
-                target_table.insertRow(row_count)
-                target_table.setItem(row_count, 0, QTableWidgetItem(tag_name))
-                target_table.setItem(row_count, 1, QTableWidgetItem(mode))
-                target_table.setItem(row_count, 2, QTableWidgetItem(data_type))
-                target_table.setItem(row_count, 3, QTableWidgetItem(str(address)))
-                target_table.setItem(row_count, 4, QTableWidgetItem(read_value))
-                target_table.setItem(row_count, 5, QTableWidgetItem(initial_write_value))
-                target_table.setItem(row_count, 6, QTableWidgetItem(comment))
-                target_table.setItem(row_count, 7, QTableWidgetItem(timestamp))
-                
-                # Update results window for new row
-                if self.parent.results_window is not None:
-                    self.parent.results_window.update_row(
-                        tag_name, mode, data_type, address, read_value, write_value, comment, timestamp
-                    )
-        finally:
-            self.parent._updating_monitoring_table = False
+        # Only touch the write column if we have something meaningful to show,
+        # so polling doesn't stomp on a value the user is currently typing.
+        if write_value:
+            write_value_widget = target_table.cellWidget(target_row, 7)
+            if write_value_widget:
+                write_value_widget.setText(write_value)
+        elif initial_write_value:
+            write_value_widget = target_table.cellWidget(target_row, 7)
+            if write_value_widget and not write_value_widget.text():
+                write_value_widget.setText(initial_write_value)
 
-    def get_current_result_values(self):
-        """Get current values from monitoring results."""
-        values = {}
-        # Check if main monitoring table exists
-        if hasattr(self.parent, 'monitoring_table'):
-            for row in range(self.parent.monitoring_table.rowCount()):
-                key = (
-                    self.parent._table_item_text(self.parent.monitoring_table, row, 0),
-                    self.parent._table_item_text(self.parent.monitoring_table, row, 1),
-                    self.parent._table_item_text(self.parent.monitoring_table, row, 2),
-                    self.parent._table_item_text(self.parent.monitoring_table, row, 3),
-                )
-                values[key] = {
-                    "read_value": self.parent._table_item_text(self.parent.monitoring_table, row, 4),
-                    "write_value": self.parent._table_item_text(self.parent.monitoring_table, row, 5),
-                    "timestamp": self.parent._table_item_text(self.parent.monitoring_table, row, 7),
-                }
-        # Check if diagnostics results table exists
-        elif hasattr(self.parent, 'diagnostics_results_table'):
-            for row in range(self.parent.diagnostics_results_table.rowCount()):
-                key = (
-                    self.parent._table_item_text(self.parent.diagnostics_results_table, row, 0),
-                    self.parent._table_item_text(self.parent.diagnostics_results_table, row, 1),
-                    self.parent._table_item_text(self.parent.diagnostics_results_table, row, 2),
-                    self.parent._table_item_text(self.parent.diagnostics_results_table, row, 3),
-                )
-                values[key] = {
-                    "read_value": self.parent._table_item_text(self.parent.diagnostics_results_table, row, 4),
-                    "write_value": self.parent._table_item_text(self.parent.diagnostics_results_table, row, 5),
-                    "timestamp": self.parent._table_item_text(self.parent.diagnostics_results_table, row, 7),
-                }
-        else:
-            # For Tags monitoring, use the cache
-            for key, read_value in self._monitoring_read_value_cache.items():
-                write_value = self._monitoring_write_value_cache.get(key, "")
-                # Convert key from (tag_name, data_type, address) to (tag_name, mode, data_type, address)
-                tag_name, data_type, address = key
-                # Find the tag mode from the monitoring tags
-                mode = "Read"  # Default to Read since we only cache read values
-                for tag in self.get_monitoring_tags():
-                    if tag["name"] == tag_name and str(tag["address"]) == address:
-                        mode = tag["mode"]
-                        break
-                
-                full_key = (tag_name, mode, data_type, address)
-                values[full_key] = {
-                    "read_value": read_value,
-                    "write_value": write_value,
-                    "timestamp": "",  # We don't store timestamps in cache
-                }
-        
-        return values
+        timestamp_widget = target_table.cellWidget(target_row, 9)
+        if timestamp_widget:
+            timestamp_widget.setText(timestamp)
 
     def clear_monitoring_results(self):
-        """Clear monitoring results table."""
-        # Clear caches
+        """Clear cached monitoring values and the diagnostics results table."""
         self._monitoring_read_value_cache.clear()
         self._monitoring_write_value_cache.clear()
-        
-        # Check if diagnostics results table exists
+
         if hasattr(self.parent, 'diagnostics_results_table'):
             self.parent.diagnostics_results_table.setRowCount(0)
-        # Check if main monitoring table exists (for backward compatibility)
-        if hasattr(self.parent, 'monitoring_table'):
-            self.parent.monitoring_table.setRowCount(0)
-        # Clear the results window directly instead of syncing
-        if self.parent.results_window is not None:
-            self.parent.results_window.clear()
-
-    def get_tag_key(self, tag):
-        """Generate a unique key for a tag."""
-        return (tag["name"], tag["type"], str(tag["address"]))
 
     def read_tag_for_monitoring(self, tag, is_one_based=None):
         """Read data for a specific tag during monitoring."""
@@ -358,10 +230,3 @@ class MonitoringManager:
             self._monitoring_poll_in_progress = False
             self.parent.monitoring_timer.start()
 
-    def get_write_value_cache(self):
-        """Get the write value cache."""
-        return self._monitoring_write_value_cache
-
-    def update_write_value_cache(self, key, value):
-        """Update a value in the write cache."""
-        self._monitoring_write_value_cache[key] = value
