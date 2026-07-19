@@ -16,7 +16,7 @@ def build_exe():
         '--windowed',  # Hide console for cleaner GUI experience
         '--onefile',   # Create single EXE file
         '--icon=assets/icon.ico' if os.path.exists('assets/icon.ico') else '',
-        '--add-data=assets:assets',
+        f'--add-data=assets{os.pathsep}assets',
         '--hidden-import=pymodbus',
         '--hidden-import=pymodbus.client',
         '--hidden-import=PySide6',
@@ -25,7 +25,6 @@ def build_exe():
         '--hidden-import=PySide6.QtGui',
         '--hidden-import=gui.main_window',
         '--hidden-import=gui.widgets.status_indicator',
-        '--hidden-import=gui.widgets.monitoring_window',
         '--hidden-import=gui.widgets.address_table',
         '--hidden-import=gui.monitoring.monitoring_manager',
         '--hidden-import=gui.diagnostics.advanced_diagnostics',

@@ -21,7 +21,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Import extracted components
 from widgets.status_indicator import StatusIndicator
-from widgets.monitoring_window import MonitoringResultsWindow
 from widgets.address_table import AddressTableWidget
 from diagnostics.advanced_diagnostics import AdvancedDiagnostics
 from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
@@ -78,14 +77,16 @@ def apply_fixed_light_theme(app):
     
     # Apply the palette
     app.setPalette(palette)
-    
-    # Store the style name before applying stylesheet (Qt quirk: stylesheet clears style name)
-    # This is a known Qt behavior - applying stylesheets can override the style name
-    # but the visual appearance of the Fusion style remains due to the palette
-    style_name = app.style().objectName()
-    
-    # Apply minimal stylesheet to ensure light theme consistency
-    # The palette does most of the work, this just ensures specific widgets behave correctly
+
+    # On Windows, Qt tracks the OS light/dark setting independently of the palette
+    # (QStyleHints.colorScheme()) and native/Fusion-derived colors (disabled states,
+    # tooltips, some sub-controls) follow that signal even after setPalette() above.
+    # Without this override, a system set to dark mode still bleeds dark-on-dark
+    # rendering into parts of the UI the palette doesn't fully cover.
+    style_hints = app.styleHints()
+    if hasattr(style_hints, "setColorScheme") and hasattr(Qt, "ColorScheme"):
+        style_hints.setColorScheme(Qt.ColorScheme.Light)
+
     app.setStyleSheet("""
         /* Minimal light theme styling - palette does most of the work */
         
@@ -193,8 +194,7 @@ class ModbusGUI(QMainWindow):
 
         self.modbus = None
         self.connection_history = []
-        self.results_window = None
-        
+                
         # Connection parameters
         self.target_ip = "127.0.0.1"
         self.target_port = 502
@@ -206,13 +206,12 @@ class ModbusGUI(QMainWindow):
         self.monitoring_manager = MonitoringManager(self)
         self.network_diagnostics = NetworkDiagnosticsDialog(self)
         
-        self._updating_monitoring_table = False
         self._updating_tag_table = False
         self._modbus_busy = False
         self._active_ranges = []
         self.monitoring_active = False
         self._write_poll_in_progress = False
-        self.tag_address_one_based = False
+        self.tag_address_one_based = True
         
         self.monitoring_timer = QTimer(self)
         self.monitoring_timer.timeout.connect(self._update_monitored_data)
@@ -470,10 +469,10 @@ class ModbusGUI(QMainWindow):
         self.tag_stop_monitoring_btn.setMinimumWidth(120)
         buttons_layout.addWidget(self.tag_stop_monitoring_btn)
 
-        self.open_results_btn = QPushButton("Open Results Window")
-        self.open_results_btn.setStyleSheet(self._get_button_style())
-        self.open_results_btn.setMinimumWidth(140)
-        buttons_layout.addWidget(self.open_results_btn)
+        self.write_selected_btn = QPushButton("Write Selected")
+        self.write_selected_btn.setStyleSheet(self._get_button_style())
+        self.write_selected_btn.setMinimumWidth(120)
+        buttons_layout.addWidget(self.write_selected_btn)
 
         # Add stretch to push interval controls to the right
         buttons_layout.addStretch()
@@ -490,8 +489,8 @@ class ModbusGUI(QMainWindow):
         self.tag_monitoring_interval.setMinimumWidth(80)
         buttons_layout.addWidget(self.tag_monitoring_interval)
 
-        self.tag_offset_checkbox = QCheckBox("1-Based Addressing")
-        self.tag_offset_checkbox.setToolTip("When enabled, tag address 1 is sent as protocol offset 0")
+        self.tag_offset_checkbox = QCheckBox("0-Based Addressing")
+        self.tag_offset_checkbox.setToolTip("When enabled, use 0-based addressing (tag address 0 is sent as protocol offset 0)")
         self.tag_offset_checkbox.setEnabled(False)
         self.tag_offset_checkbox.toggled.connect(self._on_tag_address_mode_changed)
         buttons_layout.addWidget(self.tag_offset_checkbox)
@@ -520,8 +519,8 @@ class ModbusGUI(QMainWindow):
         tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
 
         self.monitoring_tag_table = QTableWidget() 
-        self.monitoring_tag_table.setColumnCount(7) 
-        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Comment"]) 
+        self.monitoring_tag_table.setColumnCount(10) 
+        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Write Value", "Comment", "Timestamp"]) 
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True) 
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.monitoring_tag_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -712,13 +711,15 @@ class ModbusGUI(QMainWindow):
             w.addItems(["Bool", "U16", "S16", "U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP", "Hex"])
             w.setCurrentText(value or "U16")
             return w
-        if widget_type == "spinbox": 
-            w = QSpinBox() 
-            maximum = 65536 if getattr(self, "tag_address_one_based", False) else 65535
-            w.setRange(1, maximum)
-            w.setValue(value if value is not None else 1)
-            w.setStyleSheet(self._get_input_style()) 
-            return w 
+        if widget_type == "spinbox":
+            w = QSpinBox()
+            one_based = getattr(self, "tag_address_one_based", True)
+            minimum = 1 if one_based else 0
+            maximum = 65536 if one_based else 65535
+            w.setRange(minimum, maximum)
+            w.setValue(value if value is not None else minimum)
+            w.setStyleSheet(self._get_input_style())
+            return w
         return None 
  
     def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None, comment=""): 
@@ -750,7 +751,10 @@ class ModbusGUI(QMainWindow):
 
         format_widget = self._create_monitoring_tag_widget("format_combo", value_format)
         self.monitoring_tag_table.setCellWidget(insert_row, 5, format_widget)
-        self.monitoring_tag_table.setCellWidget(insert_row, 6, self._create_monitoring_tag_widget("lineedit", comment)) 
+        self.monitoring_tag_table.setCellWidget(insert_row, 6, self._create_monitoring_tag_widget("lineedit", ""))  # Read Value
+        self.monitoring_tag_table.setCellWidget(insert_row, 7, self._create_monitoring_tag_widget("lineedit", ""))  # Write Value
+        self.monitoring_tag_table.setCellWidget(insert_row, 8, self._create_monitoring_tag_widget("lineedit", comment))  # Comment
+        self.monitoring_tag_table.setCellWidget(insert_row, 9, self._create_monitoring_tag_widget("lineedit", ""))  # Timestamp 
 
         # Keep "count" valid for 32-bit formats (U32/S32/F32 require even register count).
         if hasattr(format_widget, "currentTextChanged"):
@@ -771,7 +775,8 @@ class ModbusGUI(QMainWindow):
 
     def _on_tag_address_mode_changed(self, checked):
         """Toggle Tags between user-facing 1-based and protocol 0-based address input."""
-        self.tag_address_one_based = bool(checked)
+        self.tag_address_one_based = not bool(checked)
+        minimum = 1 if self.tag_address_one_based else 0
         maximum = 65536 if self.tag_address_one_based else 65535
 
         try:
@@ -781,9 +786,9 @@ class ModbusGUI(QMainWindow):
                 if not address_widget or not hasattr(address_widget, "setRange"):
                     continue
                 current = address_widget.value()
-                address_widget.setRange(1, maximum)
-                if current < 1:
-                    address_widget.setValue(1)
+                address_widget.setRange(minimum, maximum)
+                if current < minimum:
+                    address_widget.setValue(minimum)
         finally:
             self._updating_tag_table = False
 
@@ -952,15 +957,8 @@ class ModbusGUI(QMainWindow):
             self.tag_start_monitoring_btn.clicked.connect(self._start_monitoring)
         if hasattr(self, 'tag_stop_monitoring_btn'):
             self.tag_stop_monitoring_btn.clicked.connect(self._stop_monitoring)
-        if hasattr(self, 'open_results_btn'):
-            self.open_results_btn.clicked.connect(self._show_results_window)
-        if hasattr(self, 'monitoring_table'):
-            self.monitoring_table.itemChanged.connect(self._on_monitoring_table_item_changed)
-        if hasattr(self, 'monitoring_tag_table'):
-            self.monitoring_tag_table.itemChanged.connect(self._on_monitoring_table_item_changed)
-
-        # Note: Read/Write operation signals removed - now handled in unified Modbus Address tab
-        # Note: Data type change signals removed - now handled in unified Modbus Address tab
+        if hasattr(self, 'write_selected_btn'):
+            self.write_selected_btn.clicked.connect(self._write_selected_tags)
 
     def _show_connection_settings(self):
         """Show the connection settings dialog."""
@@ -973,27 +971,6 @@ class ModbusGUI(QMainWindow):
             self.connection_history = vals['history']
             self._update_connection_info()
             self._save_settings()
-
-    def _on_monitoring_table_item_changed(self, item):
-        # Cache manual edits to the "Write Value" column so polling never overwrites user input.
-        if self._updating_monitoring_table or item is None:
-            return
-        if item.column() != 5:
-            return
-
-        table = item.tableWidget()
-        if table is None:
-            return
-
-        row = item.row()
-        tag_name = self._table_item_text(table, row, 0).strip()
-        mode = self._table_item_text(table, row, 1).strip()
-        data_type = self._table_item_text(table, row, 2).strip()
-        address = self._table_item_text(table, row, 3).strip()
-        if not tag_name or not data_type or not address or mode != "Write":
-            return
-
-        self.monitoring_manager.update_write_value_cache((tag_name, data_type, address), item.text())
 
     def _connect(self):
         """Connect to Modbus server."""
@@ -1264,92 +1241,89 @@ Unit ID: {unit_id}<br><br>
                 if hasattr(self, 'address_table_widget'):
                     self.address_table_widget.update_monitoring_availability()
             
-            elif tab_text == "Monitoring":
+            elif tab_text == "Tags":
                 # Auto-disable live monitoring when going to tags tab
                 if hasattr(self, 'address_table_widget'):
                     if self.address_table_widget.monitoring_checkbox.isChecked():
                         # Uncheck to disable live monitoring
                         self.address_table_widget.monitoring_checkbox.setChecked(False)
                     self.address_table_widget.update_monitoring_availability()
-                
+
                 # Enable tag monitoring controls
                 if hasattr(self, 'tag_start_monitoring_btn'):
                     if hasattr(self, 'modbus') and self.modbus and self.modbus.is_connected():
                         self.tag_start_monitoring_btn.setEnabled(True)
-                
+
         except Exception as e:
-            self._log(f"Error in tab change: {e}", "ERROR")
-    
-    def stop_all_monitoring(self):
-        """Stop all monitoring systems."""
-        try:
-            # Stop address table monitoring
-            if hasattr(self, 'address_table_widget'):
-                if self.address_table_widget.monitoring_checkbox.isChecked():
-                    self.address_table_widget.monitoring_checkbox.setChecked(False)
-                self.address_table_widget.monitoring_checkbox.setEnabled(False)
-                self.address_table_widget.interval_input.setEnabled(False)
-                self.address_table_widget.stop_monitoring()
-            
-            # Stop tag monitoring
-            if hasattr(self, 'tag_start_monitoring_btn'):
-                if self.tag_start_monitoring_btn.isEnabled():
-                    self.tag_start_monitoring_btn.click()
-            
-            # Stop main monitoring
-            if self.monitoring_active:
-                self._stop_monitoring()
-                
-        except Exception as e:
-            self.log(f"Error stopping all monitoring: {e}", "ERROR")
-    
-    def _write_results_window_selected(self):
-        """Write selected rows from the detached results window."""
+            self._log(f"Error in tab change: {e}")
+
+    def _write_selected_tags(self):
+        """Write selected rows from the integrated Tags table."""
         if not self._check_connection():
             return
 
-        if self.results_window is None:
-            QMessageBox.warning(self, "Results Window Closed", "Open the results window before writing tag values.")
-            return
-
-        selected_rows = self.results_window.selected_write_rows()
+        selected_rows = self._get_selected_tag_rows()
         if not selected_rows:
-            QMessageBox.warning(self, "No Result Selected", "Please select at least one write-mode result row.")
+            QMessageBox.warning(self, "No Tag Selected", "Please select at least one tag row to write.")
             return
 
-        invalid_rows = self.results_window.invalid_write_rows()
-        selected_row_numbers = {row["row"] + 1 for row in selected_rows}
-        selected_invalid_rows = [row for row in invalid_rows if row[0] in selected_row_numbers]
-        if selected_invalid_rows:
-            details = "\n".join(
-                f"Row {row_number} ({tag_name}): {message}"
-                for row_number, tag_name, message in selected_invalid_rows[:8]
-            )
-            QMessageBox.warning(self, "Invalid Write Value", details)
+        tags_to_write = []
+        for row in selected_rows:
+            mode_widget = self.monitoring_tag_table.cellWidget(row, 1)
+            write_value_widget = self.monitoring_tag_table.cellWidget(row, 7)
+            
+            if not mode_widget or not write_value_widget:
+                continue
+                
+            mode = mode_widget.currentText()
+            write_value = write_value_widget.text().strip()
+            
+            if mode != "Write":
+                self._log(f"Skipped row {row + 1}: tag is in Read mode")
+                continue
+                
+            if not write_value:
+                self._log(f"Skipped row {row + 1}: no write value specified")
+                continue
+                
+            # Get tag details
+            name_widget = self.monitoring_tag_table.cellWidget(row, 0)
+            type_widget = self.monitoring_tag_table.cellWidget(row, 2)
+            address_widget = self.monitoring_tag_table.cellWidget(row, 3)
+            count_widget = self.monitoring_tag_table.cellWidget(row, 4)
+            format_widget = self.monitoring_tag_table.cellWidget(row, 5)
+            comment_widget = self.monitoring_tag_table.cellWidget(row, 8)
+            
+            if not all([name_widget, type_widget, address_widget, count_widget, format_widget, comment_widget]):
+                continue
+                
+            tag = {
+                "name": name_widget.text().strip(),
+                "mode": mode,
+                "type": type_widget.currentText(),
+                "address": address_widget.value(),
+                "count": count_widget.value(),
+                "format": format_widget.currentText(),
+                "comment": comment_widget.text().strip(),
+                "write_value": write_value,
+                "row": row
+            }
+            
+            tags_to_write.append(tag)
+
+        if not tags_to_write:
+            QMessageBox.warning(self, "No Valid Tags", "No write-mode tags with values found in selection.")
             return
 
-        tags_by_key = {self._tag_key(tag): tag for tag in self._get_monitoring_tags()}
         wrote_any = False
         was_monitoring = self.monitoring_active
-        monitor_interval = self.tag_monitoring_interval.value()
 
         if was_monitoring:
             self.monitoring_timer.stop()
             self._log("Safety interlock: monitoring paused while write request is active")
 
         try:
-            for result_row in selected_rows:
-                tag = tags_by_key.get(self._result_key(result_row))
-                if not tag:
-                    continue
-
-                if tag["mode"] != "Write":
-                    self._log(f"Skipped {tag['name']}: result row is Read mode")
-                    continue
-
-                tag = dict(tag)
-                tag["write_value"] = result_row["write_value"]
-
+            for tag in tags_to_write:
                 try:
                     self._validate_tag_request(tag, "write")
                     if not self._begin_modbus_operation(tag, "write"):
@@ -1364,10 +1338,16 @@ Unit ID: {unit_id}<br><br>
                     if success:
                         wrote_any = True
                         timestamp = time.strftime("%H:%M:%S")
-                        self._add_monitoring_row(
-                            tag["name"], tag["mode"], tag["type"], tag["address"], "", str(written_value),
-                            tag["comment"], timestamp
-                        )
+                        # Update the Write Value column in the integrated table
+                        write_value_widget = self.monitoring_tag_table.cellWidget(tag["row"], 7)
+                        if write_value_widget:
+                            write_value_widget.setText(str(written_value))
+                        
+                        # Update timestamp
+                        timestamp_widget = self.monitoring_tag_table.cellWidget(tag["row"], 9)
+                        if timestamp_widget:
+                            timestamp_widget.setText(timestamp)
+                            
                         self._log(f"{write_status}: {tag['name']} at {tag['address']} = {written_value}")
                     else:
                         self._log(f"{write_status}: {tag['name']}")
@@ -1377,42 +1357,11 @@ Unit ID: {unit_id}<br><br>
                     self._log(f"Write error for {tag['name']}: {e}")
         finally:
             if was_monitoring and self.monitoring_active:
-                self.monitoring_timer.start(monitor_interval)
+                self.monitoring_timer.start(self.tag_monitoring_interval.value())
                 self._log("Safety interlock: monitoring resumed after write request")
 
         if wrote_any:
-            self.tab_widget.setCurrentWidget(self.monitoring_tag_table)
-
-    def _tag_key(self, tag):
-        return (tag["name"], tag["type"], str(tag["address"]))
-
-    def _result_key(self, result_row):
-        return (result_row["name"], result_row["type"], str(result_row["address"]))
-
-    def _validate_result_write_value(self, result_row):
-        tags_by_key = {self._tag_key(tag): tag for tag in self._get_monitoring_tags()}
-        tag = tags_by_key.get(self._result_key(result_row))
-        if not tag:
-            return False, "matching tag configuration was not found"
-        if tag["mode"] != "Write":
-            return False, "tag is not in Write mode"
-        if tag["type"] in ("Discrete Input", "Input Register"):
-            return False, f"{tag['type']} is read-only"
-
-        write_value = str(result_row.get("write_value", "")).strip()
-        if not write_value:
-            return False, "write value is empty"
-
-        try:
-            if tag["type"] == "Coil":
-                values = self._parse_coil_values(write_value)
-                self._fit_write_values(values, tag["count"])
-            else:
-                value_format = (tag.get("format") or "U16").strip().upper()
-                self._parse_register_values(write_value, value_format, tag["count"])
-        except ValueError as e:
-            return False, str(e)
-        return True, ""
+            self._log(f"Successfully wrote {len(tags_to_write)} tag(s)")
 
     def _write_tag(self, tag):
         if tag["type"] in ("Discrete Input", "Input Register"):
@@ -1629,9 +1578,10 @@ Unit ID: {unit_id}<br><br>
 
     def _validate_tag_request(self, tag, operation):
         user_address = int(tag["address"])
+        minimum_address = 1 if self.tag_address_one_based else 0
         maximum_address = 65536 if self.tag_address_one_based else 65535
-        if user_address < 1 or user_address > maximum_address:
-            raise ValueError(f"address must be between 1 and {maximum_address}")
+        if user_address < minimum_address or user_address > maximum_address:
+            raise ValueError(f"address must be between {minimum_address} and {maximum_address}")
 
         start_offset = self._tag_user_address_to_offset(tag)
         if tag["count"] < 1:
@@ -1837,53 +1787,8 @@ Unit ID: {unit_id}<br><br>
         # Check if diagnostics results table exists
         if hasattr(self, 'diagnostics_results_table'):
             self.diagnostics_results_table.setRowCount(0)
-        if self.results_window is not None:
-            self._sync_results_window()
-
-    def _show_results_window(self):
-        """Open the detached monitoring results table."""
-        if self.results_window is None:
-            self.results_window = MonitoringResultsWindow(self)
-
-        self._sync_results_window()
-        self.results_window.show()
-        if self.results_window.isMinimized():
-            self.results_window.showNormal()
-        self.results_window.raise_()
-        self.results_window.activateWindow()
-
-    def _sync_results_window(self):
-        """Copy configured tags and current values into the detached results window."""
-        if self.results_window is None:
-            return
-
-        window_values = self.results_window.current_values()
-        current_values = self._current_result_values()
-        self.results_window.clear()
-        for tag in self._get_monitoring_tags():
-            # Skip default placeholder names
-            name = tag.get("name", "")
-            if name.startswith("Tag_") and name.split("_")[-1].isdigit():
-                continue
-            
-            key = self._tag_key(tag)
-            values = current_values.get(key, {})
-            window_row = window_values.get(key, {})
-            self.results_window.update_row(
-                tag["name"],
-                tag["mode"],
-                tag["type"],
-                tag["address"],
-                values.get("read_value", window_row.get("read_value", "")),
-                values.get("write_value", window_row.get("write_value", "")),
-                tag["comment"],
-                values.get("timestamp", window_row.get("timestamp", "")),
-            )
-
-    def _current_result_values(self):
-        """Get current values from monitoring results."""
-        return self.monitoring_manager.get_current_result_values()
-
+        
+    
     def _table_item_text(self, table, row, column):
         item = table.item(row, column)
         return item.text() if item else ""
@@ -1934,10 +1839,10 @@ Unit ID: {unit_id}<br><br>
                     break
 
             if poll_failed:
-                self._monitoring_failure_count += 1
-                if self._monitoring_failure_count >= self._monitoring_max_failures:
+                self.monitoring_manager._monitoring_failure_count += 1
+                if self.monitoring_manager._monitoring_failure_count >= self.monitoring_manager._monitoring_max_failures:
                     self._log(
-                        f"Monitoring stopped after {self._monitoring_failure_count} consecutive failed poll(s)"
+                        f"Monitoring stopped after {self.monitoring_manager._monitoring_failure_count} consecutive failed poll(s)"
                     )
                     self._stop_monitoring()
                     QMessageBox.warning(
@@ -1946,7 +1851,7 @@ Unit ID: {unit_id}<br><br>
                         "Monitoring was stopped after repeated Modbus failures. Check write tag type, address, unit ID, and server status.",
                     )
             else:
-                self._monitoring_failure_count = 0
+                self.monitoring_manager._monitoring_failure_count = 0
         finally:
             self._write_poll_in_progress = False
             if self.monitoring_active:
@@ -2237,7 +2142,6 @@ Unit ID: {unit_id}<br><br>
             "<ul>"
             "<li>Modbus TCP read/write (coils, inputs, registers)</li>"
             "<li>Tag-based real-time monitoring</li>"
-            "<li>Detached monitoring results window</li>"
             "<li>Network discovery & diagnostics (ARP + Modbus detection)</li>"
             "</ul>"
             

@@ -17,6 +17,8 @@ class ModbusClient:
         self.last_error: Optional[str] = None
 
     def connect(self):
+        if self.client:
+            self.client.close()
         try:
             self.client = ModbusTcpClient(host=self.ip, port=self.port, timeout=self.timeout, retries=self.retries)
             self._connected = self.client.connect()

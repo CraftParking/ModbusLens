@@ -91,8 +91,10 @@ def probe_modbus_device(ip, port=502, timeout=1.0):
                 return "YES" if result == 0 else "NO"
         else:
             return "TIMEOUT"
-    except Exception:
+    except socket.timeout:
         return "TIMEOUT"
+    except Exception:
+        return "ERROR"
 
 
 class ModbusProbeWorker(QThread):
@@ -192,20 +194,11 @@ def detect_packet_capture_capability():
         scapy_available = False
         pcap_available = False
 
-    # Debug logging
-    print(f"[DEBUG] Scapy available: {scapy_available}")
-    print(f"[DEBUG] pcap backend available: {pcap_available}")
-    print(f"[DEBUG] Scapy interfaces found: {len(scapy_interfaces)}")
-
     # Check 2: Interface availability
     interfaces_available = bool(scapy_interfaces)
 
     # Determine advanced mode (requires Scapy AND working pcap backend AND interfaces)
     advanced = bool(scapy_available and pcap_available and interfaces_available)
-
-    # Debug logging
-    print(f"[DEBUG] Advanced mode: {advanced}")
-    print(f"[DEBUG] - Scapy: {scapy_available}, pcap: {pcap_available}, Interfaces: {interfaces_available}")
 
     # Determine specific failure reason
     failure_reason = None
@@ -392,7 +385,7 @@ class NetworkScanner(QThread):
                         found_devices += 1
                         cycle_new_devices += 1
                         self.device_found.emit(current_ip, str(self.modbus_port), "Modbus Device Found")
-                        self.output.emit(f"✓ New device found: {current_ip}:{self.modbus_port}")
+                        self.output.emit(f"New device found: {current_ip}:{self.modbus_port}")
                 
                 # Small delay to prevent overwhelming the network
                 self.msleep(50)  # 50ms delay between individual IP checks
@@ -819,28 +812,55 @@ class PacketCapture(QThread):
                     if int(getattr(arp_layer, "op", 0)) in (1, 2):
                         self._register_device(str(arp_layer.psrc), str(arp_layer.hwsrc))
 
-            sniff(
-                filter="arp",
-                prn=handle_packet,
-                timeout=self.duration,
-                store=False,
-                stop_filter=lambda x: self.should_stop
-            )
+            # sniff()'s own timeout/stop_filter only get evaluated between received packets, so on a
+            # quiet segment it can block for the full duration regardless of should_stop. Chunking the
+            # call keeps Stop responsive (bounded to ~1s) even when no traffic arrives at all.
+            use_iface = self.interface
+            elapsed = 0.0
+            chunk = 1.0
+            while elapsed < self.duration and not self.should_stop:
+                step = min(chunk, self.duration - elapsed)
+                try:
+                    if use_iface:
+                        sniff(iface=use_iface, filter="arp", prn=handle_packet, timeout=step, store=False)
+                    else:
+                        sniff(filter="arp", prn=handle_packet, timeout=step, store=False)
+                except Exception as e:
+                    if use_iface:
+                        self.output.emit(f"Could not bind to interface '{use_iface}'; using default interface. ({e})")
+                        use_iface = None
+                        continue
+                    raise
+                elapsed += step
             self.capture_complete.emit(len(self.devices))
         except Exception as e:
             self.output.emit(f"Advanced capture failed; using fallback discovery. ({e})")
             self.run_windows_capture()
-    
+
+    def _resolve_interface_ip(self, interface_name):
+        """Return the IPv4 address bound to the selected interface, if known."""
+        if not PSUTIL_AVAILABLE:
+            return None
+        try:
+            for addr in psutil.net_if_addrs().get(interface_name, []):
+                if addr.family == socket.AF_INET and is_valid_interface_ipv4(addr.address):
+                    return addr.address
+        except Exception:
+            pass
+        return None
+
     def run_windows_capture(self):
         """Windows-compatible packet capture using ARP scanning and ping."""
         self.output.emit("Scanning network...")
-        
+
         try:
-            # Get local network information
-            hostname = socket.gethostname()
-            local_ip = socket.gethostbyname(hostname)
+            # Prefer the selected interface's own address; fall back to hostname resolution
+            local_ip = self._resolve_interface_ip(self.interface) if self.interface else None
+            if not local_ip:
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
             self.local_ip = local_ip
-            
+
             # Extract network segment (e.g., 192.168.1.100 -> 192.168.1)
             network_parts = local_ip.split('.')
             if len(network_parts) >= 3:
@@ -915,10 +935,7 @@ class PacketCapture(QThread):
         for i in range(1, 255):
             if self.should_stop:
                 break
-                
-            # Calculate and emit progress for percentage mode
-            self.progress.emit(int((i / 254) * 100))
-                
+
             ip = f"{network_base}.{i}"
             
             # Ping the host
@@ -1128,6 +1145,7 @@ class NetworkDiagnosticsDialog:
         self.modbus_devices = {}  # Store Modbus probe results: {ip: status}
         self.show_modbus_only = False  # Filter checkbox state
         self.subnet_info = None  # Local subnet information
+        self._live_probe_workers = set()  # In-flight per-device probes from continuous discovery
 
     def show_diagnostics(self, host, port, unit_id):
         """Show network diagnostics dialog."""
@@ -1265,6 +1283,7 @@ class NetworkDiagnosticsDialog:
             # Output text
             self.output_text = QTextEdit()
             self.output_text.setReadOnly(True)
+            self.output_text.document().setMaximumBlockCount(5000)  # cap growth during continuous scanning
             self.output_text.setStyleSheet("""
                 QTextEdit {
                     background-color: #f8f9fa;
@@ -1372,30 +1391,37 @@ class NetworkDiagnosticsDialog:
         # Accept the close event
         event.accept()
     
+    def _stop_worker(self, worker, name):
+        """Ask a worker thread to stop and give it a bounded chance to exit cleanly.
+
+        A thread that ignores should_stop (e.g. blocked in a native call) would otherwise
+        keep running after this dialog's widgets are gone and crash on its next signal emit,
+        so a stubborn one gets force-terminated rather than left dangling.
+        """
+        if not (worker and worker.isRunning()):
+            return
+        if hasattr(worker, "stop"):
+            worker.stop()
+        else:
+            worker.should_stop = True
+            worker.quit()
+        if not worker.wait(1000):
+            self.output_text.append(f"{name} did not stop in time; terminating.")
+            worker.terminate()
+            worker.wait(2000)
+
     def stop_all_scanning(self):
         """Stop all scanning processes (shared stop logic)."""
         try:
-            # Stop packet capture
-            if self.capturer and self.capturer.isRunning():
-                self.capturer.stop()
-                self.capturer.wait(1000)  # Wait with timeout
-            
-            # Stop device scanner
-            if self.scanner and self.scanner.isRunning():
-                self.scanner.stop()
-                self.scanner.wait(1000)  # Wait with timeout
-            
-            # Stop Modbus prober
-            if self.modbus_prober and self.modbus_prober.isRunning():
-                self.modbus_prober.stop()
-                self.modbus_prober.wait(1000)  # Wait with timeout
-            
-            # Stop diagnostics worker
-            if self.worker and self.worker.isRunning():
-                self.worker.should_stop = True
-                self.worker.quit()
-                self.worker.wait(1000)  # Wait with timeout
-            
+            self._stop_worker(self.capturer, "Packet capture")
+            self._stop_worker(self.scanner, "Device scanner")
+            self._stop_worker(self.modbus_prober, "Modbus prober")
+            self._stop_worker(self.worker, "Diagnostics worker")
+
+            for probe in list(self._live_probe_workers):
+                self._stop_worker(probe, "Live device probe")
+            self._live_probe_workers.clear()
+
             # Disable Modbus filter
             self.disable_modbus_filter()
             
@@ -1734,34 +1760,33 @@ class NetworkDiagnosticsDialog:
     def on_device_found(self, ip, port, status):
         """Handle device discovery and trigger Modbus probing for new devices."""
         self.discovered_devices.append((ip, port, status))
-        
+
         # Trigger Modbus probing for newly discovered devices (only once per device)
         if ip not in self.modbus_devices:
             self.probe_modbus_for_device(ip, int(port))
-    
+
     def probe_modbus_for_device(self, ip, port):
-        """Probe a single device for Modbus capability."""
-        try:
-            # Check subnet first
-            if not is_ip_in_subnet(ip, self.subnet_info):
-                self.modbus_devices[ip] = "UNREACHABLE (Subnet mismatch)"
-                return
-            
-            # Probe the device
-            status = probe_modbus_device(ip, port, timeout=1.0)
-            self.modbus_devices[ip] = status
-            
-            # Log result
-            if status == "YES":
-                self.output_text.append(f"  → Modbus device confirmed: {ip}")
-            elif status == "NO":
-                self.output_text.append(f"  → Not a Modbus device: {ip}")
-            else:
-                self.output_text.append(f"  → Modbus probe: {ip} - {status}")
-            
-        except Exception as e:
-            self.modbus_devices[ip] = "ERROR"
-            self.output_text.append(f"  → Modbus probe error for {ip}: {e}")
+        """Probe a single newly-discovered device for Modbus capability, off the GUI thread."""
+        if not is_ip_in_subnet(ip, self.subnet_info):
+            self.modbus_devices[ip] = "UNREACHABLE (Subnet mismatch)"
+            return
+
+        self.modbus_devices[ip] = "PROBING"
+        worker = ModbusProbeWorker([(ip, "", "")], self.subnet_info, port, timeout=1.0)
+        worker.probe_complete.connect(self._on_live_probe_result)
+        worker.finished.connect(lambda w=worker: self._live_probe_workers.discard(w))
+        self._live_probe_workers.add(worker)
+        worker.start()
+
+    def _on_live_probe_result(self, ip, status):
+        """Handle an async single-device Modbus probe result from live discovery."""
+        self.modbus_devices[ip] = status
+        if status == "YES":
+            self.output_text.append(f"  → Modbus device confirmed: {ip}")
+        elif status == "NO":
+            self.output_text.append(f"  → Not a Modbus device: {ip}")
+        else:
+            self.output_text.append(f"  → Modbus probe: {ip} - {status}")
     
     def on_scan_progress(self, percentage):
         """Update scan progress."""
@@ -1843,10 +1868,17 @@ class NetworkDiagnosticsDialog:
         self.stop_all_scanning()
         self.output_text.append("Scan stopped.")
     
+    MAX_CAPTURED_PACKETS = 20000  # safety cap for a busy segment during the capture window
+
+    def _record_captured_packet(self, entry):
+        self.captured_packets.append(entry)
+        if len(self.captured_packets) > self.MAX_CAPTURED_PACKETS:
+            del self.captured_packets[: len(self.captured_packets) - self.MAX_CAPTURED_PACKETS]
+
     def on_packet_captured(self, src_ip, dst_ip, protocol, info):
         """Handle captured packet."""
-        self.captured_packets.append((src_ip, dst_ip, protocol, info))
-    
+        self._record_captured_packet((src_ip, dst_ip, protocol, info))
+
     def on_arp_discovered(self, ip, mac, vendor):
         """Handle ARP device discovery."""
         first_seen = self.arp_devices.get(ip, {}).get("first_seen", time.time())
@@ -1855,10 +1887,10 @@ class NetworkDiagnosticsDialog:
             "vendor": vendor or "Unknown",
             "first_seen": first_seen,
         }
-    
+
     def on_modbus_detected(self, src_ip, dst_ip, function):
         """Handle Modbus traffic detection."""
-        self.captured_packets.append((src_ip, dst_ip, "Modbus", str(function)))
+        self._record_captured_packet((src_ip, dst_ip, "Modbus", str(function)))
     
     def on_capture_complete(self, packet_count):
         """Handle packet capture completion."""
