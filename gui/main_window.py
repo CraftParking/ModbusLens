@@ -191,6 +191,8 @@ def apply_fixed_light_theme(app):
 
 
 class ModbusGUI(QMainWindow):
+    _open_windows = []  # keeps extra connection windows alive (see _new_connection_window)
+
     def __init__(self):
         super().__init__()
 
@@ -269,6 +271,8 @@ class ModbusGUI(QMainWindow):
 
         # File menu
         file_menu = menubar.addMenu("&File")
+        file_menu.addAction("New Connection Window", self._new_connection_window)
+        file_menu.addSeparator()
         file_menu.addAction("New Session", self._new_session)
         file_menu.addAction("Save Session", self._save_session)
         file_menu.addAction("Load Session", self._load_session)
@@ -2169,6 +2173,12 @@ Unit ID: {unit_id}<br><br>
             self.diagnostics_data_output.clear()
         self._log(" New session started")
 
+    def _new_connection_window(self):
+        """Open another, fully independent connection window (its own connection, tags, trend, server)."""
+        new_window = ModbusGUI()
+        new_window.show()
+        ModbusGUI._open_windows.append(new_window)
+
     def _save_session(self):
         """Save current session."""
         QMessageBox.information(self, "Save Session", "Session saving will be implemented in the next update!")
@@ -2254,6 +2264,8 @@ Unit ID: {unit_id}<br><br>
             self._disconnect()
         if hasattr(self, 'server_widget') and self.server_widget.running:
             self.server_widget._stop_server()
+        if self in ModbusGUI._open_windows:
+            ModbusGUI._open_windows.remove(self)
         self._save_settings()
         event.accept()
  
