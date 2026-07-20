@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from widgets.status_indicator import StatusIndicator
 from widgets.address_table import AddressTableWidget
 from widgets.trend_widget import TrendWidget
+from widgets.server_widget import ServerWidget
 from diagnostics.advanced_diagnostics import AdvancedDiagnostics
 from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
 from monitoring.monitoring_manager import MonitoringManager
@@ -418,6 +419,9 @@ class ModbusGUI(QMainWindow):
         # Trend tab
         self._setup_trend_tab()
 
+        # Server tab
+        self._setup_server_tab()
+
         # Connect tab change signal for interlock
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
@@ -434,6 +438,11 @@ class ModbusGUI(QMainWindow):
         """Setup Trend tab with live/historical multi-pen graphing."""
         self.trend_widget = TrendWidget(self)
         self.tab_widget.addTab(self.trend_widget, "Trend")
+
+    def _setup_server_tab(self):
+        """Setup Server tab (Modbus TCP slave simulator)."""
+        self.server_widget = ServerWidget(self)
+        self.tab_widget.addTab(self.server_widget, "Server")
 
     def _setup_monitoring_tab(self):
         """Setup monitoring tab with real-time data display."""
@@ -2237,14 +2246,16 @@ Unit ID: {unit_id}<br><br>
         
         QMessageBox.about(self, "About ModbusLens", about_text)
 
-    def closeEvent(self, event): 
-        """Handle application close event.""" 
-        if self.monitoring_active: 
-            self._stop_monitoring() 
-        if self.modbus: 
-            self._disconnect() 
-        self._save_settings() 
-        event.accept() 
+    def closeEvent(self, event):
+        """Handle application close event."""
+        if self.monitoring_active:
+            self._stop_monitoring()
+        if self.modbus:
+            self._disconnect()
+        if hasattr(self, 'server_widget') and self.server_widget.running:
+            self.server_widget._stop_server()
+        self._save_settings()
+        event.accept()
  
 
 class SafetyWarningDialog(QDialog): 
