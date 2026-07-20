@@ -1,12 +1,14 @@
 import re
 import time
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit,
-    QTextEdit, QFileDialog, QMessageBox, QSplitter
+    QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox
 )
+
+HIDE_RUN_WARNING_KEY = "hide_script_run_warning"
 
 TYPE_ALIASES = {
     "COIL": "Coil",
@@ -16,6 +18,7 @@ TYPE_ALIASES = {
 }
 WRITABLE_TYPES = ("Coil", "Holding Register")
 BIT_TYPES = ("Coil", "Discrete Input")
+MIN_ADDRESS, MAX_ADDRESS = 0, 65535
 
 COMPARATORS = {
     "==": lambda a, b: a == b,
@@ -26,25 +29,39 @@ COMPARATORS = {
     "<": lambda a, b: a < b,
 }
 
+# Safety bounds: a typo (an extra zero, a forgotten WAIT) should not be able to hang the
+# UI, run forever, or blow the interpreter's stack -- it should fail with a clear message.
+MAX_INSTRUCTIONS = 5000
+MAX_REPEAT_COUNT = 1_000_000
+MAX_WAIT_MS = 24 * 60 * 60 * 1000  # 24 hours
+MAX_STEPS_PER_TICK = 200  # a loop with no WAIT still yields to the UI this often
+MAX_EXPR_DEPTH = 100
+
 DEFAULT_SCRIPT_HELP = """# ModbusLens script - one command per line, # or // starts a comment
 #
-#   WRITE COIL <addr> = ON|OFF        WRITE HR <addr> = <number>
-#   READ COIL|DI|HR|IR <addr>         LOG "message"
-#   WAIT <milliseconds>
-#   REPEAT <n>
+#   WRITE COIL <addr> = ON|OFF          WRITE HR <addr> = <expr>
+#   READ COIL|DI|HR|IR <addr>           LOG <expr>
+#   LET <name> = <expr>
+#   WAIT <expr, in ms>
+#   REPEAT <expr>
 #       ...
 #   END
-#   IF <TYPE> <addr> <op> <value> THEN <command>   (op: == != > < >= <=)
+#   IF <expr> <op> <expr> THEN <command>   (op: == != > < >= <=)
+#
+#   <expr> can mix numbers, variables, "strings", + - * / ( ), and
+#   inline reads (HR 0, or the equivalent READ HR 0). LOG concatenates
+#   strings and numbers with +.
 #
 # Example:
-# WRITE HR 0 = 100
-# WAIT 1000
-# READ HR 0
+# LET x = HR 0 + 10
+# WRITE HR 1 = x
+# WAIT 500
+# LOG "HR1 is now " + x
 # REPEAT 3
 #     WRITE COIL 0 = ON
-#     WAIT 500
+#     WAIT 250
 #     WRITE COIL 0 = OFF
-#     WAIT 500
+#     WAIT 250
 # END
 """
 
@@ -69,19 +86,157 @@ def parse_type_token(token):
     return TYPE_ALIASES[key]
 
 
-def parse_value_token(token, is_bit):
-    token = token.strip()
-    if is_bit:
-        lowered = token.lower()
-        if lowered in ("on", "1", "true"):
-            return 1
-        if lowered in ("off", "0", "false"):
-            return 0
-        raise ScriptError(f"invalid ON/OFF value: {token}")
-    try:
-        return int(token, 0)
-    except ValueError:
-        raise ScriptError(f"invalid number: {token}")
+def check_address(address):
+    if not (MIN_ADDRESS <= address <= MAX_ADDRESS):
+        raise ScriptError(f"address {address} out of range ({MIN_ADDRESS}-{MAX_ADDRESS})")
+    return address
+
+
+def parse_bit_keyword(token):
+    lowered = token.strip().lower()
+    if lowered in ("on", "1", "true"):
+        return 1
+    if lowered in ("off", "0", "false"):
+        return 0
+    raise ScriptError(f"invalid ON/OFF value: {token}")
+
+
+# --- Expression tokenizer ---
+
+_TOKEN_RE = re.compile(r"""
+    \s*(?:
+        (?P<string>"(?:[^"\\]|\\.)*")
+      | (?P<hex>0[xX][0-9a-fA-F]+)
+      | (?P<number>\d+\.\d+|\d+)
+      | (?P<ident>[A-Za-z_][A-Za-z0-9_]*)
+      | (?P<op>==|!=|>=|<=|[()+\-*/><])
+    )""", re.VERBOSE)
+
+
+def tokenize(text):
+    tokens = []
+    pos = 0
+    while pos < len(text):
+        if text[pos:].strip() == "":
+            break
+        match = _TOKEN_RE.match(text, pos)
+        if not match or match.end() == pos:
+            raise ScriptError(f"unexpected character near: {text[pos:pos + 10]!r}")
+        pos = match.end()
+        if match.group("string") is not None:
+            tokens.append(("STRING", match.group("string")[1:-1]))
+        elif match.group("hex") is not None:
+            tokens.append(("NUMBER", int(match.group("hex"), 16)))
+        elif match.group("number") is not None:
+            text_val = match.group("number")
+            tokens.append(("NUMBER", float(text_val) if "." in text_val else int(text_val)))
+        elif match.group("ident") is not None:
+            tokens.append(("IDENT", match.group("ident")))
+        elif match.group("op") is not None:
+            tokens.append(("OP", match.group("op")))
+    return tokens
+
+
+class ExpressionParser:
+    """Recursive-descent parser for a small arithmetic/string expression grammar."""
+
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.pos = 0
+
+    def _peek(self):
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else None
+
+    def _advance(self):
+        tok = self._peek()
+        if tok is None:
+            raise ScriptError("unexpected end of expression")
+        self.pos += 1
+        return tok
+
+    def parse(self):
+        node = self._parse_expr(0)
+        if self._peek() is not None:
+            raise ScriptError(f"unexpected token: {self._peek()[1]!r}")
+        return node
+
+    def _parse_expr(self, depth):
+        if depth > MAX_EXPR_DEPTH:
+            raise ScriptError("expression is too deeply nested")
+        node = self._parse_term(depth)
+        while self._peek() is not None and self._peek()[0] == "OP" and self._peek()[1] in ("+", "-"):
+            op = self._advance()[1]
+            rhs = self._parse_term(depth + 1)
+            node = ("binop", op, node, rhs)
+        return node
+
+    def _parse_term(self, depth):
+        node = self._parse_factor(depth)
+        while self._peek() and self._peek()[0] == "OP" and self._peek()[1] in ("*", "/"):
+            op = self._advance()[1]
+            rhs = self._parse_factor(depth + 1)
+            node = ("binop", op, node, rhs)
+        return node
+
+    def _is_type_keyword(self, tok):
+        return tok[0] == "IDENT" and tok[1].upper() in TYPE_ALIASES
+
+    def _parse_factor(self, depth):
+        tok = self._peek()
+        if tok is None:
+            raise ScriptError("unexpected end of expression")
+
+        if tok == ("OP", "("):
+            self._advance()
+            node = self._parse_expr(depth + 1)
+            closing = self._advance()
+            if closing != ("OP", ")"):
+                raise ScriptError("missing closing ')'")
+            return node
+
+        if tok[0] == "OP" and tok[1] == "-":
+            self._advance()
+            return ("neg", self._parse_factor(depth + 1))
+
+        if tok[0] == "STRING":
+            self._advance()
+            return ("str", tok[1])
+
+        if tok[0] == "NUMBER":
+            self._advance()
+            return ("num", tok[1])
+
+        if tok[0] == "IDENT" and tok[1].upper() == "READ":
+            self._advance()
+            return self._parse_read_ref()
+
+        if self._is_type_keyword(tok):
+            # sugar: "HR 0" means the same as "READ HR 0"
+            return self._parse_read_ref()
+
+        if tok[0] == "IDENT":
+            self._advance()
+            return ("var", tok[1])
+
+        raise ScriptError(f"unexpected token: {tok[1]!r}")
+
+    def _parse_read_ref(self):
+        type_tok = self._advance()
+        if type_tok[0] != "IDENT":
+            raise ScriptError("expected a type (COIL, DI, HR, IR) after READ")
+        data_type = parse_type_token(type_tok[1])
+        addr_tok = self._advance()
+        if addr_tok[0] != "NUMBER":
+            raise ScriptError("expected an address after the type")
+        address = check_address(int(addr_tok[1]))
+        return ("read", data_type, address)
+
+
+def parse_expression(text):
+    tokens = tokenize(text)
+    if not tokens:
+        raise ScriptError("expected an expression")
+    return ExpressionParser(tokens).parse()
 
 
 def parse_script(text):
@@ -93,6 +248,8 @@ def parse_script(text):
         line = raw_line.strip()
         if not line or line.startswith("#") or line.startswith("//"):
             continue
+        if len(instructions) >= MAX_INSTRUCTIONS:
+            raise ScriptError(f"line {line_number}: script exceeds the {MAX_INSTRUCTIONS}-instruction limit")
 
         try:
             instructions.append(_parse_line(line))
@@ -118,30 +275,19 @@ def _parse_line(line):
     upper = line.upper()
 
     if upper.startswith("WAIT "):
-        ms_text = line[5:].strip()
-        try:
-            ms = int(ms_text)
-        except ValueError:
-            raise ScriptError(f"invalid WAIT duration: {ms_text}")
-        if ms < 0:
-            raise ScriptError("WAIT duration must be >= 0")
-        return Instruction("WAIT", {"ms": ms})
+        return Instruction("WAIT", {"expr": parse_expression(line[5:].strip())})
 
     if upper.startswith("LOG "):
-        text = line[4:].strip()
-        if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
-            text = text[1:-1]
-        return Instruction("LOG", {"text": text})
+        return Instruction("LOG", {"expr": parse_expression(line[4:].strip())})
+
+    if upper.startswith("LET "):
+        return Instruction("LET", _parse_let_args(line[4:].strip()))
 
     if upper == "REPEAT" or upper.startswith("REPEAT "):
         count_text = line[6:].strip() if len(line) > 6 else ""
-        try:
-            count = int(count_text)
-        except ValueError:
-            raise ScriptError(f"invalid REPEAT count: {count_text!r}")
-        if count < 1:
-            raise ScriptError("REPEAT count must be at least 1")
-        return Instruction("REPEAT", {"count": count})
+        if not count_text:
+            raise ScriptError("REPEAT requires a count")
+        return Instruction("REPEAT", {"expr": parse_expression(count_text)})
 
     if upper == "END":
         return Instruction("END")
@@ -158,6 +304,18 @@ def _parse_line(line):
     raise ScriptError(f"unrecognized command: {line}")
 
 
+def _parse_let_args(rest):
+    if "=" not in rest:
+        raise ScriptError("LET requires '<name> = <expr>'")
+    name, expr_text = rest.split("=", 1)
+    name = name.strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ScriptError(f"invalid variable name: {name!r}")
+    if name.upper() in TYPE_ALIASES:
+        raise ScriptError(f"'{name}' is a reserved type name and can't be used as a variable")
+    return {"name": name, "expr": parse_expression(expr_text)}
+
+
 def _parse_write_args(rest):
     if "=" not in rest:
         raise ScriptError("WRITE requires '<TYPE> <ADDR> = <VALUE>'")
@@ -169,11 +327,14 @@ def _parse_write_args(rest):
     if data_type not in WRITABLE_TYPES:
         raise ScriptError(f"{data_type} cannot be written")
     try:
-        address = int(parts[1], 0)
+        address = check_address(int(parts[1], 0))
     except ValueError:
         raise ScriptError(f"invalid address: {parts[1]}")
-    value = parse_value_token(value_text, is_bit=(data_type == "Coil"))
-    return {"type": data_type, "address": address, "value": value}
+
+    value_text = value_text.strip()
+    if data_type == "Coil":
+        return {"type": data_type, "address": address, "bit_value": parse_bit_keyword(value_text)}
+    return {"type": data_type, "address": address, "expr": parse_expression(value_text)}
 
 
 def _parse_read_args(rest):
@@ -182,7 +343,7 @@ def _parse_read_args(rest):
         raise ScriptError("READ requires '<TYPE> <ADDR>'")
     data_type = parse_type_token(parts[0])
     try:
-        address = int(parts[1], 0)
+        address = check_address(int(parts[1], 0))
     except ValueError:
         raise ScriptError(f"invalid address: {parts[1]}")
     return {"type": data_type, "address": address}
@@ -190,32 +351,25 @@ def _parse_read_args(rest):
 
 def _parse_if(rest):
     if " THEN " not in f" {rest.upper()} ":
-        raise ScriptError("IF requires '<TYPE> <ADDR> <OP> <VALUE> THEN <command>'")
+        raise ScriptError("IF requires '<expr> <op> <expr> THEN <command>'")
     then_pos = rest.upper().index("THEN")
     condition_part = rest[:then_pos].strip()
     then_part = rest[then_pos + 4:].strip()
     if not then_part:
         raise ScriptError("IF ... THEN is missing a command")
 
-    match = re.match(r"^(\S+)\s+(\S+)\s*(==|!=|>=|<=|>|<)\s*(\S+)$", condition_part)
-    if not match:
-        raise ScriptError(f"invalid IF condition: {condition_part}")
-    type_token, addr_token, op, value_token = match.groups()
-    data_type = parse_type_token(type_token)
-    try:
-        address = int(addr_token, 0)
-    except ValueError:
-        raise ScriptError(f"invalid address: {addr_token}")
-    compare_value = parse_value_token(value_token, is_bit=(data_type in BIT_TYPES))
+    op_match = re.search(r"(==|!=|>=|<=|>|<)", condition_part)
+    if not op_match:
+        raise ScriptError(f"invalid IF condition (missing comparison operator): {condition_part}")
+    op = op_match.group(1)
+    left_expr = parse_expression(condition_part[:op_match.start()])
+    right_expr = parse_expression(condition_part[op_match.end():])
 
     then_instruction = _parse_line(then_part)
     if then_instruction.op in ("REPEAT", "END", "IF"):
         raise ScriptError("IF...THEN cannot contain REPEAT, END, or a nested IF")
 
-    return Instruction("IF", {
-        "type": data_type, "address": address, "op": op, "value": compare_value,
-        "then": then_instruction,
-    })
+    return Instruction("IF", {"left": left_expr, "op": op, "right": right_expr, "then": then_instruction})
 
 
 class ScriptRunner:
@@ -227,36 +381,58 @@ class ScriptRunner:
         self.instructions = []
         self.pc = 0
         self.repeat_counters = {}
+        self.variables = {}
 
     def load(self, instructions):
         self.instructions = instructions
         self.pc = 0
         self.repeat_counters = {}
+        self.variables = {}
 
     def finished(self):
         return self.pc >= len(self.instructions)
 
     def step(self):
-        """Run instructions until a WAIT is hit (returns its ms) or the script ends (returns None)."""
+        """Run instructions until a WAIT is hit (returns its ms), the script ends (returns
+        None), or MAX_STEPS_PER_TICK instructions have run (returns 0) -- a tight loop with
+        no WAIT still has to hand control back to the UI regularly instead of freezing it."""
+        executed = 0
         while self.pc < len(self.instructions):
             instr = self.instructions[self.pc]
             wait_ms = self._execute(instr)
             self.pc += 1
+            executed += 1
             if wait_ms is not None:
                 return wait_ms
+            if executed >= MAX_STEPS_PER_TICK:
+                return 0
         return None
 
     def _execute(self, instr):
         if instr.op == "WAIT":
-            return instr.args["ms"]
+            ms = self._eval_int(instr.args["expr"])
+            if ms < 0:
+                raise ScriptError("WAIT duration must be >= 0")
+            if ms > MAX_WAIT_MS:
+                raise ScriptError(f"WAIT duration exceeds the {MAX_WAIT_MS}ms limit")
+            return ms
 
         if instr.op == "LOG":
-            self.log(instr.args["text"])
+            self.log(str(self._eval(instr.args["expr"])))
+            return None
+
+        if instr.op == "LET":
+            self.variables[instr.args["name"]] = self._eval(instr.args["expr"])
             return None
 
         if instr.op == "REPEAT":
             if self.pc not in self.repeat_counters:
-                self.repeat_counters[self.pc] = instr.args["count"]
+                count = self._eval_int(instr.args["expr"])
+                if count < 0:
+                    raise ScriptError("REPEAT count must be >= 0")
+                if count > MAX_REPEAT_COUNT:
+                    raise ScriptError(f"REPEAT count exceeds the {MAX_REPEAT_COUNT} limit")
+                self.repeat_counters[self.pc] = count
             if self.repeat_counters[self.pc] > 0:
                 self.repeat_counters[self.pc] -= 1
             else:
@@ -269,7 +445,11 @@ class ScriptRunner:
             return None
 
         if instr.op == "WRITE":
-            self._do_write(instr.args["type"], instr.args["address"], instr.args["value"])
+            if instr.args["type"] == "Coil":
+                value = instr.args["bit_value"]
+            else:
+                value = self._eval_int(instr.args["expr"]) & 0xFFFF
+            self._do_write(instr.args["type"], instr.args["address"], value)
             return None
 
         if instr.op == "READ":
@@ -278,12 +458,78 @@ class ScriptRunner:
             return None
 
         if instr.op == "IF":
-            value = self._do_read(instr.args["type"], instr.args["address"])
-            if value is not None and COMPARATORS[instr.args["op"]](value, instr.args["value"]):
+            left = self._eval(instr.args["left"])
+            right = self._eval(instr.args["right"])
+            if COMPARATORS[instr.args["op"]](left, right):
                 return self._execute(instr.args["then"])
             return None
 
         raise ScriptError(f"unknown instruction {instr.op}")
+
+    # --- expression evaluation ---
+
+    def _eval_int(self, node):
+        value = self._eval(node)
+        if isinstance(value, str):
+            raise ScriptError("expected a number here, got text")
+        return int(value)
+
+    def _eval(self, node):
+        try:
+            return self._eval_node(node, depth=0)
+        except RecursionError:
+            raise ScriptError("expression is too deeply nested")
+
+    def _eval_node(self, node, depth):
+        if depth > MAX_EXPR_DEPTH:
+            raise ScriptError("expression is too deeply nested")
+        kind = node[0]
+
+        if kind == "num":
+            return node[1]
+        if kind == "str":
+            return node[1]
+        if kind == "var":
+            name = node[1]
+            if name not in self.variables:
+                raise ScriptError(f"undefined variable '{name}'")
+            return self.variables[name]
+        if kind == "read":
+            _, data_type, address = node
+            value = self._do_read(data_type, address)
+            if value is None:
+                raise ScriptError(f"read failed for {data_type} {address}")
+            return value
+        if kind == "neg":
+            value = self._eval_node(node[1], depth + 1)
+            if isinstance(value, str):
+                raise ScriptError("cannot negate text")
+            return -value
+        if kind == "binop":
+            _, op, left_node, right_node = node
+            left = self._eval_node(left_node, depth + 1)
+            right = self._eval_node(right_node, depth + 1)
+            return self._apply_binop(op, left, right)
+
+        raise ScriptError(f"cannot evaluate expression node '{kind}'")
+
+    @staticmethod
+    def _apply_binop(op, left, right):
+        if op == "+":
+            if isinstance(left, str) or isinstance(right, str):
+                return f"{left}{right}"
+            return left + right
+        if isinstance(left, str) or isinstance(right, str):
+            raise ScriptError(f"'{op}' cannot be used with text")
+        if op == "-":
+            return left - right
+        if op == "*":
+            return left * right
+        if op == "/":
+            if right == 0:
+                raise ScriptError("division by zero")
+            return left / right
+        raise ScriptError(f"unknown operator '{op}'")
 
     def _require_modbus(self):
         modbus = self.modbus_getter()
@@ -316,7 +562,7 @@ class ScriptRunner:
 
 
 class ScriptWidget(QWidget):
-    """A small, purpose-built test-sequence language: WRITE/READ/WAIT/LOG/REPEAT/IF."""
+    """A small, purpose-built test-sequence language: WRITE/READ/WAIT/LOG/LET/REPEAT/IF."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -341,6 +587,11 @@ class ScriptWidget(QWidget):
         layout.setSpacing(8)
 
         toolbar = QHBoxLayout()
+
+        self.compile_btn = QPushButton("Compile")
+        self.compile_btn.setStyleSheet(self._button_style())
+        self.compile_btn.clicked.connect(self._compile)
+        toolbar.addWidget(self.compile_btn)
 
         self.run_btn = QPushButton("Run")
         self.run_btn.setStyleSheet(self._button_style())
@@ -398,6 +649,47 @@ class ScriptWidget(QWidget):
         QMessageBox.warning(self, "Not Connected", "Connect to a Modbus server before running a script.")
         return False
 
+    def _compile(self):
+        """Validate the script's syntax without running it against a device."""
+        try:
+            instructions = parse_script(self.editor.toPlainText())
+        except ScriptError as e:
+            self._log_console(f"Compile failed: {e}")
+            QMessageBox.warning(self, "Compile Error", str(e))
+            return
+        except Exception as e:
+            self._log_console(f"Compile failed: {e}")
+            QMessageBox.warning(self, "Compile Error", f"Could not parse script: {e}")
+            return
+
+        self._log_console(f"Compiled OK - {len(instructions)} instruction(s)")
+        QMessageBox.information(self, "Compile", f"Script compiled successfully ({len(instructions)} instruction(s)).")
+
+    def _confirm_run_on_live_system(self):
+        settings = QSettings("ModbusLens", "ModbusLens")
+        if settings.value(HIDE_RUN_WARNING_KEY, False, type=bool):
+            return True
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Run Script")
+        box.setText(
+            "This script can WRITE to a live Modbus device.\n\n"
+            "Running it against a real, in-service system can change outputs, setpoints, "
+            "or coils unexpectedly. Review the script and make sure you understand what "
+            "it does before running it against live equipment."
+        )
+        remember_checkbox = QCheckBox("Don't remind me again")
+        box.setCheckBox(remember_checkbox)
+        box.addButton("Run", QMessageBox.AcceptRole)
+        cancel_btn = box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.exec()
+
+        if remember_checkbox.isChecked():
+            settings.setValue(HIDE_RUN_WARNING_KEY, True)
+        return box.clickedButton() is not cancel_btn
+
     def _run(self):
         if self.running:
             return
@@ -409,8 +701,15 @@ class ScriptWidget(QWidget):
         except ScriptError as e:
             QMessageBox.warning(self, "Script Error", str(e))
             return
+        except Exception as e:
+            # A parser bug should not crash the app -- fail the run with a message instead.
+            QMessageBox.warning(self, "Script Error", f"Could not parse script: {e}")
+            return
         if not instructions:
             QMessageBox.warning(self, "Empty Script", "Nothing to run.")
+            return
+
+        if not self._confirm_run_on_live_system():
             return
 
         self.runner = ScriptRunner(lambda: getattr(self.parent_window, "modbus", None), self._log_console)
@@ -429,6 +728,12 @@ class ScriptWidget(QWidget):
             wait_ms = self.runner.step()
         except ScriptError as e:
             self._log_console(f"Error: {e}")
+            self._stop()
+            return
+        except Exception as e:
+            # Anything unexpected stops the script cleanly rather than propagating out of
+            # a timer callback and potentially destabilizing the rest of the application.
+            self._log_console(f"Unexpected error, stopping script: {e}")
             self._stop()
             return
 
