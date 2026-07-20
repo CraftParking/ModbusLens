@@ -24,6 +24,10 @@ SPACES = [
 ]
 BIT_SPACES = (1, 2)
 
+# Maps script-language type names (see script_widget.TYPE_ALIASES) to the function
+# codes used to look up each space's offset in the simulator context.
+_TYPE_TO_FC = {"Coil": 1, "Discrete Input": 2, "Holding Register": 3, "Input Register": 4}
+
 # pymodbus's ServerStop() targets a single process-wide pointer to "the" running server
 # (ModbusBaseServer.active_server), so only one ServerWidget -- across every open window --
 # can actually own a stoppable server at a time. Tracked here, not per-instance.
@@ -281,6 +285,41 @@ class ServerWidget(QWidget):
             cell.value |= (1 << bit_pos)
         else:
             cell.value &= ~(1 << bit_pos)
+
+    # --- Direct datastore access (used by a "Server Script" in the Script tab) ---
+
+    def read_value(self, data_type, address):
+        """Read one value straight out of the local datastore. Returns None if the
+        server isn't running or the address is out of range."""
+        if not self.running or self.sim_context is None:
+            return None
+        fc = _TYPE_TO_FC[data_type]
+        offset = self.sim_context.fc_offset[fc]
+        if fc in BIT_SPACES:
+            bit = self._read_bit(offset, address)
+            return None if bit is None else int(bit)
+        idx = offset + address
+        if not (0 <= idx < len(self.sim_context.registers)):
+            return None
+        return self.sim_context.registers[idx].value
+
+    def write_value(self, data_type, address, value):
+        """Write one value straight into the local datastore. All four data spaces are
+        writable here (unlike a real client, a server script is simulating the device
+        itself, so setting an Input Register/Discrete Input directly is the point).
+        Returns False if the server isn't running or the address is out of range."""
+        if not self.running or self.sim_context is None:
+            return False
+        fc = _TYPE_TO_FC[data_type]
+        offset = self.sim_context.fc_offset[fc]
+        if fc in BIT_SPACES:
+            self._write_bit(offset, address, bool(value))
+            return True
+        idx = offset + address
+        if not (0 <= idx < len(self.sim_context.registers)):
+            return False
+        self.sim_context.registers[idx].value = int(value) & 0xFFFF
+        return True
 
     def _load_view(self):
         if not self.running or self.sim_context is None:

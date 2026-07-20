@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit,
-    QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox
+    QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox, QLabel, QComboBox, QMenu
 )
 
 HIDE_RUN_WARNING_KEY = "hide_script_run_warning"
@@ -18,6 +18,7 @@ TYPE_ALIASES = {
 }
 WRITABLE_TYPES = ("Coil", "Holding Register")
 BIT_TYPES = ("Coil", "Discrete Input")
+REVERSE_TYPE_ALIASES = {full: short for short, full in TYPE_ALIASES.items()}
 MIN_ADDRESS, MAX_ADDRESS = 0, 65535
 
 COMPARATORS = {
@@ -317,6 +318,10 @@ def _parse_let_args(rest):
 
 
 def _parse_write_args(rest):
+    """Parsed independently of the eventual run target: WRITE to any of the four types
+    compiles fine here, and WRITABLE_TYPES is enforced at runtime instead, since a
+    Client-target script may only write Coil/Holding Register while a Server-target
+    script (simulating the device itself) may write all four."""
     if "=" not in rest:
         raise ScriptError("WRITE requires '<TYPE> <ADDR> = <VALUE>'")
     lhs, value_text = rest.split("=", 1)
@@ -324,15 +329,13 @@ def _parse_write_args(rest):
     if len(parts) != 2:
         raise ScriptError("WRITE requires '<TYPE> <ADDR> = <VALUE>'")
     data_type = parse_type_token(parts[0])
-    if data_type not in WRITABLE_TYPES:
-        raise ScriptError(f"{data_type} cannot be written")
     try:
         address = check_address(int(parts[1], 0))
     except ValueError:
         raise ScriptError(f"invalid address: {parts[1]}")
 
     value_text = value_text.strip()
-    if data_type == "Coil":
+    if data_type in BIT_TYPES:
         return {"type": data_type, "address": address, "bit_value": parse_bit_keyword(value_text)}
     return {"type": data_type, "address": address, "expr": parse_expression(value_text)}
 
@@ -375,8 +378,10 @@ def _parse_if(rest):
 class ScriptRunner:
     """Drives a compiled script one instruction at a time; WAIT hands control back instead of blocking."""
 
-    def __init__(self, modbus_getter, log_callback):
+    def __init__(self, modbus_getter, server_getter, target_mode, log_callback):
         self.modbus_getter = modbus_getter
+        self.server_getter = server_getter
+        self.target_mode = target_mode  # "client" or "server"
         self.log = log_callback
         self.instructions = []
         self.pc = 0
@@ -445,7 +450,7 @@ class ScriptRunner:
             return None
 
         if instr.op == "WRITE":
-            if instr.args["type"] == "Coil":
+            if instr.args["type"] in BIT_TYPES:
                 value = instr.args["bit_value"]
             else:
                 value = self._eval_int(instr.args["expr"]) & 0xFFFF
@@ -537,7 +542,21 @@ class ScriptRunner:
             raise ScriptError("not connected to a Modbus server")
         return modbus
 
+    def _require_server(self):
+        server = self.server_getter()
+        if not server or not server.running:
+            raise ScriptError("Server is not running - start it on the Server tab first")
+        return server
+
     def _do_write(self, data_type, address, value):
+        if self.target_mode == "server":
+            server = self._require_server()
+            ok = server.write_value(data_type, address, value)
+            self.log(f"WRITE {data_type} {address} = {value} (server) {'OK' if ok else 'FAILED'}")
+            return
+
+        if data_type not in WRITABLE_TYPES:
+            raise ScriptError(f"{data_type} cannot be written to a client connection")
         modbus = self._require_modbus()
         if data_type == "Coil":
             ok = modbus.write_coil(address, bool(value))
@@ -546,6 +565,10 @@ class ScriptRunner:
         self.log(f"WRITE {data_type} {address} = {value} {'OK' if ok else 'FAILED'}")
 
     def _do_read(self, data_type, address):
+        if self.target_mode == "server":
+            server = self._require_server()
+            return server.read_value(data_type, address)
+
         modbus = self._require_modbus()
         if data_type == "Coil":
             data = modbus.read_coils(address, 1)
@@ -581,12 +604,30 @@ class ScriptWidget(QWidget):
             return self.parent_window._get_button_style()
         return ""
 
+    def _input_style(self):
+        if self.parent_window is not None and hasattr(self.parent_window, "_get_input_style"):
+            return self.parent_window._get_input_style()
+        return ""
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
         toolbar = QHBoxLayout()
+
+        toolbar.addWidget(QLabel("Target:"))
+        self.target_combo = QComboBox()
+        self.target_combo.setStyleSheet(self._input_style())
+        self.target_combo.addItem("Client Connection", "client")
+        self.target_combo.addItem("Server (Local)", "server")
+        self.target_combo.setToolTip(
+            "Client Connection: WRITE/READ talk to the remote device via the Connection tab.\n"
+            "Server (Local): WRITE/READ act directly on this app's own Server tab datastore, "
+            "letting a script simulate a device instead of controlling one."
+        )
+        toolbar.addWidget(self.target_combo)
+        toolbar.addSpacing(10)
 
         self.compile_btn = QPushButton("Compile")
         self.compile_btn.setStyleSheet(self._button_style())
@@ -627,6 +668,8 @@ class ScriptWidget(QWidget):
         self.editor = QPlainTextEdit()
         self.editor.setFont(QFont("Consolas", 10))
         self.editor.setPlaceholderText(DEFAULT_SCRIPT_HELP)
+        self.editor.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.editor.customContextMenuRequested.connect(self._show_editor_context_menu)
         splitter.addWidget(self.editor)
 
         self.console = QTextEdit()
@@ -642,11 +685,48 @@ class ScriptWidget(QWidget):
         timestamp = time.strftime("[%H:%M:%S]")
         self.console.append(f"{timestamp} {message}")
 
-    def _check_connection(self):
+    def _show_editor_context_menu(self, pos):
+        cursor = self.editor.cursorForPosition(pos)
+        self.editor.setTextCursor(cursor)
+
+        menu = self.editor.createStandardContextMenu()
+        menu.addSeparator()
+
+        tags_menu = menu.addMenu("Insert Tag")
+        tags = []
+        if self.parent_window is not None and hasattr(self.parent_window, "_get_monitoring_tags"):
+            tags = self.parent_window._get_monitoring_tags()
+
+        if not tags:
+            no_tags_action = tags_menu.addAction("No tags configured")
+            no_tags_action.setEnabled(False)
+        else:
+            for tag in tags:
+                alias = REVERSE_TYPE_ALIASES.get(tag["type"], tag["type"])
+                action = tags_menu.addAction(f"{tag['name']}  ({alias} {tag['address']})")
+                action.triggered.connect(lambda checked=False, t=tag: self._insert_tag_reference(t))
+
+        menu.exec(self.editor.mapToGlobal(pos))
+
+    def _insert_tag_reference(self, tag):
+        alias = REVERSE_TYPE_ALIASES.get(tag["type"], tag["type"])
+        self.editor.insertPlainText(f"{alias} {tag['address']}")
+
+    def _target_mode(self):
+        return self.target_combo.currentData()
+
+    def _check_target_ready(self):
+        if self._target_mode() == "server":
+            server = getattr(self.parent_window, "server_widget", None)
+            if server and server.running:
+                return True
+            QMessageBox.warning(self, "Server Not Running", "Start the Server tab before running a Server-target script.")
+            return False
+
         modbus = getattr(self.parent_window, "modbus", None)
         if modbus and modbus.is_connected():
             return True
-        QMessageBox.warning(self, "Not Connected", "Connect to a Modbus server before running a script.")
+        QMessageBox.warning(self, "Not Connected", "Connect to a Modbus server before running a Client-target script.")
         return False
 
     def _compile(self):
@@ -693,7 +773,7 @@ class ScriptWidget(QWidget):
     def _run(self):
         if self.running:
             return
-        if not self._check_connection():
+        if not self._check_target_ready():
             return
 
         try:
@@ -709,16 +789,25 @@ class ScriptWidget(QWidget):
             QMessageBox.warning(self, "Empty Script", "Nothing to run.")
             return
 
-        if not self._confirm_run_on_live_system():
+        target_mode = self._target_mode()
+        # A Server-target script only ever touches this app's own local simulator, so the
+        # live-equipment warning (meant for a real remote device) doesn't apply to it.
+        if target_mode == "client" and not self._confirm_run_on_live_system():
             return
 
-        self.runner = ScriptRunner(lambda: getattr(self.parent_window, "modbus", None), self._log_console)
+        self.runner = ScriptRunner(
+            lambda: getattr(self.parent_window, "modbus", None),
+            lambda: getattr(self.parent_window, "server_widget", None),
+            target_mode,
+            self._log_console,
+        )
         self.runner.load(instructions)
         self.running = True
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        self.target_combo.setEnabled(False)
         self.editor.setReadOnly(True)
-        self._log_console("Script started")
+        self._log_console(f"Script started (target: {self.target_combo.currentText()})")
         self._resume()
 
     def _resume(self):
@@ -750,6 +839,7 @@ class ScriptWidget(QWidget):
         self.runner = None
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self.target_combo.setEnabled(True)
         self.editor.setReadOnly(False)
         if user_initiated:
             self._log_console("Script stopped")
