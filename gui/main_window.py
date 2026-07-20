@@ -24,6 +24,7 @@ from widgets.status_indicator import StatusIndicator
 from widgets.address_table import AddressTableWidget
 from widgets.trend_widget import TrendWidget
 from widgets.server_widget import ServerWidget
+from widgets.script_widget import ScriptWidget
 from diagnostics.advanced_diagnostics import AdvancedDiagnostics
 from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
 from monitoring.monitoring_manager import MonitoringManager
@@ -426,6 +427,9 @@ class ModbusGUI(QMainWindow):
         # Server tab
         self._setup_server_tab()
 
+        # Script tab
+        self._setup_script_tab()
+
         # Connect tab change signal for interlock
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
@@ -447,6 +451,11 @@ class ModbusGUI(QMainWindow):
         """Setup Server tab (Modbus TCP slave simulator)."""
         self.server_widget = ServerWidget(self)
         self.tab_widget.addTab(self.server_widget, "Server")
+
+    def _setup_script_tab(self):
+        """Setup Script tab (WRITE/READ/WAIT/REPEAT/IF test sequences)."""
+        self.script_widget = ScriptWidget(self)
+        self.tab_widget.addTab(self.script_widget, "Script")
 
     def _setup_monitoring_tab(self):
         """Setup monitoring tab with real-time data display."""
@@ -2204,8 +2213,8 @@ Unit ID: {unit_id}<br><br>
         QMessageBox.information(self, "Data Templates", "Template management will be implemented in the next update!")
 
     def _show_scripting_console(self):
-        """Show scripting console."""
-        QMessageBox.information(self, "Scripting Console", "Scripting console will be implemented in the next update!")
+        """Jump to the Script tab."""
+        self.tab_widget.setCurrentWidget(self.script_widget)
 
     def _network_diagnostics(self): 
         """Show network diagnostics.""" 
