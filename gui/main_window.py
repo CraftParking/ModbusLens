@@ -292,8 +292,7 @@ class ModbusGUI(QMainWindow):
         tools_menu.addAction("Connection Settings", self._show_connection_settings)
         tools_menu.addAction("Connection Profiles", self._manage_profiles)
         tools_menu.addAction("Data Templates", self._manage_templates)
-        tools_menu.addAction("Scripting Console", self._show_scripting_console)
-        
+
         # Diagnostics menu
         diagnostics_menu = menubar.addMenu("&Diagnostics")
         diagnostics_menu.addAction("Network Discovery & Diagnostics", self._network_diagnostics)
@@ -2212,11 +2211,7 @@ Unit ID: {unit_id}<br><br>
         """Manage data templates."""
         QMessageBox.information(self, "Data Templates", "Template management will be implemented in the next update!")
 
-    def _show_scripting_console(self):
-        """Jump to the Script tab."""
-        self.tab_widget.setCurrentWidget(self.script_widget)
-
-    def _network_diagnostics(self): 
+    def _network_diagnostics(self):
         """Show network diagnostics.""" 
         self.network_diagnostics.show_diagnostics(self.target_ip, self.target_port, self.target_unit_id)
 
