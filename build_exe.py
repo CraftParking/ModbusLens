@@ -40,6 +40,8 @@ def build_exe():
         '--hidden-import=gui.network.network_diagnostics',
         '--hidden-import=core.modbus_client',
         '--hidden-import=app_paths',
+        '--hidden-import=serial',
+        '--hidden-import=serial.tools.list_ports',
         '--exclude-module=PySide6.QtWebEngine',
         '--exclude-module=PySide6.QtWebEngineCore',
         '--exclude-module=PySide6.QtWebEngineWidgets',
