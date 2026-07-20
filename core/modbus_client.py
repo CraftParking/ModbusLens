@@ -1,32 +1,59 @@
 import logging
 from typing import Optional, List, Union
-from pymodbus.client import ModbusTcpClient
+from pymodbus.client import ModbusTcpClient, ModbusSerialClient
 
 logger = logging.getLogger(__name__)
 
 
 class ModbusClient:
-    def __init__(self, ip="127.0.0.1", port=502, unit_id=1, timeout=1.5, retries=1):
+    """Wraps a pymodbus TCP or serial (RTU) client behind one interface.
+
+    Every read/write method below only ever touches self.client, so the rest of the app
+    (Address Table, Tags, Trend, Server, Script) works unchanged regardless of transport --
+    only connect() needs to know the difference between TCP and serial.
+    """
+
+    def __init__(self, ip="127.0.0.1", port=502, unit_id=1, timeout=1.5, retries=1,
+                 mode="tcp", serial_port="COM1", baudrate=19200, parity="N", stopbits=1, bytesize=8):
+        self.mode = mode  # "tcp" or "serial"
         self.ip = ip
         self.port = port
         self.unit_id = unit_id
         self.timeout = timeout
         self.retries = retries
-        self.client: Optional[ModbusTcpClient] = None
+        self.serial_port = serial_port
+        self.baudrate = baudrate
+        self.parity = parity
+        self.stopbits = stopbits
+        self.bytesize = bytesize
+        self.client: Optional[Union[ModbusTcpClient, ModbusSerialClient]] = None
         self._connected = False
         self.last_error: Optional[str] = None
+
+    def target_description(self):
+        if self.mode == "serial":
+            return f"{self.serial_port} @ {self.baudrate} baud"
+        return f"{self.ip}:{self.port}"
 
     def connect(self):
         if self.client:
             self.client.close()
         try:
-            self.client = ModbusTcpClient(host=self.ip, port=self.port, timeout=self.timeout, retries=self.retries)
+            if self.mode == "serial":
+                self.client = ModbusSerialClient(
+                    port=self.serial_port, baudrate=self.baudrate, parity=self.parity,
+                    stopbits=self.stopbits, bytesize=self.bytesize,
+                    timeout=self.timeout, retries=self.retries,
+                )
+            else:
+                self.client = ModbusTcpClient(host=self.ip, port=self.port, timeout=self.timeout, retries=self.retries)
+
             self._connected = self.client.connect()
             if self._connected:
                 self.last_error = None
-                logger.info(f"Connected to Modbus server at {self.ip}:{self.port}")
+                logger.info(f"Connected to Modbus server at {self.target_description()}")
             else:
-                self.last_error = f"Failed to connect to Modbus server at {self.ip}:{self.port}"
+                self.last_error = f"Failed to connect to Modbus server at {self.target_description()}"
                 logger.error(self.last_error)
             return self._connected
         except Exception as e:
