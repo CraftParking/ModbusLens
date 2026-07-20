@@ -25,6 +25,7 @@ from widgets.address_table import AddressTableWidget
 from widgets.trend_widget import TrendWidget
 from widgets.server_widget import ServerWidget
 from widgets.script_widget import ScriptWidget
+from widgets.documentation_dialog import DocumentationDialog
 from diagnostics.advanced_diagnostics import AdvancedDiagnostics
 from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
 from monitoring.monitoring_manager import MonitoringManager
@@ -2216,8 +2217,9 @@ Unit ID: {unit_id}<br><br>
         self.network_diagnostics.show_diagnostics(self.target_ip, self.target_port, self.target_unit_id)
 
     def _show_documentation(self):
-        """Show documentation."""
-        QMessageBox.information(self, "Documentation", "Documentation viewer will be implemented in the next update!")
+        """Show the Help documentation."""
+        dialog = DocumentationDialog(self)
+        dialog.exec()
 
     def _show_about(self):
         """Show about dialog."""
