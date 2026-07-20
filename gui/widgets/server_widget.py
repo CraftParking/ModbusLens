@@ -127,15 +127,6 @@ class ServerWidget(QWidget):
         view_row.addStretch()
         layout.addLayout(view_row)
 
-        note = QLabel(
-            "Double-click a Value cell to set it, as if you were the field device. "
-            "A remote master reading this space over the network sees the same value; "
-            "Coils and Holding Registers are also writable by a remote master."
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #666666; font-size: 11px;")
-        layout.addWidget(note)
-
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Address", "Value"])
