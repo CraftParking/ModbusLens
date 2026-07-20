@@ -33,7 +33,7 @@ from network.network_diagnostics import NetworkDiagnosticsDialog
 from core.modbus_client import ModbusClient
 from app_paths import resource_path, app_data_dir
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
@@ -2230,17 +2230,19 @@ Unit ID: {unit_id}<br><br>
             "<h4>Key Features</h4>"
             "<ul>"
             "<li>Modbus TCP read/write (coils, inputs, registers)</li>"
-            "<li>Tag-based real-time monitoring</li>"
+            "<li>Tag-based real-time monitoring, with alarms and CSV logging</li>"
+            "<li>Live/historical trend graphing</li>"
+            "<li>Server mode - act as a Modbus TCP slave</li>"
+            "<li>Scripting language for repeatable test sequences</li>"
+            "<li>Multiple simultaneous connections (one per window)</li>"
             "<li>Network discovery & diagnostics (ARP + Modbus detection)</li>"
             "</ul>"
-            
+
             "<h4>Upcoming Features</h4>"
             "<ul>"
-            "<li>Modbus RTU support</li>"
-            "<li>Multi-device management</li>"
-            "<li>Data logging and export</li>"
-            "<li>Advanced scripting and automation</li>"
-            "<li>Graphical data visualization (charts, trends, live graphs)</li>"
+            "<li>Modbus RTU (serial) support</li>"
+            "<li>Unified multi-device dashboard</li>"
+            "<li>Register maps with mixed data types per device profile</li>"
             "</ul>"
             
             "<h4>Support</h4>"

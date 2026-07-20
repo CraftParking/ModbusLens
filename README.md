@@ -56,6 +56,21 @@
   <img src="assets/tag_address.PNG" width="90%">
 </p>
 
+### Trend
+<p align="center">
+  <img src="assets/trend.PNG" width="90%">
+</p>
+
+### Server Mode
+<p align="center">
+  <img src="assets/server.PNG" width="90%">
+</p>
+
+### Scripting
+<p align="center">
+  <img src="assets/script.PNG" width="90%">
+</p>
+
 ### Network Discovery & Diagnostics
 <p align="center">
   <img src="assets/network_diag.PNG" width="90%">
