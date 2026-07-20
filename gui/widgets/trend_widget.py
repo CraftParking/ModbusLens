@@ -494,8 +494,8 @@ class TrendWidget(QWidget):
         axis_pen = QPen(s["axis_color"])
         self.axis_x.setLinePen(axis_pen)
         self.axis_y.setLinePen(axis_pen)
-        self.axis_x.setLabelsColor(s["axis_color"])
-        self.axis_y.setLabelsColor(s["axis_color"])
+        self.axis_x.setLabelsColor(s["grid_color"])
+        self.axis_y.setLabelsColor(s["grid_color"])
         self.axis_x.setGridLineVisible(s["grid_visible"])
         self.axis_y.setGridLineVisible(s["grid_visible"])
         grid_pen = QPen(s["grid_color"])
@@ -503,6 +503,8 @@ class TrendWidget(QWidget):
         self.axis_y.setGridLinePen(grid_pen)
         self.axis_x.setTitleText(s["x_title"])
         self.axis_y.setTitleText(s["y_title"])
+        self.axis_x.setTitleBrush(s["grid_color"])
+        self.axis_y.setTitleBrush(s["grid_color"])
         if not s["y_auto"]:
             self.axis_y.setRange(s["y_min"], s["y_max"])
 
