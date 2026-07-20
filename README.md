@@ -33,6 +33,9 @@
 - Clean, non-spam device listing
 - Integrated diagnostics + communication
 - Live/historical trend graphing with up to 20 pens
+- Act as a Modbus TCP slave for testing your own SCADA/PLC programs
+- Talk to multiple devices at once, each in its own window
+- Simple scripting for repeatable write/wait/read test sequences
 
 ---
 
@@ -81,26 +84,40 @@
 - Read coils, inputs, holding & input registers  
 - Write single/multiple coils & registers  
 - Address table for quick testing  
+- Multiple simultaneous connections via independent windows (File > New Connection Window)  
 
 ### Data Handling
 - BOOL, U16/S16, U32/S32, F32, HEX support  
 - BOOL on a register shows the full 16-bit pattern, not just a single flag  
 - Word order handling (*_SWAP)  
 - 0-based / 1-based addressing, selectable per Address Table range and per Tag  
+- Raw hex value shown alongside the decoded value, in both the Address Table and Tags  
 
 ### Monitoring
 - Real-time tag monitoring, with Read Value/Write Value/Timestamp built into the same Tags table  
 - Insert new tags anywhere in the list, not just at the end  
 - Write to a tag while monitoring stays active  
+- Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting  
+- Log live tag values to CSV  
 - CSV import/export  
 - Improved stability  
 
 ### Trend
 - Up to 20 pens, each bound to its own address/type/format  
 - Live mode (follows the current time) or Historical mode (view stays put while data keeps recording)  
-- Adjustable time window, zoom in/out  
+- Adjustable time window, zoom in/out, and a From/To jump to a specific past range  
 - Graph Properties: axis titles, background/axis/grid colors, grid on/off, Y-axis auto or manual range  
+- Log plotted values to CSV  
 - Print to PNG or PDF  
+
+### Server Mode
+- Act as a Modbus TCP slave so another master can poll ModbusLens directly  
+- Coils, Discrete Inputs, Holding Registers, and Input Registers are all editable live, as if you were the field device  
+- Useful for testing your own SCADA/PLC program without real hardware  
+
+### Scripting
+- A small, purpose-built test-sequence language: `WRITE`, `READ`, `WAIT`, `LOG`, `REPEAT...END`, `IF...THEN`  
+- Runs step by step without freezing the UI, with a console showing what ran  
 
 ### Network Diagnostics
 - ARP-based discovery  
@@ -150,11 +167,9 @@ pip install scapy
 
 ## Upcoming Features
 
-- Modbus RTU support  
-- Multi-device management  
-- Modbus server/slave mode  
-- Data logging  
-- Scripting & automation  
+- Modbus RTU (serial) support  
+- Unified multi-device dashboard (currently one window per device)  
+- Register maps with mixed data types per device profile  
 
 ---
 
