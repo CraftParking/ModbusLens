@@ -32,6 +32,7 @@ def build_exe():
         '--hidden-import=gui.widgets.address_table',
         '--hidden-import=gui.widgets.trend_widget',
         '--hidden-import=gui.widgets.server_widget',
+        '--hidden-import=gui.widgets.script_widget',
         '--hidden-import=gui.monitoring.monitoring_manager',
         '--hidden-import=gui.diagnostics.advanced_diagnostics',
         '--hidden-import=gui.diagnostics.diagnostics_dialogs',
