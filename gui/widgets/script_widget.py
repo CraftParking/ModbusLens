@@ -604,9 +604,9 @@ class ScriptWidget(QWidget):
 
         self._setup_ui()
 
-        self._process = psutil.Process() if psutil else None
-        if self._process is not None:
-            self._process.cpu_percent(interval=None)  # first call just primes the baseline
+        self._psutil_available = psutil is not None
+        if self._psutil_available:
+            psutil.cpu_percent(interval=None)  # first call just primes the baseline
             self.cpu_timer = QTimer(self)
             self.cpu_timer.timeout.connect(self._update_cpu_usage)
             self.cpu_timer.start(1000)
@@ -675,7 +675,7 @@ class ScriptWidget(QWidget):
         toolbar.addStretch()
 
         self.cpu_label = QLabel("CPU: --")
-        self.cpu_label.setToolTip("CPU usage of this ModbusLens process, useful for spotting a script loop that's running hot")
+        self.cpu_label.setToolTip("System-wide CPU usage, useful for spotting a script loop that's running hot")
         toolbar.addWidget(self.cpu_label)
 
         layout.addLayout(toolbar)
@@ -703,10 +703,10 @@ class ScriptWidget(QWidget):
         self.console.append(f"{timestamp} {message}")
 
     def _update_cpu_usage(self):
-        if self._process is None:
+        if not self._psutil_available:
             return
         try:
-            percent = self._process.cpu_percent(interval=None)
+            percent = psutil.cpu_percent(interval=None)
         except psutil.Error:
             self.cpu_label.setText("CPU: --")
             return
