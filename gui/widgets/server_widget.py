@@ -24,6 +24,11 @@ SPACES = [
 ]
 BIT_SPACES = (1, 2)
 
+# pymodbus's ServerStop() targets a single process-wide pointer to "the" running server
+# (ModbusBaseServer.active_server), so only one ServerWidget -- across every open window --
+# can actually own a stoppable server at a time. Tracked here, not per-instance.
+_active_server_widget = None
+
 
 class ServerWidget(QWidget):
     """Modbus TCP server/slave simulator: host a local device other masters can poll."""
@@ -175,6 +180,17 @@ class ServerWidget(QWidget):
         }
 
     def _start_server(self):
+        global _active_server_widget
+        if _active_server_widget is not None and _active_server_widget is not self:
+            QMessageBox.warning(
+                self,
+                "Server Already Running",
+                "Only one Server tab can be running at a time, across all open windows - "
+                "the underlying Modbus library supports a single active server per process. "
+                "Stop the other one first.",
+            )
+            return
+
         host = self.host_input.text().strip() or "0.0.0.0"
         port = self.port_input.value()
 
@@ -205,6 +221,7 @@ class ServerWidget(QWidget):
             return
 
         self.running = True
+        _active_server_widget = self
         self.host_input.setEnabled(False)
         self.port_input.setEnabled(False)
         self.unit_input.setEnabled(False)
@@ -217,10 +234,14 @@ class ServerWidget(QWidget):
         self.refresh_timer.start(500)
 
     def _stop_server(self):
+        global _active_server_widget
         try:
-            ServerStop()
+            if _active_server_widget is self:
+                ServerStop()
         except Exception:
             pass  # already stopped or never fully started -- nothing more to clean up
+        if _active_server_widget is self:
+            _active_server_widget = None
 
         self.refresh_timer.stop()
         self.running = False
