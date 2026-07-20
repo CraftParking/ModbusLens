@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QTableWidget,
     QComboBox, QSpinBox, QDoubleSpinBox, QTabWidget, QGroupBox,
     QApplication, QMessageBox, QDialog, QCheckBox,
-    QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu
+    QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPalette
@@ -202,9 +202,15 @@ class ModbusGUI(QMainWindow):
         self.connection_history = []
                 
         # Connection parameters
+        self.connection_mode = "tcp"  # "tcp" or "serial"
         self.target_ip = "127.0.0.1"
         self.target_port = 502
         self.target_unit_id = 1
+        self.serial_port = "COM1"
+        self.baudrate = 19200
+        self.parity = "N"
+        self.stopbits = 1
+        self.bytesize = 8
 
         # Initialize extracted components
         self.advanced_diagnostics = AdvancedDiagnostics()
@@ -386,7 +392,21 @@ class ModbusGUI(QMainWindow):
     def _update_connection_info(self):
         """Update the connection info label text."""
         if hasattr(self, 'connection_info_label'):
-            self.connection_info_label.setText(f"{self.target_ip}:{self.target_port} (Unit {self.target_unit_id})")
+            self.connection_info_label.setText(f"{self._target_description()} (Unit {self.target_unit_id})")
+
+    def _target_description(self):
+        if self.connection_mode == "serial":
+            return f"{self.serial_port} @ {self.baudrate} baud"
+        return f"{self.target_ip}:{self.target_port}"
+
+    def _build_connection_string(self):
+        """Serialize the current connection settings for the Recent Connections history."""
+        if self.connection_mode == "serial":
+            return (
+                f"serial:{self.serial_port}:{self.baudrate}:{self.parity}:"
+                f"{self.bytesize}:{self.stopbits}:{self.target_unit_id}"
+            )
+        return f"{self.target_ip}:{self.target_port}:{self.target_unit_id}"
 
     def _setup_operations_section(self, parent_layout):
         """Setup operations section with full height for address tables."""
@@ -1051,59 +1071,69 @@ class ModbusGUI(QMainWindow):
 
     def _show_connection_settings(self):
         """Show the connection settings dialog."""
-        dialog = ConnectionSettingsDialog(self, self.connection_history, self.target_ip, self.target_port, self.target_unit_id)
+        dialog = ConnectionSettingsDialog(self, self.connection_history, self)
         if dialog.exec() == QDialog.Accepted:
             vals = dialog.get_values()
+            self.connection_mode = vals['mode']
             self.target_ip = vals['ip']
             self.target_port = vals['port']
             self.target_unit_id = vals['unit']
+            self.serial_port = vals['serial_port']
+            self.baudrate = vals['baudrate']
+            self.parity = vals['parity']
+            self.stopbits = vals['stopbits']
+            self.bytesize = vals['bytesize']
             self.connection_history = vals['history']
             self._update_connection_info()
             self._save_settings()
 
     def _connect(self):
         """Connect to Modbus server."""
+        target = self._target_description()
+        unit_id = self.target_unit_id
         try:
-            ip, port, unit_id = self.target_ip, self.target_port, self.target_unit_id
-
-            self.status_indicator.set_connection_info(f"Connecting to {ip}:{port}...")
+            self.status_indicator.set_connection_info(f"Connecting to {target}...")
             self.status_indicator.set_status("connecting")
             self._set_connection_controls(connected=False, connecting=True)
 
-            self.modbus = ModbusClient(ip, port, unit_id)
+            if self.connection_mode == "serial":
+                self.modbus = ModbusClient(
+                    unit_id=unit_id, mode="serial", serial_port=self.serial_port,
+                    baudrate=self.baudrate, parity=self.parity, stopbits=self.stopbits, bytesize=self.bytesize,
+                )
+            else:
+                self.modbus = ModbusClient(self.target_ip, self.target_port, unit_id)
 
             if self.modbus.connect():
-                conn_info = f"{ip}:{port} (Unit {unit_id})"
+                conn_info = f"{target} (Unit {unit_id})"
                 self.status_indicator.set_connection_info(conn_info)
                 self.status_indicator.set_status("connected")
                 self.connection_status.setText(f"Connected: {conn_info}")
                 self._set_connection_controls(connected=True)
 
                 # Add to connection history
-                connection_string = f"{ip}:{port}:{unit_id}"
+                connection_string = self._build_connection_string()
                 if connection_string in self.connection_history:
                     self.connection_history.remove(connection_string)
-                
+
                 self.connection_history.insert(0, connection_string)
                 self.connection_history = self.connection_history[:10]
                 self._save_settings()
 
-                self._log(f"Connected to Modbus server at {ip}:{port} (Unit ID: {unit_id})")
+                self._log(f"Connected to Modbus server at {target} (Unit ID: {unit_id})")
             else:
                 self.status_indicator.set_status("error")
                 self.status_indicator.set_connection_info("Connection failed")
                 self._set_connection_controls(connected=False)
                 self._log("Failed to connect to Modbus server")
-                # Show connection failure dialog
-                self._show_connection_error_dialog(ip, port, unit_id, "Connection failed")
+                self._show_connection_error_dialog(target, unit_id, "Connection failed")
 
         except Exception as e:
             self.status_indicator.set_status("error")
             self.status_indicator.set_connection_info("Error encountered")
             self._set_connection_controls(connected=False)
             self._log(f"Connection error: {e}")
-            # Show connection error dialog
-            self._show_connection_error_dialog(ip, port, unit_id, str(e))
+            self._show_connection_error_dialog(target, unit_id, str(e))
 
     def _disconnect(self):
         """Disconnect from Modbus server."""
@@ -1122,9 +1152,25 @@ class ModbusGUI(QMainWindow):
 
         self._log("Disconnected from Modbus server")
 
-    def _show_connection_error_dialog(self, ip, port, unit_id, error_message):
+    def _show_connection_error_dialog(self, target_description, unit_id, error_message):
         """Show connection error dialog with detailed information."""
         try:
+            if self.connection_mode == "serial":
+                tips = (
+                    "• Check that the COM port exists and isn't already open in another program<br>"
+                    "• Verify baud rate, parity, and stop bits match the device<br>"
+                    "• Check the cable/adapter and that the device is powered<br>"
+                    "• Check if the Unit ID matches the device configuration"
+                )
+            else:
+                tips = (
+                    "• Check if the Modbus server is running<br>"
+                    "• Verify the IP address and port number<br>"
+                    "• Ensure network connectivity to the device<br>"
+                    "• Check if the Unit ID matches the device configuration<br>"
+                    "• Verify firewall settings are not blocking the connection"
+                )
+
             # Create error dialog
             dialog = QMessageBox(self)
             dialog.setIcon(QMessageBox.Warning)
@@ -1132,16 +1178,11 @@ class ModbusGUI(QMainWindow):
             dialog.setText(f"Failed to connect to Modbus server")
             dialog.setInformativeText(f"""
 <strong>Connection Details:</strong><br>
-IP Address: {ip}<br>
-Port: {port}<br>
+Target: {target_description}<br>
 Unit ID: {unit_id}<br><br>
 <strong>Error:</strong> {error_message}<br><br>
 <strong>Possible Solutions:</strong><br>
-• Check if the Modbus server is running<br>
-• Verify the IP address and port number<br>
-• Ensure network connectivity to the device<br>
-• Check if the Unit ID matches the device configuration<br>
-• Verify firewall settings are not blocking the connection
+{tips}
             """)
             dialog.setStandardButtons(QMessageBox.Ok)
             dialog.setStyleSheet("""
@@ -2453,60 +2494,130 @@ class AlarmConfigDialog(QDialog):
 
 
 class ConnectionSettingsDialog(QDialog):
-    """Dialog for advanced Modbus connection configuration."""
-    def __init__(self, parent, history, ip, port, unit):
+    """Dialog for advanced Modbus connection configuration (TCP or serial/RTU)."""
+
+    SERIAL_PORTS_HINT = ["COM1", "COM2", "COM3", "COM4"]
+    BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
+    PARITIES = [("None", "N"), ("Even", "E"), ("Odd", "O")]
+    STOP_BITS = [1, 2]
+    BYTE_SIZES = [7, 8]
+
+    def __init__(self, parent, history, current):
         super().__init__(parent)
         self.setWindowTitle("Connection Settings")
         self.setMinimumWidth(450)
         self.history = history[:]
-        
+
         layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        
-        # 1. Basic configuration
-        basic_group = QGroupBox("Target Device")
-        grid = QGridLayout(basic_group)
+        layout.setSpacing(16)
+
+        # 0. Connection type
+        mode_group = QGroupBox("Connection Type")
+        mode_layout = QHBoxLayout(mode_group)
+        self.tcp_radio = QRadioButton("Modbus TCP")
+        self.serial_radio = QRadioButton("Modbus RTU (Serial)")
+        (self.serial_radio if current.connection_mode == "serial" else self.tcp_radio).setChecked(True)
+        self.tcp_radio.toggled.connect(self._update_mode_visibility)
+        mode_layout.addWidget(self.tcp_radio)
+        mode_layout.addWidget(self.serial_radio)
+        layout.addWidget(mode_group)
+
+        # 1. TCP configuration
+        self.tcp_group = QGroupBox("Target Device (TCP)")
+        grid = QGridLayout(self.tcp_group)
         grid.setSpacing(10)
-        
+
         grid.addWidget(QLabel("IP Address:"), 0, 0)
-        self.ip_input = QLineEdit(ip)
+        self.ip_input = QLineEdit(current.target_ip)
         self.ip_input.setStyleSheet(parent._get_input_style())
         grid.addWidget(self.ip_input, 0, 1)
-        
+
         grid.addWidget(QLabel("Port:"), 1, 0)
         self.port_input = QSpinBox()
         self.port_input.setRange(1, 65535)
-        self.port_input.setValue(port)
+        self.port_input.setValue(current.target_port)
         self.port_input.setStyleSheet(parent._get_input_style())
         grid.addWidget(self.port_input, 1, 1)
-        
-        grid.addWidget(QLabel("Unit ID:"), 2, 0)
-        self.unit_input = QSpinBox()
-        self.unit_input.setRange(1, 247)
-        self.unit_input.setValue(unit)
-        self.unit_input.setStyleSheet(parent._get_input_style())
-        grid.addWidget(self.unit_input, 2, 1)
-        layout.addWidget(basic_group)
-        
-        # 2. Network selection
-        iface_group = QGroupBox("Network Interface")
-        iface_layout = QHBoxLayout(iface_group)
+        layout.addWidget(self.tcp_group)
+
+        # 2. Network interface (TCP only)
+        self.iface_group = QGroupBox("Network Interface")
+        iface_layout = QHBoxLayout(self.iface_group)
         self.iface_combo = QComboBox()
         self.iface_combo.setStyleSheet(parent._get_input_style())
-        
+
         try:
             from network.network_diagnostics import get_network_interfaces
             interfaces = get_network_interfaces()
             for i in interfaces:
                 self.iface_combo.addItem(i['display_name'], i['ipv4'])
-        except:
+        except Exception:
             self.iface_combo.addItem("Default Interface", "127.0.0.1")
-            
+
         self.iface_combo.currentTextChanged.connect(lambda t: self.ip_input.setText(self.iface_combo.currentData()))
         iface_layout.addWidget(self.iface_combo)
-        layout.addWidget(iface_group)
-        
-        # 3. History
+        layout.addWidget(self.iface_group)
+
+        # 3. Serial configuration
+        self.serial_group = QGroupBox("Target Device (Serial)")
+        serial_grid = QGridLayout(self.serial_group)
+        serial_grid.setSpacing(10)
+
+        serial_grid.addWidget(QLabel("COM Port:"), 0, 0)
+        self.serial_port_combo = QComboBox()
+        self.serial_port_combo.setEditable(True)
+        self.serial_port_combo.setStyleSheet(parent._get_input_style())
+        for port_name in self._detect_serial_ports():
+            self.serial_port_combo.addItem(port_name)
+        self.serial_port_combo.setCurrentText(current.serial_port)
+        serial_grid.addWidget(self.serial_port_combo, 0, 1)
+
+        serial_grid.addWidget(QLabel("Baud Rate:"), 1, 0)
+        self.baud_combo = QComboBox()
+        self.baud_combo.setEditable(True)
+        self.baud_combo.setStyleSheet(parent._get_input_style())
+        for rate in self.BAUD_RATES:
+            self.baud_combo.addItem(str(rate))
+        self.baud_combo.setCurrentText(str(current.baudrate))
+        serial_grid.addWidget(self.baud_combo, 1, 1)
+
+        serial_grid.addWidget(QLabel("Parity:"), 2, 0)
+        self.parity_combo = QComboBox()
+        self.parity_combo.setStyleSheet(parent._get_input_style())
+        for label, code in self.PARITIES:
+            self.parity_combo.addItem(label, code)
+        index = next((i for i, (_, code) in enumerate(self.PARITIES) if code == current.parity), 0)
+        self.parity_combo.setCurrentIndex(index)
+        serial_grid.addWidget(self.parity_combo, 2, 1)
+
+        serial_grid.addWidget(QLabel("Stop Bits:"), 3, 0)
+        self.stopbits_combo = QComboBox()
+        self.stopbits_combo.setStyleSheet(parent._get_input_style())
+        for bits in self.STOP_BITS:
+            self.stopbits_combo.addItem(str(bits), bits)
+        self.stopbits_combo.setCurrentIndex(self.STOP_BITS.index(current.stopbits) if current.stopbits in self.STOP_BITS else 0)
+        serial_grid.addWidget(self.stopbits_combo, 3, 1)
+
+        serial_grid.addWidget(QLabel("Byte Size:"), 4, 0)
+        self.bytesize_combo = QComboBox()
+        self.bytesize_combo.setStyleSheet(parent._get_input_style())
+        for size in self.BYTE_SIZES:
+            self.bytesize_combo.addItem(str(size), size)
+        self.bytesize_combo.setCurrentIndex(self.BYTE_SIZES.index(current.bytesize) if current.bytesize in self.BYTE_SIZES else 1)
+        serial_grid.addWidget(self.bytesize_combo, 4, 1)
+        layout.addWidget(self.serial_group)
+
+        # 4. Unit ID (shared by both modes)
+        unit_group = QGroupBox("Unit ID")
+        unit_layout = QHBoxLayout(unit_group)
+        self.unit_input = QSpinBox()
+        self.unit_input.setRange(0, 247)
+        self.unit_input.setValue(current.target_unit_id)
+        self.unit_input.setStyleSheet(parent._get_input_style())
+        unit_layout.addWidget(self.unit_input)
+        layout.addWidget(unit_group)
+
+        # 5. History
         hist_group = QGroupBox("Recent Connections")
         hist_layout = QHBoxLayout(hist_group)
         self.hist_combo = QComboBox()
@@ -2515,7 +2626,7 @@ class ConnectionSettingsDialog(QDialog):
         self.hist_combo.currentTextChanged.connect(self._on_history_select)
         hist_layout.addWidget(self.hist_combo)
         layout.addWidget(hist_group)
-        
+
         # Buttons
         btns = QHBoxLayout()
         btns.addStretch()
@@ -2527,17 +2638,65 @@ class ConnectionSettingsDialog(QDialog):
         btns.addWidget(cancel_btn)
         layout.addLayout(btns)
 
+        self._update_mode_visibility()
+
+    @staticmethod
+    def _detect_serial_ports():
+        try:
+            from serial.tools import list_ports
+            ports = [p.device for p in list_ports.comports()]
+            if ports:
+                return ports
+        except Exception:
+            pass
+        return ConnectionSettingsDialog.SERIAL_PORTS_HINT
+
+    def _update_mode_visibility(self):
+        is_serial = self.serial_radio.isChecked()
+        self.tcp_group.setVisible(not is_serial)
+        self.iface_group.setVisible(not is_serial)
+        self.serial_group.setVisible(is_serial)
+
     def _on_history_select(self, text):
-        if not text or ":" not in text:
+        if not text:
             return
+        if text.startswith("serial:"):
+            parts = text.split(":")
+            if len(parts) != 7:
+                return
+            _, serial_port, baud, parity, bytesize, stopbits, unit = parts
+            self.serial_radio.setChecked(True)
+            self.serial_port_combo.setCurrentText(serial_port)
+            self.baud_combo.setCurrentText(baud)
+            index = next((i for i, (_, code) in enumerate(self.PARITIES) if code == parity), 0)
+            self.parity_combo.setCurrentIndex(index)
+            if int(bytesize) in self.BYTE_SIZES:
+                self.bytesize_combo.setCurrentIndex(self.BYTE_SIZES.index(int(bytesize)))
+            if int(stopbits) in self.STOP_BITS:
+                self.stopbits_combo.setCurrentIndex(self.STOP_BITS.index(int(stopbits)))
+            self.unit_input.setValue(int(unit))
+            return
+
         parts = text.split(":")
         if len(parts) >= 3:
+            self.tcp_radio.setChecked(True)
             self.ip_input.setText(parts[0])
             self.port_input.setValue(int(parts[1]))
             self.unit_input.setValue(int(parts[2]))
 
     def get_values(self):
-        return {'ip': self.ip_input.text(), 'port': self.port_input.value(), 'unit': self.unit_input.value(), 'history': self.history}
+        return {
+            'mode': "serial" if self.serial_radio.isChecked() else "tcp",
+            'ip': self.ip_input.text(),
+            'port': self.port_input.value(),
+            'unit': self.unit_input.value(),
+            'serial_port': self.serial_port_combo.currentText(),
+            'baudrate': int(self.baud_combo.currentText()),
+            'parity': self.parity_combo.currentData(),
+            'stopbits': self.stopbits_combo.currentData(),
+            'bytesize': self.bytesize_combo.currentData(),
+            'history': self.history,
+        }
 
 
 def main(): 
