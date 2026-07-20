@@ -1,6 +1,11 @@
 import re
 import time
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -599,6 +604,13 @@ class ScriptWidget(QWidget):
 
         self._setup_ui()
 
+        self._process = psutil.Process() if psutil else None
+        if self._process is not None:
+            self._process.cpu_percent(interval=None)  # first call just primes the baseline
+            self.cpu_timer = QTimer(self)
+            self.cpu_timer.timeout.connect(self._update_cpu_usage)
+            self.cpu_timer.start(1000)
+
     def _button_style(self):
         if self.parent_window is not None and hasattr(self.parent_window, "_get_button_style"):
             return self.parent_window._get_button_style()
@@ -661,6 +673,11 @@ class ScriptWidget(QWidget):
         toolbar.addWidget(self.clear_console_btn)
 
         toolbar.addStretch()
+
+        self.cpu_label = QLabel("CPU: --")
+        self.cpu_label.setToolTip("CPU usage of this ModbusLens process, useful for spotting a script loop that's running hot")
+        toolbar.addWidget(self.cpu_label)
+
         layout.addLayout(toolbar)
 
         splitter = QSplitter(Qt.Vertical)
@@ -684,6 +701,16 @@ class ScriptWidget(QWidget):
     def _log_console(self, message):
         timestamp = time.strftime("[%H:%M:%S]")
         self.console.append(f"{timestamp} {message}")
+
+    def _update_cpu_usage(self):
+        if self._process is None:
+            return
+        try:
+            percent = self._process.cpu_percent(interval=None)
+        except psutil.Error:
+            self.cpu_label.setText("CPU: --")
+            return
+        self.cpu_label.setText(f"CPU: {percent:.1f}%")
 
     def _show_editor_context_menu(self, pos):
         cursor = self.editor.cursorForPosition(pos)
