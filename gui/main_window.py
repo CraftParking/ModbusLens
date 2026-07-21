@@ -746,30 +746,27 @@ class ModbusGUI(QMainWindow):
             }}
         """
 
-    def _create_monitoring_tag_widget(self, widget_type, value=None): 
-        if widget_type == "lineedit": 
-            w = QLineEdit() 
-            w.setText(value or "") 
-            w.setStyleSheet(self._get_input_style()) 
-            return w 
-        if widget_type == "mode_combo":
+    def _create_monitoring_tag_widget(self, widget_type, value=None):
+        w = None
+        if widget_type == "lineedit":
+            w = QLineEdit()
+            w.setText(value or "")
+            w.setStyleSheet(self._get_input_style())
+        elif widget_type == "mode_combo":
             w = QComboBox()
             w.addItems(["Read", "Write"])
             if value:
                 w.setCurrentText(value)
-            return w
-        if widget_type == "type_combo": 
-            w = QComboBox() 
-            w.addItems(["Coil", "Discrete Input", "Holding Register", "Input Register"]) 
-            if value: 
-                w.setCurrentText(value) 
-            return w 
-        if widget_type == "format_combo":
+        elif widget_type == "type_combo":
+            w = QComboBox()
+            w.addItems(["Coil", "Discrete Input", "Holding Register", "Input Register"])
+            if value:
+                w.setCurrentText(value)
+        elif widget_type == "format_combo":
             w = QComboBox()
             w.addItems(["Bool", "U16", "S16", "U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP", "Hex"])
             w.setCurrentText(value or "U16")
-            return w
-        if widget_type == "spinbox":
+        elif widget_type == "spinbox":
             w = QSpinBox()
             one_based = getattr(self, "tag_address_one_based", True)
             minimum = 1 if one_based else 0
@@ -777,8 +774,12 @@ class ModbusGUI(QMainWindow):
             w.setRange(minimum, maximum)
             w.setValue(value if value is not None else minimum)
             w.setStyleSheet(self._get_input_style())
-            return w
-        return None 
+
+        if w is not None:
+            # Let a right-click bubble up to the table's own context menu (Configure
+            # Alarm etc.) instead of the cell widget swallowing it for Cut/Copy/Paste.
+            w.setContextMenuPolicy(Qt.NoContextMenu)
+        return w
  
     def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None, comment=""): 
         # Get selected row for insertion, or append to end if none selected
