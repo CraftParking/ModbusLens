@@ -2510,6 +2510,7 @@ class ConnectionSettingsDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
+        layout.setSizeConstraint(QVBoxLayout.SetFixedSize)
 
         # 0. Connection type
         mode_group = QGroupBox("Connection Type")
