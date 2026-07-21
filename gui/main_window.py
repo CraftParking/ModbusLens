@@ -2622,8 +2622,7 @@ class ConnectionSettingsDialog(QDialog):
         hist_layout = QHBoxLayout(hist_group)
         self.hist_combo = QComboBox()
         self.hist_combo.setStyleSheet(parent._get_input_style())
-        self.hist_combo.addItems(self.history)
-        self.hist_combo.currentTextChanged.connect(self._on_history_select)
+        self.hist_combo.currentIndexChanged.connect(self._on_history_select)
         hist_layout.addWidget(self.hist_combo)
         layout.addWidget(hist_group)
 
@@ -2656,20 +2655,46 @@ class ConnectionSettingsDialog(QDialog):
         self.tcp_group.setVisible(not is_serial)
         self.iface_group.setVisible(not is_serial)
         self.serial_group.setVisible(is_serial)
+        self._populate_history_combo()
 
-    def _on_history_select(self, text):
-        if not text:
+    def _friendly_history_label(self, entry):
+        """A raw history token like 'serial:COM5:9600:N:8:1:1' isn't something a user
+        should have to parse by eye -- show it the same way the rest of the dialog does."""
+        parts = entry.split(":")
+        if entry.startswith("serial:") and len(parts) == 7:
+            _, serial_port, baud, parity, bytesize, stopbits, unit = parts
+            parity_label = next((label for label, code in self.PARITIES if code == parity), parity)
+            return f"{serial_port} @ {baud} baud ({parity_label} parity, {bytesize}/{stopbits}, Unit {unit})"
+        if len(parts) >= 3:
+            return f"{parts[0]}:{parts[1]} (Unit {parts[2]})"
+        return entry
+
+    def _populate_history_combo(self):
+        """Only show history entries that match the currently selected connection type --
+        an RTU-format entry is meaningless while configuring a TCP target and vice versa."""
+        is_serial = self.serial_radio.isChecked()
+        matching = [entry for entry in self.history if entry.startswith("serial:") == is_serial]
+
+        self.hist_combo.blockSignals(True)
+        self.hist_combo.clear()
+        for entry in matching:
+            self.hist_combo.addItem(self._friendly_history_label(entry), entry)
+        self.hist_combo.blockSignals(False)
+
+    def _on_history_select(self, index):
+        entry = self.hist_combo.itemData(index)
+        if not entry:
             return
-        if text.startswith("serial:"):
-            parts = text.split(":")
+
+        if entry.startswith("serial:"):
+            parts = entry.split(":")
             if len(parts) != 7:
                 return
             _, serial_port, baud, parity, bytesize, stopbits, unit = parts
-            self.serial_radio.setChecked(True)
             self.serial_port_combo.setCurrentText(serial_port)
             self.baud_combo.setCurrentText(baud)
-            index = next((i for i, (_, code) in enumerate(self.PARITIES) if code == parity), 0)
-            self.parity_combo.setCurrentIndex(index)
+            parity_index = next((i for i, (_, code) in enumerate(self.PARITIES) if code == parity), 0)
+            self.parity_combo.setCurrentIndex(parity_index)
             if int(bytesize) in self.BYTE_SIZES:
                 self.bytesize_combo.setCurrentIndex(self.BYTE_SIZES.index(int(bytesize)))
             if int(stopbits) in self.STOP_BITS:
@@ -2677,9 +2702,8 @@ class ConnectionSettingsDialog(QDialog):
             self.unit_input.setValue(int(unit))
             return
 
-        parts = text.split(":")
+        parts = entry.split(":")
         if len(parts) >= 3:
-            self.tcp_radio.setChecked(True)
             self.ip_input.setText(parts[0])
             self.port_input.setValue(int(parts[1]))
             self.unit_input.setValue(int(parts[2]))
