@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, QTimer, QRect, Property, QPropertyAnimation, QParallelAnimationGroup
-from PySide6.QtGui import QPainter, QColor, QBrush, QFont, QPen
+from PySide6.QtGui import QPainter, QColor, QBrush, QFont
 
 
 class StatusIndicator(QWidget):

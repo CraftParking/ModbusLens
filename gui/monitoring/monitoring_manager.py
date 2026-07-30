@@ -1,7 +1,6 @@
 import csv
 import os
 import time
-from PySide6.QtWidgets import QTableWidget, QHeaderView, QAbstractItemView, QTableWidgetItem
 
 
 class MonitoringManager:

@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, List, Union
+from typing import Optional, Union
 from pymodbus import FramerType
 from pymodbus.client import ModbusTcpClient, ModbusSerialClient
 

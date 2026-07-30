@@ -214,14 +214,6 @@ class AddressTableWidget(QWidget):
             return "holding_registers"
         return None
 
-    def get_function_code(self, function=None):
-        """Return the Modbus function code selected in the Address Table."""
-        function = function or self.function_combo.currentText()
-        try:
-            return int(function.rsplit("(", 1)[1].rstrip(")"))
-        except (IndexError, ValueError):
-            return None
-
     def ensure_address_mode_bounds(self):
         """Keep the address input range unambiguous for 0-based vs 1-based mode."""
         current_value = self.address_input.value()
@@ -230,10 +222,6 @@ class AddressTableWidget(QWidget):
         self.address_input.setRange(minimum, maximum)
         if current_value < minimum:
             self.address_input.setValue(minimum)
-
-    def get_user_address_for_row(self, row):
-        """Return the user-facing address represented by a table row."""
-        return self.current_start_address + row
 
     def convert_user_address_to_offset(self, user_address, function=None):
         """Convert a user-facing Address Table address to a 0-based protocol offset."""

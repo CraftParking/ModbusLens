@@ -4,7 +4,6 @@ Build script for creating ModbusLens EXE using PyInstaller
 
 import PyInstaller.__main__
 import os
-import sys
 
 def build_exe():
     """Build the ModbusLens EXE file."""
