@@ -200,39 +200,33 @@ def apply_fixed_light_theme(app):
 
 
 class TagTableWidget(QTableWidget):
-    """Tags table with drag-and-drop row reordering.
+    """Tags table with row reordering via dragging the row-number header.
 
-    Every cell here holds a live QWidget (combobox, spinbox, or line edit), not a plain
-    QTableWidgetItem -- Qt's built-in InternalMove drag-drop only relocates item data, so it
-    can't be trusted to carry these widgets along correctly. dropEvent is overridden to instead
-    hand off to the main window, which tears the dragged row down and rebuilds it at the drop
-    position with the same values.
+    Every cell here holds a live QWidget (combobox, spinbox, or line edit) covering the entire
+    row, not a plain QTableWidgetItem -- so a mouse press anywhere on a row is consumed by that
+    cell's own widget (text cursor placement, combobox popup, etc.) and never reaches the table's
+    own drag-detection logic. There's no "empty" surface on a row to grab. The row-number gutter
+    (the vertical header) is the one part of the table not covered by a cell widget, so reordering
+    is done by dragging that instead, via QHeaderView's own built-in section-move support.
     """
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
-        self.setDragDropMode(QAbstractItemView.InternalMove)
-        self.setDragEnabled(True)
-        self.setAcceptDrops(True)
-        self.setDragDropOverwriteMode(False)
-        self.setDropIndicatorShown(True)
-        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.verticalHeader().setSectionsMovable(True)
+        self.verticalHeader().sectionMoved.connect(self._on_row_header_moved)
 
-    def dropEvent(self, event):
-        # Never let Qt's own item-move machinery run -- it doesn't know about cell widgets.
-        event.ignore()
-
-        if event.source() is not self:
-            return
-
-        source_row = self.currentRow()
-        target_row = self.indexAt(event.position().toPoint()).row()
-        if target_row == -1:
-            target_row = self.rowCount() - 1
-
-        if source_row != -1 and target_row != -1:
-            self.main_window._move_tag_row(source_row, target_row)
+    def _on_row_header_moved(self, logical_index, old_visual_index, new_visual_index):
+        header = self.verticalHeader()
+        # The header just reordered itself visually -- snap it back to sequential order and
+        # instead physically relocate the row's own widgets, so the header's numbers (1, 2, 3...)
+        # never desync from which row they're actually labeling.
+        header.blockSignals(True)
+        try:
+            header.moveSection(new_visual_index, old_visual_index)
+        finally:
+            header.blockSignals(False)
+        self.main_window._move_tag_row(old_visual_index, new_visual_index)
 
 
 class ModbusGUI(QMainWindow):
@@ -2049,8 +2043,7 @@ Unit ID: {unit_id}<br><br>
             self.tag_offset_checkbox.setEnabled(enabled)
         # Row drag-to-reorder is a configuration action too -- keep it disabled while the
         # poll loop is iterating rows by index, same as Add/Remove Tag.
-        self.monitoring_tag_table.setDragEnabled(enabled)
-        self.monitoring_tag_table.setAcceptDrops(enabled)
+        self.monitoring_tag_table.verticalHeader().setSectionsMovable(enabled)
 
     def _restart_monitoring_timers(self, read_interval):
         tags = self._get_monitoring_tags()
