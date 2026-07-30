@@ -2320,9 +2320,13 @@ Unit ID: {unit_id}<br><br>
         (write, connect, error) so the right lines stand out at a glance in a busy log."""
         timestamp = time.strftime("[%H:%M:%S]")
         if hasattr(self, 'diagnostics_log_output'):
-            self.diagnostics_log_output.append(format_log_html(timestamp, message))
             scrollbar = self.diagnostics_log_output.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+            # Only follow new lines if the user was already at the bottom -- otherwise a
+            # scroll-up to inspect something gets yanked back down on every new entry.
+            was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+            self.diagnostics_log_output.append(format_log_html(timestamp, message))
+            if was_at_bottom:
+                scrollbar.setValue(scrollbar.maximum())
 
     def _display_raw_data(self, title, data, elapsed_ms=None, function_info=None):
         """Log one Modbus transaction to the Raw Data tab: what was requested, its raw

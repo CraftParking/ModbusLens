@@ -659,8 +659,13 @@ class AddressTableWidget(QWidget):
 
     def log(self, message):
         timestamp = time.strftime("[%H:%M:%S]")
+        scrollbar = self.log_output.verticalScrollBar()
+        # Only follow new lines if already scrolled to the bottom -- otherwise the user
+        # can never hold a scrolled-up position to read something while polling continues.
+        was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
         self.log_output.append(format_log_html(timestamp, message))
-        self.log_output.verticalScrollBar().setValue(self.log_output.verticalScrollBar().maximum())
+        if was_at_bottom:
+            scrollbar.setValue(scrollbar.maximum())
         # Also forward to the main window's System Logs, not just this tab's own panel.
         if hasattr(self.parent_window, '_log'):
             self.parent_window._log(f"[Address Table] {message}")
