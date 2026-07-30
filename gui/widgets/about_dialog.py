@@ -19,7 +19,7 @@ engineers working with industrial automation systems.</p>
 
 <h4>Key Features</h4>
 <ul>
-<li>Modbus TCP and RTU/serial read/write (coils, inputs, registers)</li>
+<li>Modbus TCP and serial (RTU or ASCII) read/write (coils, inputs, registers)</li>
 <li>Tag-based real-time monitoring, with alarms and CSV logging</li>
 <li>Live/historical trend graphing</li>
 <li>Server mode - act as a Modbus TCP slave</li>
