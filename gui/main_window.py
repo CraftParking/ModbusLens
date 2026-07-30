@@ -824,8 +824,8 @@ class ModbusGUI(QMainWindow):
             format_widget.currentTextChanged.connect(self._on_monitoring_tag_format_changed)
         if hasattr(count_widget, "valueChanged"):
             count_widget.valueChanged.connect(self._on_monitoring_tag_count_changed)
-        if hasattr(address_widget, "valueChanged"):
-            address_widget.valueChanged.connect(self._on_monitoring_tag_address_or_type_changed)
+        if hasattr(address_widget, "editingFinished"):
+            address_widget.editingFinished.connect(self._on_monitoring_tag_address_edited)
         if hasattr(type_widget, "currentTextChanged"):
             type_widget.currentTextChanged.connect(self._on_monitoring_tag_address_or_type_changed)
 
@@ -890,6 +890,19 @@ class ModbusGUI(QMainWindow):
         if row is None:
             return
         self._coerce_monitoring_tag_count(row)
+
+    def _on_monitoring_tag_address_edited(self, _value=None):
+        # Bound to editingFinished (not valueChanged) so the duplicate-address
+        # check runs once the user commits a value, instead of after every
+        # keystroke -- otherwise typing "100" gets mutated mid-entry whenever
+        # a shorter prefix (e.g. "1") collides with another row's address.
+        if self._updating_tag_table:
+            return
+        sender = self.sender()
+        row = self._find_monitoring_tag_row(sender, 3)
+        if row is None:
+            return
+        self._ensure_unique_monitoring_tag_address(row)
 
     def _on_monitoring_tag_address_or_type_changed(self, _value=None):
         if self._updating_tag_table:
