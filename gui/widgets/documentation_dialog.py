@@ -217,25 +217,47 @@ this stops a write and a read from overlapping on the same connection.</p>
 
     ("Raw Data", """
 <h2>Raw Data</h2>
-<p>Shows the untouched data behind every read, independent of how a Tag or Address Table row
-happens to decode it - the same underlying values as the Raw (Hex) column, presented as a running
-log instead of a per-row snapshot. Useful when a decoded value looks wrong and you want to see
-exactly what came back before ModbusLens interpreted it as U16, F32, or anything else.</p>
+<p>One row per Modbus transaction - the untouched data behind every read and write, independent
+of how a Tag or Address Table row happens to decode it. Useful when a decoded value looks wrong
+and you want to see exactly what came back before ModbusLens interpreted it as U16, F32, or
+anything else, and for spotting a device that's responding but slow.</p>
+
+<h3>Columns</h3>
+<ul>
+<li><b>Time</b> and <b>Operation</b> - when it happened and what it was (which Tag, Address
+Table function, or Script command triggered it).</li>
+<li><b>Value</b> - the raw register/coil result in decimal, or the error message if it failed.</li>
+<li><b>Raw (Hex)</b> - the same result in hex (registers as <code>0xNNNN</code>, coils as
+<code>1</code>/<code>0</code>) - blank for a failed transaction, since there's nothing to show.</li>
+<li><b>TX Bytes</b> / <b>RX Bytes</b> - the literal bytes ModbusLens sent and received on the
+wire for that exact transaction, captured straight from the connection itself. This is one level
+more raw than the Value/Raw (Hex) columns - those show the register values after pymodbus has
+already parsed the response; TX/RX Bytes show the full frame as bytes, including the function
+code, address, byte count, and (for serial) the CRC/LRC. RX is blank if the request timed out
+with no response at all.</li>
+<li><b>Status</b> - <span style="color:#2E7D32;">Success</span> or
+<span style="color:#C62828;">Failed</span>, color-coded the same way as the other logs.</li>
+<li><b>Latency (ms)</b> - how long that specific request took round-trip. A device that's
+technically working but degrading usually shows up here first, before it starts failing outright.</li>
+</ul>
 
 <h3>Advanced Diagnostics toggle</h3>
-<p>Off by default. When enabled, each entry expands from a one-line result into a full breakdown:
-operation type, target address, and - on a failed read - the specific error reported by the
-connection. Turn it on when you're chasing an intermittent fault and need more than "it failed."</p>
+<p>Off by default. Checking it reveals three more columns: <b>Function</b> (the Modbus function
+code actually used, e.g. <code>0x03 Read Holding Registers</code>), <b>Unit ID</b>, and
+<b>Details</b> (a register/bit count on success, or the specific classified exception - e.g.
+"Illegal Data Address" - on failure). History already logged is populated too, not just new rows
+going forward, so turning it on retroactively reveals detail on everything currently in the
+table. Turn it on when you're chasing an intermittent fault and a one-line result isn't enough.</p>
 
 <h3>Show Statistics</h3>
 <p>Opens a summary of the current connection's traffic: total requests, successful vs. failed
-counts, exception responses, and response times. Useful for spotting a device that's technically
-responding but degrading - e.g. response times creeping up before a connection eventually times
-out.</p>
+counts, exception responses, and average/min/max response times across everything logged so far
+(not just what's currently visible in the table, since old rows fall off after 1000). Useful for
+confirming a "slow" feeling is real and quantifying it.</p>
 
 <h3>Clear Data</h3>
-<p>Empties this tab's log without affecting the connection or any other tab. Do this before
-reproducing an intermittent issue so the log only contains the run you care about.</p>
+<p>Empties the table without affecting the connection or any other tab. Do this before
+reproducing an intermittent issue so the table only contains the run you care about.</p>
 """),
 
     ("Trend", """
@@ -504,8 +526,9 @@ right combination.</p>
 
 <h3>A write silently didn't happen</h3>
 <ul>
-<li>Check the Status Log (Address Table) or the tag's row - a rejected write shows a specific
-reason rather than just failing quietly.</li>
+<li>Check the Status Log (Address Table), the tag's row, or the Raw Data tab - a rejected write
+shows a specific reason rather than just failing quietly, and Raw Data will show it as a Failed
+row with the error in the Value column.</li>
 <li>If you've configured a write bound (Min/Max) on that register, a rejected write logs
 <i>"Write rejected: value ... is outside the configured write bound [...]"</i>. This applies no
 matter whether the write came from the Address Table, a Tag, or a Script.</li>

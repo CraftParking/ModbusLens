@@ -41,6 +41,7 @@ from network.network_diagnostics import NetworkDiagnosticsDialog
 from core.modbus_client import ModbusClient
 from app_paths import resource_path, app_data_dir
 from log_format import format_log_html
+from modbus_meta import function_code_for
 
 __version__ = "2.0.0"
 
@@ -1681,12 +1682,17 @@ Unit ID: {unit_id}<br><br>
                         self._log(f"Safety interlock: skipped write for {tag['name']} because the range is busy")
                         continue
 
+                    start_time = time.perf_counter()
                     try:
                         success, written_value, write_status = self._write_tag(tag)
                     finally:
                         self._end_modbus_operation(tag, "write")
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-                    self._display_raw_data(f"Tag[{tag['name']}] Write", written_value if success else None)
+                    self._display_raw_data(
+                        f"Tag[{tag['name']}] Write", written_value if success else None, elapsed_ms,
+                        function_code_for(tag["type"], is_write=True, count=tag.get("count", 1)),
+                    )
 
                     if success:
                         wrote_any = True
@@ -2180,14 +2186,19 @@ Unit ID: {unit_id}<br><br>
                         self._log(f"Safety interlock: skipped write-tag read for {tag['name']} because the range is busy")
                         continue
 
+                    start_time = time.perf_counter()
                     try:
                         value = self._read_tag_value(tag)
                     finally:
                         self._end_modbus_operation(tag, "read")
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
 
                     display_value = self._format_monitoring_value(tag, value)
                     raw_hex = self.monitoring_manager.format_raw_hex(tag, value)
-                    self._display_raw_data(f"Tag[{tag['name']}] (write-mode, current value)", value)
+                    self._display_raw_data(
+                        f"Tag[{tag['name']}] (write-mode, current value)", value, elapsed_ms,
+                        function_code_for(tag["type"], is_write=False),
+                    )
                     self._add_monitoring_row(
                         tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
                         tag["comment"], timestamp, raw_hex
@@ -2313,34 +2324,44 @@ Unit ID: {unit_id}<br><br>
             scrollbar = self.diagnostics_log_output.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
 
-    def _display_raw_data(self, title, data):
-        """Display raw data in the Raw Data tab."""
-        timestamp = time.strftime('[%H:%M:%S]')
+    def _display_raw_data(self, title, data, elapsed_ms=None, function_info=None):
+        """Log one Modbus transaction to the Raw Data tab: what was requested, its raw
+        value(s) in decimal and hex, whether it succeeded, how long it took, and (when the
+        caller knows it) which function code was actually used.
+
+        function_info is an optional (code, name) tuple -- callers that already know exactly
+        what operation they performed (Address Table, Tags, Script) pass it explicitly rather
+        than having it guessed back out of the free-form title string.
+        """
+        timestamp = time.strftime('%H:%M:%S')
+        function_code, function_name = function_info if function_info else (None, None)
+        if function_code is None:
+            function_code = self._get_function_code_from_title(title)
+
+        exception_code = self._get_exception_code_from_error() if data is None else None
 
         # Update statistics
         self.advanced_diagnostics.update_request_stats(
             success=data is not None,
-            function_code=self._get_function_code_from_title(title),
-            exception_code=self._get_exception_code_from_error() if data is None else None
+            response_time=elapsed_ms,
+            function_code=function_code,
+            exception_code=exception_code,
         )
 
-        if self.advanced_diagnostics.advanced_diagnostics:
-            # Create detailed diagnostics information
-            detailed_info = self.advanced_diagnostics.create_advanced_diagnostics(title, data, self.modbus)
-            formatted_data = f"{timestamp} {title}:\n{data}\n\n--- Advanced Diagnostics ---\n{detailed_info}"
-        else:
-            formatted_data = f"{timestamp} {title}:\n{data}"
-
-        if hasattr(self, 'diagnostics_data_output'):
-            current_text = self.diagnostics_data_output.toPlainText()
-            if current_text:
-                current_text += "\n\n"
-            current_text += formatted_data
-            self.diagnostics_data_output.setPlainText(current_text)
-
-            # Auto scroll to bottom
-            scrollbar = self.diagnostics_data_output.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+        if hasattr(self, 'diagnostics_dialogs'):
+            error_text = getattr(self.modbus, 'last_error', None) if data is None else None
+            exception_desc = (
+                self.advanced_diagnostics.get_exception_code_description(exception_code)
+                if exception_code is not None else None
+            )
+            unit_id = getattr(self.modbus, 'unit_id', None)
+            tx_bytes = getattr(self.modbus, 'last_tx_bytes', None)
+            rx_bytes = getattr(self.modbus, 'last_rx_bytes', None)
+            self.diagnostics_dialogs.add_raw_data_row(
+                timestamp, title, data, elapsed_ms, error_text,
+                function_code, function_name, unit_id, exception_desc,
+                tx_bytes, rx_bytes,
+            )
     
     def _get_function_code_from_title(self, title):
         """Extract function code from title for statistics."""

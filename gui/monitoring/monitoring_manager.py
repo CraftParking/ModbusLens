@@ -2,6 +2,8 @@ import csv
 import os
 import time
 
+from modbus_meta import function_code_for
+
 
 class MonitoringManager:
     """Manages Tags monitoring functionality including data caching and synchronization."""
@@ -279,10 +281,12 @@ class MonitoringManager:
                         self.parent._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
                         continue
 
+                    start_time = time.perf_counter()
                     try:
                         value = self.read_tag_for_monitoring(tag)
                     finally:
                         self.parent._end_modbus_operation(tag, "read")
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
 
                     if value is None:
                         failed_count += 1
@@ -295,6 +299,9 @@ class MonitoringManager:
                         if self.parent.modbus is not None and getattr(self.parent.modbus, "last_error", None):
                             extra = f" ({self.parent.modbus.last_error})"
                         self.parent._log(f"Monitoring read failed for {tag['name']} at {tag['address']}{extra}")
+                        self.parent._display_raw_data(
+                            f"Tag[{tag['name']}]", None, elapsed_ms, function_code_for(tag["type"], is_write=False)
+                        )
                         continue
 
                     display_value = self.format_monitoring_value(tag, value)
@@ -302,7 +309,9 @@ class MonitoringManager:
                     in_alarm = self.check_alarm(tag, value)
 
                     # Display raw data in diagnostics for Tags monitoring
-                    self.parent._display_raw_data(f"Tag[{tag['name']}]", value)
+                    self.parent._display_raw_data(
+                        f"Tag[{tag['name']}]", value, elapsed_ms, function_code_for(tag["type"], is_write=False)
+                    )
 
                     self.add_monitoring_row(
                         tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",

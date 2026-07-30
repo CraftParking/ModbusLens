@@ -123,6 +123,14 @@
 - CSV import/export  
 - Improved stability  
 
+### Raw Data
+- One row per Modbus transaction: time, operation, raw value in decimal and hex, Success/Failed status, and round-trip latency  
+- TX/RX Bytes - the literal bytes sent and received on the wire for that transaction (captured via pymodbus's trace hook), one level more raw than the decoded register values  
+- Color-coded status (green success, red failure) at a glance, same coloring as the other logs  
+- Advanced Diagnostics toggle - reveals Function code, Unit ID, and Details (register/bit count, or the classified exception on failure) as real columns, populated retroactively for rows already logged  
+- Show Statistics - total requests, success/failure counts, and average/min/max response times across everything logged, not just what's currently visible  
+- Capped at 1000 rows so it can't grow unbounded; oldest rows fall off automatically  
+
 ### Trend
 - Up to 20 pens, each bound to a Holding/Input Register address and numeric format (analog values only - Coils/Discrete Inputs and Bool aren't plottable pens)  
 - Live mode (follows the current time) or Historical mode (view stays put while data keeps recording)  

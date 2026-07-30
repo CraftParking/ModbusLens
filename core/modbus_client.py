@@ -36,6 +36,23 @@ class ModbusClient:
         # Enforced here so every write path -- Address Table, Tags, Script -- is
         # covered the same way, regardless of which one originated the write.
         self.write_bounds = {}
+        # The literal bytes of the most recent request/response, captured via pymodbus's
+        # trace_packet hook -- the actual wire data, distinct from the decoded values every
+        # read/write method returns. Reset before each call so a timeout shows "no response"
+        # rather than a stale value left over from a previous, unrelated transaction.
+        self.last_tx_bytes: Optional[bytes] = None
+        self.last_rx_bytes: Optional[bytes] = None
+
+    def _trace_packet(self, sending, data):
+        if sending:
+            self.last_tx_bytes = bytes(data)
+        else:
+            self.last_rx_bytes = bytes(data)
+        return data
+
+    def _reset_trace(self):
+        self.last_tx_bytes = None
+        self.last_rx_bytes = None
 
     def set_write_bound(self, address, minimum, maximum):
         self.write_bounds[address] = (minimum, maximum)
@@ -73,9 +90,13 @@ class ModbusClient:
                     port=self.serial_port, framer=framer, baudrate=self.baudrate, parity=self.parity,
                     stopbits=self.stopbits, bytesize=self.bytesize,
                     timeout=self.timeout, retries=self.retries,
+                    trace_packet=self._trace_packet,
                 )
             else:
-                self.client = ModbusTcpClient(host=self.ip, port=self.port, timeout=self.timeout, retries=self.retries)
+                self.client = ModbusTcpClient(
+                    host=self.ip, port=self.port, timeout=self.timeout, retries=self.retries,
+                    trace_packet=self._trace_packet,
+                )
 
             self._connected = self.client.connect()
             if self._connected:
@@ -112,6 +133,7 @@ class ModbusClient:
             self.last_error = "Not connected to Modbus server"
             logger.error(self.last_error)
             return None
+        self._reset_trace()
         try:
             result = self.client.read_coils(address, count=count, device_id=self.unit_id)
             if result.isError():
@@ -130,6 +152,7 @@ class ModbusClient:
             self.last_error = "Not connected to Modbus server"
             logger.error(self.last_error)
             return None
+        self._reset_trace()
         try:
             result = self.client.read_discrete_inputs(address, count=count, device_id=self.unit_id)
             if result.isError():
@@ -148,6 +171,7 @@ class ModbusClient:
             self.last_error = "Not connected to Modbus server"
             logger.error(self.last_error)
             return None
+        self._reset_trace()
         try:
             result = self.client.read_holding_registers(address, count=count, device_id=self.unit_id)
             if result.isError():
@@ -166,6 +190,7 @@ class ModbusClient:
             self.last_error = "Not connected to Modbus server"
             logger.error(self.last_error)
             return None
+        self._reset_trace()
         try:
             result = self.client.read_input_registers(address, count=count, device_id=self.unit_id)
             if result.isError():
@@ -184,6 +209,7 @@ class ModbusClient:
             self.last_error = "Not connected to Modbus server"
             logger.error(self.last_error)
             return False
+        self._reset_trace()
         try:
             result = self.client.write_coil(address, value, device_id=self.unit_id)
             if result.isError():
@@ -207,6 +233,7 @@ class ModbusClient:
             self.last_error = f"Write rejected: {bounds_error}"
             logger.error(self.last_error)
             return False
+        self._reset_trace()
         try:
             result = self.client.write_register(address, value, device_id=self.unit_id)
             if result.isError():
@@ -225,6 +252,7 @@ class ModbusClient:
             self.last_error = "Not connected to Modbus server"
             logger.error(self.last_error)
             return False
+        self._reset_trace()
         try:
             result = self.client.write_coils(address, values, device_id=self.unit_id)
             if result.isError():
@@ -248,6 +276,7 @@ class ModbusClient:
             self.last_error = f"Write rejected: {bounds_error}"
             logger.error(self.last_error)
             return False
+        self._reset_trace()
         try:
             result = self.client.write_registers(address, values, device_id=self.unit_id)
             if result.isError():
