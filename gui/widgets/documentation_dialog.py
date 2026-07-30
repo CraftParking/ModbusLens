@@ -89,7 +89,7 @@ each with a timestamp.</p>
 and watch or write them all at once - unlike the Address Table, which is one contiguous range.</p>
 
 <h3>Adding tags</h3>
-<p><b>Add Tag</b> appends a new row (or inserts above the selected row, so you're never stuck
+<p><b>Add Tag</b> appends a new row (or inserts just below the selected row, so you're never stuck
 adding things only at the end). Each row has:</p>
 <ul>
 <li><b>Tag Name</b>, <b>Mode</b> (Read or Write), <b>Type</b> (Coil/Discrete Input/Holding
