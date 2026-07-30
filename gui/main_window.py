@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QApplication, QMessageBox, QDialog, QCheckBox,
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QEvent
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPalette
 
 # Add the gui directory to the path for relative imports
@@ -213,10 +213,53 @@ class TagTableWidget(QTableWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
+        # Row-height resize (dragging a header boundary) competes with row-reorder (dragging a
+        # header section) for the same mouse gesture in the same gutter -- disable resize so
+        # every drag there means "reorder" with no ambiguity.
+        self.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.verticalHeader().setSectionsMovable(True)
         self.verticalHeader().sectionMoved.connect(self._on_row_header_moved)
 
+        # QHeaderView's own drag animation only moves the header label itself -- it doesn't
+        # show where the row would land in the table body. Draw that line ourselves, tracking
+        # the header's mouse-move events for as long as a drag is in progress.
+        self._drop_indicator = QFrame(self.viewport())
+        self._drop_indicator.setStyleSheet("background-color: #0078D4;")
+        self._drop_indicator.setFixedHeight(2)
+        self._drop_indicator.hide()
+        self.verticalHeader().installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if watched is self.verticalHeader():
+            if event.type() == QEvent.Type.MouseMove and event.buttons() & Qt.MouseButton.LeftButton:
+                self._update_drop_indicator(event.position().toPoint().y())
+            elif event.type() in (QEvent.Type.MouseButtonRelease, QEvent.Type.Leave):
+                self._drop_indicator.hide()
+        return super().eventFilter(watched, event)
+
+    def _update_drop_indicator(self, header_y):
+        """Show a line at the row boundary the header drag is currently hovering over --
+        header_y and the table body share the same vertical row layout, just different columns."""
+        row_count = self.rowCount()
+        if row_count == 0:
+            self._drop_indicator.hide()
+            return
+
+        row = self.rowAt(header_y)
+        if row == -1:
+            last_row = row_count - 1
+            y = self.rowViewportPosition(last_row) + self.rowHeight(last_row)
+        else:
+            row_top = self.rowViewportPosition(row)
+            row_bottom = row_top + self.rowHeight(row)
+            y = row_bottom if (header_y - row_top) > (row_bottom - row_top) / 2 else row_top
+
+        self._drop_indicator.setGeometry(0, max(0, y - 1), self.viewport().width(), 2)
+        self._drop_indicator.show()
+        self._drop_indicator.raise_()
+
     def _on_row_header_moved(self, logical_index, old_visual_index, new_visual_index):
+        self._drop_indicator.hide()
         header = self.verticalHeader()
         # The header just reordered itself visually -- snap it back to sequential order and
         # instead physically relocate the row's own widgets, so the header's numbers (1, 2, 3...)
@@ -926,7 +969,14 @@ class ModbusGUI(QMainWindow):
 
     def _move_tag_row(self, source_row, target_row):
         """Move a Tags row to a new position by rebuilding it there, preserving its live
-        values and alarm configuration. Called from TagTableWidget's drop handler."""
+        values and alarm configuration. Called from TagTableWidget's row-header drag handler.
+
+        source_row/target_row use the same semantics as QHeaderView.sectionMoved's
+        oldVisualIndex/newVisualIndex: target_row is where the row ends up in the *final*
+        list, i.e. plain list.pop(source_row); list.insert(target_row, item) semantics --
+        which is exactly what QTableWidget.insertRow(target_row) does too. No off-by-one
+        adjustment is needed here; target_row is used as-is.
+        """
         row_count = self.monitoring_tag_table.rowCount()
         if source_row == target_row or not (0 <= source_row < row_count) or not (0 <= target_row < row_count):
             return
@@ -936,9 +986,6 @@ class ModbusGUI(QMainWindow):
 
         self.monitoring_tag_table.removeRow(source_row)
         self.monitoring_manager.handle_row_removed(source_row)
-
-        if target_row > source_row:
-            target_row -= 1  # the row above it just shifted up by one
 
         self._add_monitoring_tag(insert_row=target_row, **data)
 

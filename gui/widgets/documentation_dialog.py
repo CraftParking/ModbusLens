@@ -161,9 +161,9 @@ once, then monitor it continuously.</p>
 <h3>Adding tags</h3>
 <p><b>Add Tag</b> appends a new row (or inserts just below the selected row, so you're never stuck
 adding things only at the end). Once a list is built, drag a row's number in the left-hand gutter
-up or down to reorder it - the row's live values, comment, and alarm configuration (if any) all
-move with it. Reordering is only available while monitoring is stopped, the same as adding or
-removing a tag. Each row has:</p>
+up or down to reorder it - a blue line shows exactly where it will land as you drag, and the row's
+live values, comment, and alarm configuration (if any) all move with it. Reordering is only
+available while monitoring is stopped, the same as adding or removing a tag. Each row has:</p>
 <ul>
 <li><b>Tag Name</b>, <b>Mode</b> (Read or Write), <b>Type</b> (Coil/Discrete Input/Holding
 Register/Input Register), <b>Address</b>, <b>Count</b>, <b>Format</b>.</li>
