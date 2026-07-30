@@ -5,19 +5,15 @@ import re
 import platform
 import subprocess
 import ipaddress
-import os
 import webbrowser
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     import psutil
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
-from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QHBoxLayout, QTextEdit, QLineEdit, QLabel, QSpinBox, QProgressBar, QComboBox, QCheckBox
-from PySide6.QtCore import QTimer
 
 NPCAP_DOWNLOAD_URL = "https://npcap.com/#download"
 

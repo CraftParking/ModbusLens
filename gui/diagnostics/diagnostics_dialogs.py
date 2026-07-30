@@ -1,5 +1,4 @@
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QCheckBox, QWidget
-from PySide6.QtCore import Qt
 
 
 class DiagnosticsDialogs:
@@ -199,8 +198,3 @@ class DiagnosticsDialogs:
         """Clear all diagnostics data."""
         self.clear_diagnostics_log()
         self.clear_diagnostics_raw_data()
-
-    def update_advanced_toggle_state(self, checked):
-        """Update the advanced toggle checkbox state."""
-        if self.advanced_toggle:
-            self.advanced_toggle.setChecked(checked)

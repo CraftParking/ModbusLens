@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit,
-    QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox, QLabel, QComboBox, QMenu
+    QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox, QLabel, QComboBox
 )
 
 HIDE_RUN_WARNING_KEY = "hide_script_run_warning"

@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton
 )
 from PySide6.QtCore import Qt, QTimer, QEvent
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPalette
+from PySide6.QtGui import QColor, QIcon, QPalette
 
 # Add the gui directory to the path for relative imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -320,30 +320,6 @@ class ModbusGUI(QMainWindow):
         self._connect_signals()
         self._load_settings()
         
-    def convert_to_protocol_address(self, user_address, operation_type=None, is_one_based=False):
-        """Convert user-entered address to a 0-based Modbus protocol offset.
-        
-        Args:
-            user_address: The address entered by the user
-            operation_type: The type of operation (coils, discrete_inputs, input_registers, holding_registers)
-            is_one_based: If True, use 1-based (datasheet) addressing; if False, use 0-based (protocol)
-            
-        Returns:
-            The protocol offset to use in Modbus communication
-            
-        Raises:
-            ValueError: If the converted address is negative
-        """
-        if is_one_based:
-            protocol_offset = user_address - 1
-        else:  # 0-based
-            protocol_offset = user_address
-
-        if protocol_offset < 0:
-            raise ValueError(f"Invalid address: {user_address} converts to negative protocol offset {protocol_offset}")
-        
-        return protocol_offset
-
     def _setup_window(self):
         """Setup main window properties."""
         self.setWindowTitle("ModbusLens - Professional Modbus TCP Client")
@@ -2103,10 +2079,6 @@ Unit ID: {unit_id}<br><br>
         """Clear monitoring results table."""
         self.monitoring_manager.clear_monitoring_results()
 
-    def _table_item_text(self, table, row, column):
-        item = table.item(row, column)
-        return item.text() if item else ""
-
     def _update_monitored_data(self):
         """Update monitored data in the table."""
         self.monitoring_manager.update_monitored_data()
@@ -2174,16 +2146,6 @@ Unit ID: {unit_id}<br><br>
             self._write_poll_in_progress = False
             if self.monitoring_active:
                 self.write_poll_timer.start(1000)
-
-    def _read_tag_for_monitoring(self, tag):
-        protocol_offset = self._tag_user_address_to_offset(tag)
-        if tag["type"] == "Coil":
-            return self.modbus.read_coils(protocol_offset, tag["count"])
-        if tag["type"] == "Discrete Input":
-            return self.modbus.read_discrete_inputs(protocol_offset, tag["count"])
-        if tag["type"] == "Holding Register":
-            return self.modbus.read_registers(protocol_offset, tag["count"])
-        return self.modbus.read_input_registers(protocol_offset, tag["count"])
 
     def _format_monitoring_value(self, tag, value):
         if value is None:
@@ -2424,10 +2386,6 @@ Unit ID: {unit_id}<br><br>
     def _export_data(self):
         """Export monitoring data."""
         QMessageBox.information(self, "Export Data", "Data export will be implemented in the next update!")
-
-    def _toggle_theme(self):
-        """Toggle between light and dark themes."""
-        QMessageBox.information(self, "Theme Toggle", "Theme switching will be implemented in the next update!")
 
     def _manage_profiles(self):
         """Manage connection profiles."""
