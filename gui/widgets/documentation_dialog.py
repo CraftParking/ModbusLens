@@ -73,6 +73,13 @@ tools like ModScan.</p>
 For a Write function, double-click the Value cell to edit and send it immediately (coil rows
 show a checkbox instead).</p>
 
+<h3>Write bounds</h3>
+<p>For Write Single/Multiple Register functions, two extra columns appear: <b>Min</b> and
+<b>Max</b>. Setting both on a row rejects any write to that register outside the range - a typo
+like an extra zero gets refused instead of sent to the field device. This is enforced on the
+connection itself, so it also protects writes to that same address from the Tags tab or a
+Script, not just from this table. Leave both blank for no limit.</p>
+
 <h3>Live Monitoring</h3>
 <p>For Read functions, check <b>Enable Live Monitoring</b> and set an interval to keep polling
 the whole range automatically. Starting this auto-stops Tags monitoring, and vice versa, so the
