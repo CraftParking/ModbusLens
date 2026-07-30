@@ -19,14 +19,15 @@
 
 ## Overview
 
-**ModbusLens** is a **free desktop tool** built for engineers working with **Modbus TCP devices**, combining communication, monitoring, and network diagnostics in one place.
+**ModbusLens** is a **free desktop tool** built for engineers working with **Modbus devices**, combining communication, monitoring, and network diagnostics in one place.
 
-> Currently supports **Modbus TCP/IP only**
+> Supports both **Modbus TCP/IP** and **Modbus RTU (serial)**
 
 ---
 
 ## Highlights
 
+- Modbus TCP and Modbus RTU (serial) client, switchable per connection
 - ARP-based device discovery (no IP needed)
 - Automatic Modbus device detection
 - Continuous live scanning (no repeated manual scans)
@@ -35,7 +36,7 @@
 - Live/historical trend graphing with up to 20 pens
 - Act as a Modbus TCP slave for testing your own SCADA/PLC programs
 - Talk to multiple devices at once, each in its own window
-- Simple scripting for repeatable write/wait/read test sequences
+- Simple scripting for repeatable write/wait/read test sequences, against either a live device or ModbusLens's own Server simulator
 
 ---
 
@@ -95,10 +96,12 @@
 
 ## Features
 
-### Modbus TCP
+### Modbus TCP & RTU
 - Read coils, inputs, holding & input registers  
 - Write single/multiple coils & registers  
+- Modbus TCP (IP/Port/Unit ID) or Modbus RTU serial (COM port, baud, parity, stop bits, byte size) - pick per connection in Settings  
 - Address table for quick testing  
+- Optional Min/Max write bounds per register - a write outside the range is rejected before it reaches the device, no matter if it came from the Address Table, Tags, or a Script  
 - Multiple simultaneous connections via independent windows (File > New Connection Window)  
 
 ### Data Handling
@@ -110,15 +113,16 @@
 
 ### Monitoring
 - Real-time tag monitoring, with Read Value/Write Value/Timestamp built into the same Tags table  
-- Insert new tags anywhere in the list, not just at the end  
+- Insert new tags anywhere in the list (new tags drop in below the selected row), not just at the end  
 - Write to a tag while monitoring stays active  
+- A single misconfigured or failing tag no longer stops the rest of the list from updating  
 - Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting  
 - Log live tag values to CSV  
 - CSV import/export  
 - Improved stability  
 
 ### Trend
-- Up to 20 pens, each bound to its own address/type/format  
+- Up to 20 pens, each bound to a Holding/Input Register address and numeric format (analog values only - Coils/Discrete Inputs and Bool aren't plottable pens)  
 - Live mode (follows the current time) or Historical mode (view stays put while data keeps recording)  
 - Adjustable time window, zoom in/out, and a From/To jump to a specific past range  
 - Graph Properties: axis titles, background/axis/grid colors, grid on/off, Y-axis auto or manual range  
@@ -133,6 +137,10 @@
 ### Scripting
 - A small, purpose-built test-sequence language: `WRITE`, `READ`, `WAIT`, `LOG`, `REPEAT...END`, `IF...THEN`  
 - Runs step by step without freezing the UI, with a console showing what ran  
+- Target either a live connected device (Client-target) or ModbusLens's own Server simulator (Server-target), so you can dry-run a script safely before pointing it at real hardware  
+- Insert Tag menu drops a reference to any tag from your Tags list straight into the script  
+- Live CPU usage indicator, useful for spotting a runaway loop  
+- Steps never run faster than a 20ms floor, even if a script uses `WAIT 0` or skips WAIT entirely, so a typo can't flood the device or network  
 
 ### Network Diagnostics
 - ARP-based discovery  
@@ -146,6 +154,7 @@
 - Better spacing and readability  
 - More focused workspace (Address/Tags/Trend priority)  
 - Forces a light theme even when Windows is set to dark mode  
+- Help > About has an Updates tab that checks GitHub Releases for a newer version  
 
 ---
 
@@ -182,9 +191,9 @@ pip install scapy
 
 ## Upcoming Features
 
-- Modbus RTU (serial) support  
 - Unified multi-device dashboard (currently one window per device)  
 - Register maps with mixed data types per device profile  
+- Row insert/rearrange in the Tags tab beyond "add relative to selection" (drag-to-reorder)  
 
 ---
 
