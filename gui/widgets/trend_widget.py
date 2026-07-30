@@ -30,8 +30,11 @@ DEFAULT_PEN_COLORS = [
     "#000075", "#696969",
 ]
 
-TAG_TYPES = ["Coil", "Discrete Input", "Holding Register", "Input Register"]
-VALUE_FORMATS = ["Bool", "U16", "S16", "U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP", "Hex"]
+# Trend pens plot a value over time, so only analog (register) data sources make
+# sense here -- Coil/Discrete Input and the Bool format are digital/on-off and are
+# intentionally left out (unlike the Tags tab, which supports both).
+TAG_TYPES = ["Holding Register", "Input Register"]
+VALUE_FORMATS = ["U16", "S16", "U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP", "Hex"]
 
 
 class TrendPen:
@@ -295,7 +298,7 @@ class TrendWidget(QWidget):
             "background_color": QColor("#FFFFFF"),
             "axis_color": QColor("#333333"),
             "grid_visible": True,
-            "grid_color": QColor("#DDDDDD"),
+            "grid_color": QColor("#000000"),
             "x_title": "Time",
             "y_auto": True,
             "y_min": 0.0,
