@@ -231,12 +231,13 @@ class ModbusGUI(QMainWindow):
         self.write_poll_timer = QTimer(self)
         self.write_poll_timer.timeout.connect(self._update_write_tag_values)
 
+        self.diagnostics_dialogs.setup_diagnostics_widgets()  # Initialize diagnostics widgets early, the Raw Data tab needs them
+
         self._setup_window()
         self._setup_menu()
         self._setup_central_widget()
         self._setup_status_bar()
         self._connect_signals()
-        self.diagnostics_dialogs.setup_diagnostics_widgets()  # Initialize diagnostics widgets early
         self._load_settings()
         
     def convert_to_protocol_address(self, user_address, operation_type=None, is_one_based=False):
@@ -305,9 +306,7 @@ class ModbusGUI(QMainWindow):
         diagnostics_menu = menubar.addMenu("&Diagnostics")
         diagnostics_menu.addAction("Network Discovery & Diagnostics", self._network_diagnostics)
         diagnostics_menu.addSeparator()
-        diagnostics_menu.addAction("Results Log", self._show_diagnostics_results)
-        diagnostics_menu.addAction("Communication Log", self._show_diagnostics_logs)
-        diagnostics_menu.addAction("Raw Data", self._show_diagnostics_raw_data)
+        diagnostics_menu.addAction("System Logs", self._show_diagnostics_logs)
         diagnostics_menu.addSeparator()
         diagnostics_menu.addAction("Clear All Logs", self._clear_diagnostics_logs)
 
@@ -441,6 +440,9 @@ class ModbusGUI(QMainWindow):
 
         # Monitoring tab
         self._setup_monitoring_tab()
+
+        # Raw Data tab
+        self._setup_raw_data_tab()
 
         # Trend tab
         self._setup_trend_tab()
@@ -673,24 +675,18 @@ class ModbusGUI(QMainWindow):
 
         self.tab_widget.addTab(monitor_widget, "Tags")
 
-    def _show_diagnostics_results(self):
-        """Show diagnostics dialog with results data."""
-        self.diagnostics_dialogs.show_diagnostics_results()
+    def _setup_raw_data_tab(self):
+        """Setup the Raw Data tab, showing the untouched Modbus traffic behind every read/write."""
+        raw_data_widget = self.diagnostics_dialogs.build_raw_data_tab(self.advanced_diagnostics)
+        self.tab_widget.addTab(raw_data_widget, "Raw Data")
 
     def _show_diagnostics_logs(self):
-        """Show diagnostics dialog with communication logs."""
+        """Show diagnostics dialog with system logs."""
         self.diagnostics_dialogs.show_diagnostics_logs()
-
-    def _show_diagnostics_raw_data(self):
-        """Show diagnostics dialog with raw data."""
-        self.diagnostics_dialogs.show_diagnostics_raw_data(self.advanced_diagnostics)
 
     def _clear_diagnostics_logs(self):
         """Clear all diagnostics data."""
         self.diagnostics_dialogs.clear_all_diagnostics_logs()
-        self._log("Diagnostics logs cleared")
-        if hasattr(self, 'diagnostics_results_table'):
-            self.diagnostics_results_table.setRowCount(0)
         self._log("All diagnostics data cleared")
 
     def _setup_status_bar(self):
@@ -1962,12 +1958,7 @@ Unit ID: {unit_id}<br><br>
     def _clear_monitoring_results(self):
         """Clear monitoring results table."""
         self.monitoring_manager.clear_monitoring_results()
-        
-        # Check if diagnostics results table exists
-        if hasattr(self, 'diagnostics_results_table'):
-            self.diagnostics_results_table.setRowCount(0)
-        
-    
+
     def _table_item_text(self, table, row, column):
         item = table.item(row, column)
         return item.text() if item else ""
