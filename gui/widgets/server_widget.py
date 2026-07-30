@@ -66,7 +66,7 @@ class ServerWidget(QWidget):
         layout.setSpacing(8)
 
         toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel("Listen Address:"))
+        toolbar.addWidget(QLabel("Server Address:"))
         self.host_input = QLineEdit("0.0.0.0")
         self.host_input.setStyleSheet(self._input_style())
         self.host_input.setMaximumWidth(120)
@@ -189,8 +189,10 @@ class ServerWidget(QWidget):
             QMessageBox.warning(
                 self,
                 "Server Already Running",
-                "Only one Server tab can be running at a time, across all open windows - "
-                "the underlying Modbus library supports a single active server per process. "
+                "Only one Server tab can be running at a time, across all open windows. "
+                "ModbusLens uses pymodbus's StartTcpServer to run the simulator: it spins up its "
+                "own asyncio event loop for the listener and datastore, and isn't designed to "
+                "have more than one instance active in the same process at once. "
                 "Stop the other one first.",
             )
             return
