@@ -275,6 +275,10 @@ class TagTableWidget(QTableWidget):
 class ModbusGUI(QMainWindow):
     _open_windows = []  # keeps extra connection windows alive (see _new_connection_window)
 
+    WATCHDOG_HEALTHY_INTERVAL_MS = 3000  # how often to check a connection that's currently fine
+    RECONNECT_BASE_DELAY_MS = 2000  # first retry delay after a drop
+    RECONNECT_MAX_DELAY_MS = 30000  # cap for exponential backoff between retries
+
     def __init__(self):
         super().__init__()
 
@@ -310,6 +314,16 @@ class ModbusGUI(QMainWindow):
         self.monitoring_timer.timeout.connect(self._update_monitored_data)
         self.write_poll_timer = QTimer(self)
         self.write_poll_timer.timeout.connect(self._update_write_tag_values)
+
+        # Auto-reconnect: watches the connection after a successful connect() and, if it
+        # drops unexpectedly (not via the user clicking Disconnect), retries with backoff
+        # until it's healthy again.
+        self._reconnect_watchdog_timer = QTimer(self)
+        self._reconnect_watchdog_timer.setSingleShot(True)
+        self._reconnect_watchdog_timer.timeout.connect(self._check_connection_watchdog)
+        self._reconnecting = False
+        self._reconnect_attempt = 0
+        self._monitoring_paused_by_disconnect = False
 
         self.diagnostics_dialogs.setup_diagnostics_widgets()  # Initialize diagnostics widgets early, the Raw Data tab needs them
 
@@ -1271,6 +1285,9 @@ class ModbusGUI(QMainWindow):
                 self._save_settings()
 
                 self._log(f"Connected to Modbus server at {target} (Unit ID: {unit_id})")
+                self._reconnect_attempt = 0
+                self._reconnecting = False
+                self._reconnect_watchdog_timer.start(self.WATCHDOG_HEALTHY_INTERVAL_MS)
             else:
                 self.status_indicator.set_status("error")
                 self.status_indicator.set_connection_info("Connection failed")
@@ -1287,6 +1304,14 @@ class ModbusGUI(QMainWindow):
 
     def _disconnect(self):
         """Disconnect from Modbus server."""
+        # A user-initiated disconnect should never trigger auto-reconnect -- stop the
+        # watchdog before clearing self.modbus, since it checks that for its own "still
+        # relevant?" guard.
+        self._reconnect_watchdog_timer.stop()
+        self._reconnecting = False
+        self._reconnect_attempt = 0
+        self._monitoring_paused_by_disconnect = False
+
         if self.modbus:
             self.modbus.disconnect()
             self.modbus = None
@@ -1301,6 +1326,51 @@ class ModbusGUI(QMainWindow):
             self._stop_monitoring()
 
         self._log("Disconnected from Modbus server")
+
+    def _check_connection_watchdog(self):
+        """Runs on its own timer after a successful connect(). While the connection is
+        healthy this just re-arms itself; if it finds the connection dropped, it retries
+        with exponential backoff until it recovers, and restarts Tags monitoring if that
+        was auto-stopped by the drop (see the failed_count == len(tags) paths)."""
+        if not self.modbus:
+            return  # user disconnected, or another window's connection object -- nothing to watch
+
+        if self.modbus.is_connected():
+            if self._reconnecting:
+                self._on_reconnected()
+            self._reconnect_watchdog_timer.start(self.WATCHDOG_HEALTHY_INTERVAL_MS)
+            return
+
+        self._reconnecting = True
+        self._reconnect_attempt += 1
+        target = self._target_description()
+        self.status_indicator.set_connection_info(f"Reconnecting to {target} (attempt {self._reconnect_attempt})...")
+        self.status_indicator.set_status("connecting")
+        self._log(f"Connection lost - reconnect attempt {self._reconnect_attempt}")
+
+        if self.modbus.connect():
+            self._on_reconnected()
+            self._reconnect_watchdog_timer.start(self.WATCHDOG_HEALTHY_INTERVAL_MS)
+        else:
+            delay = min(
+                self.RECONNECT_BASE_DELAY_MS * (2 ** (self._reconnect_attempt - 1)),
+                self.RECONNECT_MAX_DELAY_MS,
+            )
+            self._reconnect_watchdog_timer.start(delay)
+
+    def _on_reconnected(self):
+        self._reconnecting = False
+        self._reconnect_attempt = 0
+        conn_info = f"{self._target_description()} (Unit {self.target_unit_id})"
+        self.status_indicator.set_connection_info(conn_info)
+        self.status_indicator.set_status("connected")
+        self.connection_status.setText(f"Connected: {conn_info}")
+        self._set_connection_controls(connected=True)
+        self._log("Reconnected to Modbus server")
+
+        if self._monitoring_paused_by_disconnect:
+            self._monitoring_paused_by_disconnect = False
+            self._start_monitoring()
 
     def _show_connection_error_dialog(self, target_description, unit_id, error_message):
         """Show connection error dialog with detailed information."""
@@ -2134,11 +2204,14 @@ Unit ID: {unit_id}<br><br>
                     self._log(
                         f"Monitoring stopped after {self.monitoring_manager._monitoring_failure_count} consecutive failed poll(s)"
                     )
+                    self._monitoring_paused_by_disconnect = True
                     self._stop_monitoring()
                     QMessageBox.warning(
                         self,
                         "Monitoring Stopped",
-                        "Monitoring was stopped after repeated Modbus failures. Check write tag type, address, unit ID, and server status.",
+                        "Monitoring was stopped after repeated Modbus failures. ModbusLens will keep trying to "
+                        "reconnect in the background and resume monitoring automatically once it succeeds. If it "
+                        "doesn't recover, check write tag type, address, unit ID, and server status.",
                     )
             else:
                 self.monitoring_manager._monitoring_failure_count = 0

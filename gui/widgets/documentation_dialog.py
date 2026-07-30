@@ -102,6 +102,16 @@ Settings (above) covers the common case of "fill in my own IP"; IP Configuration
 need to see every adapter and its subnet mask at once, such as confirming two adapters aren't
 sharing a conflicting subnet.</p>
 
+<h3>Auto-reconnect</h3>
+<p>Once connected, ModbusLens watches the connection in the background. If it drops - a cable
+pulled, a device rebooting, a network blip - the status indicator switches to
+<b>Reconnecting... (attempt N)</b> and it keeps retrying automatically, waiting a little longer
+between each attempt (2s, 4s, 8s... capped at 30s) so it doesn't hammer a device that's still
+coming back up. If Tags monitoring was running and got stopped because every tag failed at once
+(read as: the connection itself was the problem, not one bad tag), it resumes automatically the
+moment the connection recovers - you don't have to click Start Monitoring again. This only applies
+to an unexpected drop; clicking <b>Disconnect</b> yourself never triggers a reconnect attempt.</p>
+
 <h3>0-based vs 1-based addressing</h3>
 <p>Modbus devices are documented two different ways: some vendors say "register 40001" meaning
 protocol offset 0 (1-based/traditional), others say "register 0" meaning the same offset
@@ -510,8 +520,19 @@ map that return an exception rather than a value.</li>
 ERROR while the others keep ticking, the problem is specific to that tag's configuration, not the
 connection.</li>
 <li>If <i>every</i> tag shows ERROR at once, monitoring will auto-stop after a few consecutive
-failed polls - that's treated as a lost connection. Reconnect and check the connection itself.</li>
+failed polls - that's treated as a lost connection rather than a tag problem. ModbusLens will
+retry the connection itself automatically (see the next entry); you shouldn't need to do
+anything unless it can't recover.</li>
 </ul>
+
+<h3>Status shows "Reconnecting..." and it's taking a while</h3>
+<p>This is expected - once connected, ModbusLens watches the connection and auto-retries with
+increasing delays (2s, 4s, 8s... capped at 30s) if it drops, rather than requiring a manual
+reconnect. If Tags monitoring was running and stopped because every tag failed at once, it
+resumes automatically the moment the connection recovers. If it's still stuck reconnecting after
+a while, the underlying cause is the same as an initial connection failure - work through the
+TCP or Serial checklist above (device power, cabling, IP/port, Unit ID). Clicking
+<b>Disconnect</b> stops the retry loop entirely, if you want to give up on it.</p>
 
 <h3>"Duplicate Address" or "Overlapping Ranges" warning</h3>
 <p>Two tags of the same Modbus type (e.g. two Holding Register tags) are pointing at the same or
