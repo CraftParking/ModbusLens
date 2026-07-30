@@ -292,11 +292,17 @@ class AddressTableWidget(QWidget):
         self._building_table = True
         self.table.setRowCount(0)
         self.current_data.clear()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Address", "Value", "Hex"])
-        self.table.setRowCount(count)
 
         is_write = "Write" in function
+        # Value bounds only make sense for numeric register writes -- coils are
+        # just on/off, and read-only functions never write anything.
+        is_register_write = is_write and "Register" in function
+        self.table.setColumnCount(5 if is_register_write else 3)
+        if is_register_write:
+            self.table.setHorizontalHeaderLabels(["Address", "Value", "Hex", "Min", "Max"])
+        else:
+            self.table.setHorizontalHeaderLabels(["Address", "Value", "Hex"])
+        self.table.setRowCount(count)
 
         for i in range(count):
             address = start_address + i
@@ -324,6 +330,14 @@ class AddressTableWidget(QWidget):
             hex_item = QTableWidgetItem("")
             hex_item.setFlags(hex_item.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(i, 2, hex_item)
+
+            if is_register_write:
+                min_item = QTableWidgetItem("")
+                min_item.setToolTip("Optional lower bound enforced at write time. Leave both Min and Max blank for no limit.")
+                self.table.setItem(i, 3, min_item)
+                max_item = QTableWidgetItem("")
+                max_item.setToolTip("Optional upper bound enforced at write time. Leave both Min and Max blank for no limit.")
+                self.table.setItem(i, 4, max_item)
 
         self._building_table = False
 
@@ -491,13 +505,18 @@ class AddressTableWidget(QWidget):
         """Handle manual value edits for write operations only."""
         if self._building_table:
             return
-        if column != 1:
-            return
 
         if not hasattr(self, 'current_function') or not self.current_function:
             return
 
         if "Write" not in self.current_function:
+            return
+
+        if column in (3, 4):
+            self.on_bound_cell_changed(row)
+            return
+
+        if column != 1:
             return
 
         address = self.current_start_address + row
@@ -523,6 +542,41 @@ class AddressTableWidget(QWidget):
             self.log(f"Invalid value '{value_text}' for address {address}: {e}")
             if address in self.current_data:
                 self.table.item(row, 1).setText(str(self.current_data[address]))
+
+    def on_bound_cell_changed(self, row):
+        """Push an edited Min/Max cell into the shared Modbus client's write-bound
+        registry, so the bound is enforced regardless of whether the next write to
+        this address comes from the Address Table, Tags, or a Script."""
+        if not hasattr(self.parent_window, 'modbus') or not self.parent_window.modbus:
+            return
+
+        address = self.current_start_address + row
+        try:
+            protocol_offset = self.convert_user_address_to_offset(address, self.current_function)
+        except ValueError as e:
+            self.log(f"Address error: {e}")
+            return
+
+        min_text = self.table.item(row, 3).text().strip() if self.table.item(row, 3) else ""
+        max_text = self.table.item(row, 4).text().strip() if self.table.item(row, 4) else ""
+
+        if not min_text and not max_text:
+            self.parent_window.modbus.clear_write_bound(protocol_offset)
+            return
+
+        try:
+            minimum = int(min_text)
+            maximum = int(max_text)
+        except ValueError:
+            self.log(f"Invalid write bound for address {address}: Min and Max must both be whole numbers")
+            return
+
+        if minimum > maximum:
+            self.log(f"Invalid write bound for address {address}: Min ({minimum}) is greater than Max ({maximum})")
+            return
+
+        self.parent_window.modbus.set_write_bound(protocol_offset, minimum, maximum)
+        self.log(f"Set write bound for address {address}: [{minimum}, {maximum}]")
 
     def write_value_to_device(self, address, value):
         """Write a single value to the Modbus device."""

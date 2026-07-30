@@ -29,6 +29,30 @@ class ModbusClient:
         self.client: Optional[Union[ModbusTcpClient, ModbusSerialClient]] = None
         self._connected = False
         self.last_error: Optional[str] = None
+        # Optional per-register (holding register) write bounds: address -> (min, max).
+        # Enforced here so every write path -- Address Table, Tags, Script -- is
+        # covered the same way, regardless of which one originated the write.
+        self.write_bounds = {}
+
+    def set_write_bound(self, address, minimum, maximum):
+        self.write_bounds[address] = (minimum, maximum)
+
+    def clear_write_bound(self, address):
+        self.write_bounds.pop(address, None)
+
+    def _check_write_bounds(self, address, values):
+        """Return an error string if any value at address, address+1, ... is out of its configured bound."""
+        for offset, value in enumerate(values):
+            bound = self.write_bounds.get(address + offset)
+            if bound is None:
+                continue
+            minimum, maximum = bound
+            if value < minimum or value > maximum:
+                return (
+                    f"value {value} at address {address + offset} is outside the configured "
+                    f"write bound [{minimum}, {maximum}]"
+                )
+        return None
 
     def target_description(self):
         if self.mode == "serial":
@@ -173,6 +197,11 @@ class ModbusClient:
             self.last_error = "Not connected to Modbus server"
             logger.error(self.last_error)
             return False
+        bounds_error = self._check_write_bounds(address, [value])
+        if bounds_error:
+            self.last_error = f"Write rejected: {bounds_error}"
+            logger.error(self.last_error)
+            return False
         try:
             result = self.client.write_register(address, value, device_id=self.unit_id)
             if result.isError():
@@ -207,6 +236,11 @@ class ModbusClient:
     def write_registers(self, address, values):
         if not self.is_connected():
             self.last_error = "Not connected to Modbus server"
+            logger.error(self.last_error)
+            return False
+        bounds_error = self._check_write_bounds(address, values)
+        if bounds_error:
+            self.last_error = f"Write rejected: {bounds_error}"
             logger.error(self.last_error)
             return False
         try:
