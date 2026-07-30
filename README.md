@@ -204,6 +204,9 @@ pip install scapy
 - 64-bit numeric formats and a string/text data type, beyond the current 32-bit cap  
 - Single-bit read/write within a register, plus Masked Bit Write (FC22) support for legacy devices  
 - RTU/ASCII framing encapsulated over TCP/UDP, for serial-to-Ethernet converters that tunnel raw framing instead of translating it  
+- Engineering-unit scaling per tag/register (linear scale + offset, e.g. raw 0-4095 -> 0-100 PSI)  
+- Color-coded log entries distinguishing reads, writes, and errors at a glance  
+- Auto-reconnect with backoff after a dropped connection, instead of requiring a manual reconnect  
 
 ---
 
