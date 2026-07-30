@@ -21,13 +21,13 @@
 
 **ModbusLens** is a **free desktop tool** built for engineers working with **Modbus devices**, combining communication, monitoring, and network diagnostics in one place.
 
-> Supports both **Modbus TCP/IP** and **Modbus RTU (serial)**
+> Supports **Modbus TCP/IP** and **Modbus Serial**, both RTU and ASCII framing
 
 ---
 
 ## Highlights
 
-- Modbus TCP and Modbus RTU (serial) client, switchable per connection
+- Modbus TCP and Modbus Serial (RTU or ASCII framing) client, switchable per connection
 - ARP-based device discovery (no IP needed)
 - Automatic Modbus device detection
 - Continuous live scanning (no repeated manual scans)
@@ -99,7 +99,7 @@
 ### Modbus TCP & RTU
 - Read coils, inputs, holding & input registers  
 - Write single/multiple coils & registers  
-- Modbus TCP (IP/Port/Unit ID) or Modbus RTU serial (COM port, baud, parity, stop bits, byte size) - pick per connection in Settings  
+- Modbus TCP (IP/Port/Unit ID) or Modbus Serial (COM port, baud, parity, stop bits, byte size, and RTU/ASCII framing) - pick per connection in Settings  
 - Address table for quick testing  
 - Optional Min/Max write bounds per register - a write outside the range is rejected before it reaches the device, no matter if it came from the Address Table, Tags, or a Script  
 - Multiple simultaneous connections via independent windows (File > New Connection Window)  
@@ -114,6 +114,7 @@
 ### Monitoring
 - Real-time tag monitoring, with Read Value/Write Value/Timestamp built into the same Tags table  
 - Insert new tags anywhere in the list (new tags drop in below the selected row), not just at the end  
+- Drag and drop to reorder rows, preserving live values and alarm config  
 - Write to a tag while monitoring stays active  
 - A single misconfigured or failing tag no longer stops the rest of the list from updating  
 - Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting  
@@ -193,7 +194,11 @@ pip install scapy
 
 - Unified multi-device dashboard (currently one window per device)  
 - Register maps with mixed data types per device profile  
-- Row insert/rearrange in the Tags tab beyond "add relative to selection" (drag-to-reorder)  
+- Multiple Unit IDs over a single connection (useful for RTU/ASCII sharing one serial line, or a TCP-to-RTU gateway fanning out to several devices)  
+- Server tab simulating multiple devices/unit addresses at once, not just one  
+- Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
+- Broader Modbus function-code coverage beyond core read/write (diagnostics, file record access, device identification)  
+- Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
 
 ---
 
