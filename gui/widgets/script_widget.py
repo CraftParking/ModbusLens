@@ -721,7 +721,13 @@ class ScriptWidget(QWidget):
 
     def _log_console(self, message):
         timestamp = time.strftime("[%H:%M:%S]")
+        scrollbar = self.console.verticalScrollBar()
+        # Only follow new lines if already scrolled to the bottom -- otherwise scrolling up
+        # to read past output gets yanked back down as soon as the script logs again.
+        was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
         self.console.append(format_log_html(timestamp, message))
+        if was_at_bottom:
+            scrollbar.setValue(scrollbar.maximum())
         # Also forward to the main window's System Logs, not just this tab's own console.
         if hasattr(self.parent_window, '_log'):
             self.parent_window._log(f"[Script] {message}")
