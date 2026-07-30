@@ -26,6 +26,7 @@ from widgets.trend_widget import TrendWidget
 from widgets.server_widget import ServerWidget
 from widgets.script_widget import ScriptWidget
 from widgets.documentation_dialog import DocumentationDialog
+from widgets.about_dialog import AboutDialog
 from diagnostics.advanced_diagnostics import AdvancedDiagnostics
 from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
 from monitoring.monitoring_manager import MonitoringManager
@@ -2301,46 +2302,10 @@ Unit ID: {unit_id}<br><br>
         dialog.exec()
 
     def _show_about(self):
-        """Show about dialog."""
+        """Show about dialog, with a second tab that checks GitHub for a newer release."""
         version = QApplication.applicationVersion()
-        
-        about_text = (
-            f"<h3>ModbusLens v{version}</h3>"
-            "<p><b>ModbusLens is free software</b> professional Modbus TCP client designed for engineers working with industrial automation systems.</p>"
-            
-            "<h4>Key Features</h4>"
-            "<ul>"
-            "<li>Modbus TCP and RTU/serial read/write (coils, inputs, registers)</li>"
-            "<li>Tag-based real-time monitoring, with alarms and CSV logging</li>"
-            "<li>Live/historical trend graphing</li>"
-            "<li>Server mode - act as a Modbus TCP slave</li>"
-            "<li>Scripting language for repeatable test sequences, targeting either your live connection or the local Server tab</li>"
-            "<li>Multiple simultaneous connections (one per window)</li>"
-            "<li>Network discovery & diagnostics (ARP + Modbus detection)</li>"
-            "</ul>"
-
-            "<h4>Upcoming Features</h4>"
-            "<ul>"
-            "<li>Unified multi-device dashboard</li>"
-            "<li>Register maps with mixed data types per device profile</li>"
-            "</ul>"
-            
-            "<h4>Support</h4>"
-            "<p>If you find this tool useful, you can support development:<br>"
-            "<a href=\"https://buymeacoffee.com/craftparking\">Buy Me a Coffee</a></p>"
-            
-            "<h4>Links</h4>"
-            "<p>GitHub: <a href=\"https://github.com/CraftParking/ModbusLens\">https://github.com/CraftParking/ModbusLens</a></p>"
-            
-            "<h4>License</h4>"
-            "<p>License: Apache License 2.0</p>"
-            
-            "<p style='margin-top: 15px;'><i>Note: Verify behavior before use in critical industrial systems.</i></p>"
-            "<hr>"
-            "<p align='center' style='color: #666666;'>© 2026 ModbusLens | CraftParking</p>"
-        )
-        
-        QMessageBox.about(self, "About ModbusLens", about_text)
+        dialog = AboutDialog(version, self)
+        dialog.exec()
 
     def closeEvent(self, event):
         """Handle application close event."""
