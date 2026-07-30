@@ -711,8 +711,30 @@ class ModbusGUI(QMainWindow):
                 border: 1px solid #CCCCCC;
                                 padding: 5px;
             }
+            QSpinBox {
+                padding-right: 2px;
+            }
             QSpinBox:focus, QLineEdit:focus {
                 border-color: #007ACC;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                subcontrol-origin: border;
+                width: 16px;
+                border-left: 1px solid #CCCCCC;
+                background-color: #F0F0F0;
+            }
+            QSpinBox::up-button {
+                subcontrol-position: top right;
+                border-bottom: 1px solid #CCCCCC;
+            }
+            QSpinBox::down-button {
+                subcontrol-position: bottom right;
+            }
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+                background-color: #E0E0E0;
+            }
+            QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
+                background-color: #D0D0D0;
             }
         """
 
