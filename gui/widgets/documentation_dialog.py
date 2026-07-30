@@ -241,13 +241,12 @@ with no response at all.</li>
 technically working but degrading usually shows up here first, before it starts failing outright.</li>
 </ul>
 
-<h3>Advanced Diagnostics toggle</h3>
-<p>Off by default. Checking it reveals three more columns: <b>Function</b> (the Modbus function
-code actually used, e.g. <code>0x03 Read Holding Registers</code>), <b>Unit ID</b>, and
-<b>Details</b> (a register/bit count on success, or the specific classified exception - e.g.
-"Illegal Data Address" - on failure). History already logged is populated too, not just new rows
-going forward, so turning it on retroactively reveals detail on everything currently in the
-table. Turn it on when you're chasing an intermittent fault and a one-line result isn't enough.</p>
+<h3>Filter</h3>
+<p>The text box filters by whatever's in the Operation or Value columns - a tag name (e.g.
+<code>pump</code>), an address, or a specific value. The dropdown next to it narrows to just
+<b>Success</b> or <b>Failed</b> rows. Both apply live as you type/select, and to new rows as they
+arrive - useful for watching one specific tag during a busy poll, or isolating every failure to
+see if they cluster around one address.</p>
 
 <h3>Show Statistics</h3>
 <p>Opens a summary of the current connection's traffic: total requests, successful vs. failed

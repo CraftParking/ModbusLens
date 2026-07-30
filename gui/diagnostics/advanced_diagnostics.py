@@ -1,14 +1,10 @@
-import struct
-
-
 MAX_TRACKED_RESPONSE_TIMES = 500
 
 
 class AdvancedDiagnostics:
-    """Advanced diagnostics and statistics for Modbus communication troubleshooting."""
+    """Statistics for Modbus communication troubleshooting, surfaced via Show Statistics."""
 
     def __init__(self):
-        self.advanced_diagnostics = False
         self.modbus_stats = self._default_stats()
 
     @staticmethod
@@ -22,98 +18,6 @@ class AdvancedDiagnostics:
             'function_codes': {},
             'exception_codes': {}
         }
-
-    def create_advanced_diagnostics(self, title, data, modbus_client=None):
-        """Create detailed diagnostics information for troubleshooting."""
-        lines = []
-        
-        # Parse title for operation type
-        if "Address[" in title:
-            address = title.split("[")[1].split("]")[0]
-            operation_type = "Modbus Address Monitoring"
-        elif "Tag[" in title:
-            tag_name = title.split("[")[1].split("]")[0]
-            address = f"Tag: {tag_name}"
-            operation_type = "Tags Monitoring"
-        else:
-            address = "Unknown"
-            operation_type = "Unknown Operation"
-        
-        lines.append(f"Operation Type: {operation_type}")
-        lines.append(f"Target Address: {address}")
-        
-        # Data analysis
-        if data is None:
-            lines.append("\nREAD FAILED")
-            lines.append(f"Error: {getattr(modbus_client, 'last_error', 'Unknown error')}")
-            self.modbus_stats['failed_requests'] += 1
-            
-            # Analyze common errors
-            error_msg = getattr(modbus_client, 'last_error', '').lower()
-            if 'illegal' in error_msg:
-                lines.append("\nTROUBLESHOOTING:")
-                lines.append("• Check if address exists in device Modbus map")
-                lines.append("• Verify device supports this function code")
-                lines.append("• Confirm address is within valid range")
-            elif 'connection' in error_msg or 'timeout' in error_msg:
-                lines.append("\nTROUBLESHOOTING:")
-                lines.append("• Check network connectivity")
-                lines.append("• Verify device IP address and port")
-                lines.append("• Confirm device is powered and responding")
-        else:
-            lines.append("\nREAD SUCCESSFUL")
-            self.modbus_stats['successful_requests'] += 1
-            
-            # Data type analysis
-            if isinstance(data, list):
-                lines.append(f"Data Type: Array ({len(data)} elements)")
-                lines.append(f"Raw Values: {data}")
-                
-                # Analyze data patterns
-                if all(isinstance(x, bool) for x in data):
-                    lines.append("Modbus Type: Coils/Discrete Inputs")
-                    lines.append(f"Binary Pattern: {''.join('1' if x else '0' for x in data)}")
-                elif all(isinstance(x, int) for x in data):
-                    lines.append("Modbus Type: Registers")
-                    lines.append(f"Hex Values: {[hex(x) for x in data]}")
-                    
-                    # Check for common patterns
-                    if len(data) >= 2:
-                        combined = (data[0] << 16) | data[1]
-                        lines.append(f"Combined 32-bit: 0x{combined:08X} ({combined})")
-                        
-                        # Float interpretation
-                        try:
-                            float_val = struct.unpack('>f', struct.pack('>I', combined))[0]
-                            lines.append(f"Float32: {float_val}")
-                        except struct.error:
-                            pass
-            else:
-                lines.append("Data Type: Single Value")
-                lines.append(f"Raw Value: {data}")
-                if isinstance(data, int):
-                    lines.append(f"Hex: 0x{data:04X} ({data})")
-                else:
-                    lines.append(f"Value: {data}")
-        
-        # Communication statistics
-        lines.append("\nCOMMUNICATION STATS:")
-        total = self.modbus_stats['total_requests']
-        success = self.modbus_stats['successful_requests']
-        failed = self.modbus_stats['failed_requests']
-        success_rate = (success / total * 100) if total > 0 else 0
-        
-        lines.append(f"Total Requests: {total}")
-        lines.append(f"Successful: {success} ({success_rate:.1f}%)")
-        lines.append(f"Failed: {failed} ({100-success_rate:.1f}%)")
-        
-        # Recent performance
-        if len(self.modbus_stats['response_times']) > 0:
-            recent_times = self.modbus_stats['response_times'][-10:]  # Last 10 requests
-            avg_time = sum(recent_times) / len(recent_times)
-            lines.append(f"Avg Response Time: {avg_time:.2f}ms (last 10 requests)")
-        
-        return "\n".join(lines)
 
     def generate_statistics_report(self, modbus_client=None):
         """Generate a comprehensive statistics report."""
@@ -239,10 +143,6 @@ class AdvancedDiagnostics:
     def reset_statistics(self):
         """Reset all Modbus statistics."""
         self.modbus_stats = self._default_stats()
-
-    def toggle_advanced_diagnostics(self, checked):
-        """Toggle advanced diagnostics mode."""
-        self.advanced_diagnostics = checked
 
     def show_statistics_dialog(self, modbus_client=None, parent=None):
         """Show statistics dialog."""

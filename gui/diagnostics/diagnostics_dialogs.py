@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QCheckBox, QWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QWidget,
+    QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit, QComboBox,
 )
 from PySide6.QtGui import QColor
 
@@ -8,15 +8,8 @@ from log_format import ERROR_COLOR, CONNECT_COLOR
 
 MAX_RAW_DATA_ROWS = 1000  # oldest rows are dropped past this so the table can't grow unbounded
 
-RAW_DATA_COLUMNS = [
-    "Time", "Operation", "Value", "Raw (Hex)", "TX Bytes", "RX Bytes", "Status", "Latency (ms)",
-    "Function", "Unit ID", "Details",
-]
+RAW_DATA_COLUMNS = ["Time", "Operation", "Value", "Raw (Hex)", "TX Bytes", "RX Bytes", "Status", "Latency (ms)"]
 STATUS_COLUMN = 6
-# These three are only useful for protocol-level troubleshooting, so they stay hidden until
-# the Advanced Diagnostics checkbox is on -- toggling it now visibly reveals real columns
-# instead of only changing a hover tooltip.
-ADVANCED_COLUMNS = (8, 9, 10)
 
 
 def _format_wire_bytes(data):
@@ -49,32 +42,14 @@ def _format_raw_hex(data):
         return ", ".join(str(v) for v in values)
 
 
-def _format_function(function_code, function_name):
-    if function_code is None:
-        return ""
-    if function_name:
-        return f"0x{function_code:02X} {function_name}"
-    return f"0x{function_code:02X}"
-
-
-def _format_details(data, exception_desc):
-    """A short, structural note: bit/register count on success, the classified exception
-    reason on failure (when the specific error text was recognized)."""
-    if data is None:
-        return exception_desc or "-"
-    values = data if isinstance(data, list) else [data]
-    if all(isinstance(v, bool) for v in values):
-        return f"{len(values)} bit(s)"
-    return f"{len(values)} register(s)"
-
-
 class DiagnosticsDialogs:
     """Handles diagnostics dialogs/tabs and their management."""
 
     def __init__(self, parent_window):
         self.parent = parent_window
         self.logs_dialog = None
-        self.advanced_toggle = None
+        self.filter_text = ""
+        self.filter_status = "All"
 
     def setup_diagnostics_widgets(self):
         """Initialize diagnostics widgets early to ensure they exist when needed."""
@@ -100,7 +75,7 @@ class DiagnosticsDialogs:
             # Interactive (not Stretch) since TX/RX Bytes need room to vary with frame size --
             # forcing every column to share the width equally would crush the hex dumps.
             table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-            column_widths = [70, 170, 130, 130, 190, 190, 70, 90, 170, 60, 160]
+            column_widths = [70, 170, 130, 130, 190, 190, 70, 90]
             for col, width in enumerate(column_widths):
                 table.setColumnWidth(col, width)
             table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -123,8 +98,6 @@ class DiagnosticsDialogs:
                     font-weight: bold;
                 }
             """)
-            for col in ADVANCED_COLUMNS:
-                table.setColumnHidden(col, True)
             self.parent.raw_data_table = table
 
     def show_diagnostics_logs(self):
@@ -190,36 +163,25 @@ class DiagnosticsDialogs:
         header_layout.addWidget(title_label)
 
         header_layout.addStretch()
-
-        # Advanced diagnostics toggle
-        self.advanced_toggle = QCheckBox("Advanced Diagnostics")
-        self.advanced_toggle.setStyleSheet("""
-            QCheckBox {
-                color: #333333;
-                font-size: 12px;
-                padding: 5px;
-            }
-            QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-            }
-            QCheckBox::indicator:unchecked {
-                background-color: #f0f0f0;
-                border: 2px solid #cccccc;
-                border-radius: 4px;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #4CAF50;
-                border: 2px solid #4CAF50;
-                border-radius: 4px;
-                image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDVMMTAuNTkgNi40MUw3LjUgMy4zMUw2LjQxIDYuNDFMMyA1TDEuNTkgNi40MUwzLjQxIDguNTlMNi40MSAxMS41OUw3LjUgMTAuNjlMMTAuNTkgOC41OUwxMiAxMFYxMkgxMFY5LjQxTDguNTkgNy41TDUuNDEgMTAuNjlMNCAxMkgyVjEwTDNlLjQxIDguNTlMMS41OSA2LjQxTDNUNi40MUw1LjQxIDMuMzFMNy41IDUuNDFMMTAuNTkgMi41TDEyIDVWNy41OUwxMC41OSA5LjQxTDcuNSA2LjQxTDYuNDEgOS40MUwzLjUgOEwxLjU5IDkuNDFMMy40MSAxMS41OUw2LjQxIDE0LjU5TDcuNSAxMy42OUwxMC41OSAxMS41OUwxMiAxM1YxNEgxMFYxMi41OUw4LjU5IDEwLjVMNS40MSAxMy42OUw0IDE1SDJWMTNMMi41OSAxMS41OUwxLjU5IDkuNDFMMy41IDhMNS40MSA5LjQxTDcuNSA2LjQxTDEwLjU5IDMuNDFMMTIgNloiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo=);
-            }
-        """)
-        self.advanced_toggle.setChecked(advanced_diagnostics.advanced_diagnostics)
-        self.advanced_toggle.toggled.connect(lambda checked: self._on_advanced_toggled(checked, advanced_diagnostics))
-        header_layout.addWidget(self.advanced_toggle)
-
         layout.addLayout(header_layout)
+
+        # Filter row: text search (matches tag name/address in Operation and Value) + status
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter:"))
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText("Filter by tag name or address...")
+        self.filter_input.setStyleSheet(self.parent._get_input_style())
+        self.filter_input.setText(self.filter_text)
+        self.filter_input.textChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.filter_input, 1)
+
+        self.filter_status_combo = QComboBox()
+        self.filter_status_combo.setStyleSheet(self.parent._get_input_style())
+        self.filter_status_combo.addItems(["All", "Success", "Failed"])
+        self.filter_status_combo.setCurrentText(self.filter_status)
+        self.filter_status_combo.currentTextChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.filter_status_combo)
+        layout.addLayout(filter_layout)
 
         # Use the pre-initialized raw data table
         if not hasattr(self.parent, 'raw_data_table'):
@@ -227,8 +189,7 @@ class DiagnosticsDialogs:
         if self.parent.raw_data_table.parent():
             self.parent.raw_data_table.setParent(None)
         layout.addWidget(self.parent.raw_data_table)
-        # Sync column visibility to whatever the toggle's current state already is.
-        self._on_advanced_toggled(advanced_diagnostics.advanced_diagnostics, advanced_diagnostics)
+        self._apply_raw_data_filter()
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -251,20 +212,31 @@ class DiagnosticsDialogs:
 
         return tab
 
-    def _on_advanced_toggled(self, checked, advanced_diagnostics):
-        advanced_diagnostics.toggle_advanced_diagnostics(checked)
+    def _on_filter_changed(self, _value=None):
+        self.filter_text = self.filter_input.text().strip().lower()
+        self.filter_status = self.filter_status_combo.currentText()
+        self._apply_raw_data_filter()
+
+    def _row_matches_filter(self, table, row):
+        if self.filter_status != "All" and table.item(row, STATUS_COLUMN).text() != self.filter_status:
+            return False
+        if self.filter_text:
+            # Search Operation (tag name/address) and Value, since either is a reasonable
+            # thing to search for -- "did this tag show up" or "did this value show up".
+            haystack = (table.item(row, 1).text() + " " + table.item(row, 2).text()).lower()
+            if self.filter_text not in haystack:
+                return False
+        return True
+
+    def _apply_raw_data_filter(self):
         table = getattr(self.parent, 'raw_data_table', None)
         if table is None:
             return
-        for col in ADVANCED_COLUMNS:
-            table.setColumnHidden(col, not checked)
+        for row in range(table.rowCount()):
+            table.setRowHidden(row, not self._row_matches_filter(table, row))
 
-    def add_raw_data_row(self, timestamp, title, data, elapsed_ms, error_text,
-                          function_code=None, function_name=None, unit_id=None, exception_desc=None,
-                          tx_bytes=None, rx_bytes=None):
-        """Append one transaction row to the Raw Data table. The Function/Unit ID/Details
-        columns are always populated (so toggling Advanced Diagnostics on shows history too),
-        just hidden until that checkbox is on."""
+    def add_raw_data_row(self, timestamp, title, data, elapsed_ms, error_text, tx_bytes=None, rx_bytes=None):
+        """Append one transaction row to the Raw Data table."""
         table = getattr(self.parent, 'raw_data_table', None)
         if table is None:
             return
@@ -277,25 +249,29 @@ class DiagnosticsDialogs:
         status_text = "Success" if success else "Failed"
         latency_text = f"{elapsed_ms:.1f}" if elapsed_ms is not None else ""
         status_color = QColor(CONNECT_COLOR) if success else QColor(ERROR_COLOR)
-        function_text = _format_function(function_code, function_name)
-        unit_text = str(unit_id) if unit_id is not None else ""
-        details_text = _format_details(data, exception_desc)
+
+        scrollbar = table.verticalScrollBar()
+        # Only follow new rows if already scrolled to the bottom -- otherwise a scroll-up
+        # to inspect an earlier transaction gets yanked back down on the next poll tick.
+        was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
 
         row = table.rowCount()
         table.insertRow(row)
-        columns = (timestamp, title, value_text, hex_text, tx_text, rx_text, status_text, latency_text,
-                   function_text, unit_text, details_text)
+        columns = (timestamp, title, value_text, hex_text, tx_text, rx_text, status_text, latency_text)
         for col, text in enumerate(columns):
             item = QTableWidgetItem(text)
             if col == STATUS_COLUMN:
                 item.setForeground(status_color)
             table.setItem(row, col, item)
 
+        table.setRowHidden(row, not self._row_matches_filter(table, row))
+
         overflow = table.rowCount() - MAX_RAW_DATA_ROWS
         if overflow > 0:
             table.removeRow(0)  # oldest row falls off the front, not the one just added
 
-        table.scrollToBottom()
+        if was_at_bottom:
+            table.scrollToBottom()
 
     def clear_diagnostics_logs(self):
         """Clear all diagnostics logs."""
