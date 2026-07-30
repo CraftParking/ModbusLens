@@ -386,11 +386,12 @@ def _parse_if(rest):
 class ScriptRunner:
     """Drives a compiled script one instruction at a time; WAIT hands control back instead of blocking."""
 
-    def __init__(self, modbus_getter, server_getter, target_mode, log_callback):
+    def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None):
         self.modbus_getter = modbus_getter
         self.server_getter = server_getter
         self.target_mode = target_mode  # "client" or "server"
         self.log = log_callback
+        self.raw_data_callback = raw_data_callback
         self.instructions = []
         self.pc = 0
         self.repeat_counters = {}
@@ -571,6 +572,8 @@ class ScriptRunner:
         else:
             ok = modbus.write_register(address, value)
         self.log(f"WRITE {data_type} {address} = {value} {'OK' if ok else 'FAILED'}")
+        if self.raw_data_callback:
+            self.raw_data_callback(f"Script WRITE {data_type} {address}", value if ok else None)
 
     def _do_read(self, data_type, address):
         if self.target_mode == "server":
@@ -586,6 +589,8 @@ class ScriptRunner:
             data = modbus.read_input_registers(address, 1)
         else:
             data = modbus.read_registers(address, 1)
+        if self.raw_data_callback:
+            self.raw_data_callback(f"Script READ {data_type} {address}", data)
         if data is None:
             return None
         value = data[0] if isinstance(data, list) else data
@@ -704,6 +709,9 @@ class ScriptWidget(QWidget):
     def _log_console(self, message):
         timestamp = time.strftime("[%H:%M:%S]")
         self.console.append(f"{timestamp} {message}")
+        # Also forward to the main window's System Logs, not just this tab's own console.
+        if hasattr(self.parent_window, '_log'):
+            self.parent_window._log(f"[Script] {message}")
 
     def _update_cpu_usage(self):
         if not self._psutil_available:
@@ -830,6 +838,7 @@ class ScriptWidget(QWidget):
             lambda: getattr(self.parent_window, "server_widget", None),
             target_mode,
             self._log_console,
+            getattr(self.parent_window, "_display_raw_data", None),
         )
         self.runner.load(instructions)
         self.running = True
