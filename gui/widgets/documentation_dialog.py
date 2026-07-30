@@ -239,7 +239,9 @@ at any point.</p>
 <p>To keep a typo from hanging the app or running forever: a loop with no WAIT still hands
 control back to the interface regularly instead of freezing it, and REPEAT counts, WAIT
 durations, expression nesting, and total script length are all capped with a clear error if
-exceeded.</p>
+exceeded. Separately, consecutive steps are never scheduled less than 20ms apart even if a
+script asks for <code>WAIT 0</code> or omits WAIT entirely, so a typo can't flood the device or
+network.</p>
 """),
 
     ("Network Diagnostics", """

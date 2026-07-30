@@ -41,6 +41,9 @@ MAX_INSTRUCTIONS = 5000
 MAX_REPEAT_COUNT = 1_000_000
 MAX_WAIT_MS = 24 * 60 * 60 * 1000  # 24 hours
 MAX_STEPS_PER_TICK = 200  # a loop with no WAIT still yields to the UI this often
+MIN_STEP_INTERVAL_MS = 20  # write-rate floor: no matter what a script's WAIT says (or
+# omits), consecutive steps are never scheduled closer together than this, so a
+# WAIT 0/1 typo -- or a tight loop with no WAIT at all -- can't flood the device/network.
 MAX_EXPR_DEPTH = 100
 
 DEFAULT_SCRIPT_HELP = """# ModbusLens script - one command per line, # or // starts a comment
@@ -858,7 +861,7 @@ class ScriptWidget(QWidget):
             self._stop()
             return
 
-        self.step_timer.start(max(0, wait_ms or 0))
+        self.step_timer.start(max(MIN_STEP_INTERVAL_MS, wait_ms or 0))
 
     def _stop(self, user_initiated=False):
         self.step_timer.stop()
