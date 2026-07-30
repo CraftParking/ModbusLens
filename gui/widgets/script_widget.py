@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from log_format import format_log_html
+from modbus_meta import function_code_for
 
 HIDE_RUN_WARNING_KEY = "hide_script_run_warning"
 
@@ -569,13 +570,18 @@ class ScriptRunner:
         if data_type not in WRITABLE_TYPES:
             raise ScriptError(f"{data_type} cannot be written to a client connection")
         modbus = self._require_modbus()
+        start_time = time.perf_counter()
         if data_type == "Coil":
             ok = modbus.write_coil(address, bool(value))
         else:
             ok = modbus.write_register(address, value)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
         self.log(f"WRITE {data_type} {address} = {value} {'OK' if ok else 'FAILED'}")
         if self.raw_data_callback:
-            self.raw_data_callback(f"Script WRITE {data_type} {address}", value if ok else None)
+            self.raw_data_callback(
+                f"Script WRITE {data_type} {address}", value if ok else None, elapsed_ms,
+                function_code_for(data_type, is_write=True),
+            )
 
     def _do_read(self, data_type, address):
         if self.target_mode == "server":
@@ -583,6 +589,7 @@ class ScriptRunner:
             return server.read_value(data_type, address)
 
         modbus = self._require_modbus()
+        start_time = time.perf_counter()
         if data_type == "Coil":
             data = modbus.read_coils(address, 1)
         elif data_type == "Discrete Input":
@@ -591,8 +598,12 @@ class ScriptRunner:
             data = modbus.read_input_registers(address, 1)
         else:
             data = modbus.read_registers(address, 1)
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
         if self.raw_data_callback:
-            self.raw_data_callback(f"Script READ {data_type} {address}", data)
+            self.raw_data_callback(
+                f"Script READ {data_type} {address}", data, elapsed_ms,
+                function_code_for(data_type, is_write=False),
+            )
         if data is None:
             return None
         value = data[0] if isinstance(data, list) else data

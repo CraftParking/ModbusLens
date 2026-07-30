@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor
 import time
 
 from log_format import format_log_html
+from modbus_meta import FUNCTION_NAMES
 
 
 class AddressTableWidget(QWidget):
@@ -215,6 +216,16 @@ class AddressTableWidget(QWidget):
         if "Register" in function:
             return "holding_registers"
         return None
+
+    @staticmethod
+    def _function_info(function):
+        """Pull the (code, name) straight out of a function label like 'Read Holding
+        Registers (3)' -- the code is already right there, no guessing needed."""
+        try:
+            code = int(function.rsplit("(", 1)[1].rstrip(")"))
+        except (IndexError, ValueError):
+            return None, None
+        return code, FUNCTION_NAMES.get(code)
 
     def ensure_address_mode_bounds(self):
         """Keep the address input range unambiguous for 0-based vs 1-based mode."""
@@ -447,6 +458,7 @@ class AddressTableWidget(QWidget):
                 self.parent_window._log(f"Address error: {e}")
                 return
 
+            start_time = time.perf_counter()
             if "Coils" in self.current_function:
                 if "Read Coils" in self.current_function:
                     data = self.parent_window.modbus.read_coils(protocol_offset, self.current_count)
@@ -460,9 +472,13 @@ class AddressTableWidget(QWidget):
                 data = self.parent_window.modbus.read_input_registers(protocol_offset, self.current_count)
             else:
                 return
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
 
             if hasattr(self.parent_window, '_display_raw_data'):
-                self.parent_window._display_raw_data(f"AddressTable[{self.current_function}]", data)
+                self.parent_window._display_raw_data(
+                    f"AddressTable[{self.current_function}]", data, elapsed_ms,
+                    self._function_info(self.current_function),
+                )
 
             if data is not None:
                 self.update_table_values(data)
@@ -592,6 +608,7 @@ class AddressTableWidget(QWidget):
                 self.log(f"Address error: {e}")
                 return False
 
+            start_time = time.perf_counter()
             if "Write Single Coil" in self.current_function:
                 success = self.parent_window.modbus.write_coil(protocol_offset, value)
             elif "Write Single Register" in self.current_function:
@@ -605,11 +622,14 @@ class AddressTableWidget(QWidget):
             else:
                 self.log(f"Error: Write operation not supported for function: {self.current_function}")
                 return False
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
 
             if hasattr(self.parent_window, '_display_raw_data'):
                 self.parent_window._display_raw_data(
                     f"AddressTable Write[{self.current_function}] addr={address}",
                     value if success else None,
+                    elapsed_ms,
+                    self._function_info(self.current_function),
                 )
             return success
         except Exception as e:
