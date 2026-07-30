@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">ModbusLens</h1>
-<p align="center">Free Modbus TCP Client with Advanced Network Discovery & Diagnostics</p>
+<p align="center">Free Modbus TCP &amp; RTU Client with Advanced Network Discovery &amp; Diagnostics</p>
 
 <p align="center">
   <a href="#overview">Overview</a> |
