@@ -157,6 +157,7 @@
 - More focused workspace (Address/Tags/Trend priority)  
 - Forces a light theme even when Windows is set to dark mode  
 - Help > About has an Updates tab that checks GitHub Releases for a newer version  
+- Color-coded logs (Address Table, System Logs, Script console) - writes in blue, connection events in green, errors in red  
 
 ---
 
@@ -206,7 +207,6 @@ pip install scapy
 - Single-bit read/write within a register, plus Masked Bit Write (FC22) support for legacy devices  
 - RTU/ASCII framing encapsulated over TCP/UDP, for serial-to-Ethernet converters that tunnel raw framing instead of translating it  
 - Engineering-unit scaling per tag/register (linear scale + offset, e.g. raw 0-4095 -> 0-100 PSI)  
-- Color-coded log entries distinguishing reads, writes, and errors at a glance  
 - Trend markers - select a time range and see min/max/average for the pens in it  
 - Calculated tags combining multiple registers via an expression, as a persistent Tag/Trend source (Scripting can already do this ad hoc; this would make it a saved, always-on tag)  
 

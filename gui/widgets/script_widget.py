@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox, QLabel, QComboBox
 )
 
+from log_format import format_log_html
+
 HIDE_RUN_WARNING_KEY = "hide_script_run_warning"
 
 TYPE_ALIASES = {
@@ -708,7 +710,7 @@ class ScriptWidget(QWidget):
 
     def _log_console(self, message):
         timestamp = time.strftime("[%H:%M:%S]")
-        self.console.append(f"{timestamp} {message}")
+        self.console.append(format_log_html(timestamp, message))
         # Also forward to the main window's System Logs, not just this tab's own console.
         if hasattr(self.parent_window, '_log'):
             self.parent_window._log(f"[Script] {message}")
