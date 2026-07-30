@@ -272,7 +272,7 @@ class MonitoringManager:
 
         self._monitoring_poll_in_progress = True
         self.parent.monitoring_timer.stop()
-        poll_failed = False
+        failed_count = 0
         timestamp = time.strftime("%H:%M:%S")
         log_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         try:
@@ -289,7 +289,7 @@ class MonitoringManager:
                         self.parent._end_modbus_operation(tag, "read")
 
                     if value is None:
-                        poll_failed = True
+                        failed_count += 1
                         self.add_monitoring_row(
                             tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "",
                             tag["comment"], timestamp
@@ -299,7 +299,7 @@ class MonitoringManager:
                         if self.parent.modbus is not None and getattr(self.parent.modbus, "last_error", None):
                             extra = f" ({self.parent.modbus.last_error})"
                         self.parent._log(f"Monitoring read failed for {tag['name']} at {tag['address']}{extra}")
-                        break
+                        continue
 
                     display_value = self.format_monitoring_value(tag, value)
                     raw_hex = self.format_raw_hex(tag, value)
@@ -314,11 +314,20 @@ class MonitoringManager:
                     )
                     self._log_row(tag, log_timestamp, display_value, raw_hex)
                 except Exception as e:
-                    poll_failed = True
+                    failed_count += 1
+                    self.add_monitoring_row(
+                        tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "",
+                        tag["comment"], timestamp
+                    )
+                    self._log_row(tag, log_timestamp, "ERROR", "")
                     self.parent._log(f"Monitoring error for {tag['name']}: {e}")
-                    break
+                    continue
 
-            if poll_failed:
+            # Only treat this as a lost-connection-style failure (and count
+            # toward auto-stop) when every tag failed -- a single bad tag
+            # (e.g. a newly added one with a bad address/format) shouldn't
+            # halt polling for the rest, nor trip the auto-stop interlock.
+            if tags and failed_count == len(tags):
                 self._monitoring_failure_count += 1
                 if self._monitoring_failure_count >= self._monitoring_max_failures:
                     self.parent._log(f"Stopping monitoring after {self._monitoring_failure_count} consecutive failures")

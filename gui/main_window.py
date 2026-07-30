@@ -1982,7 +1982,7 @@ Unit ID: {unit_id}<br><br>
 
         self._write_poll_in_progress = True
         self.write_poll_timer.stop()
-        poll_failed = False
+        failed_count = 0
         timestamp = time.strftime("%H:%M:%S")
         try:
             for tag in tags:
@@ -2004,11 +2004,13 @@ Unit ID: {unit_id}<br><br>
                         tag["comment"], timestamp, raw_hex
                     )
                 except Exception as e:
-                    poll_failed = True
+                    failed_count += 1
                     self._log(f"Write-tag value polling error for {tag['name']}: {e}")
-                    break
+                    continue
 
-            if poll_failed:
+            # Only a fully failed tick (every write tag failed) counts toward
+            # auto-stop -- one bad tag shouldn't halt polling for the rest.
+            if tags and failed_count == len(tags):
                 self.monitoring_manager._monitoring_failure_count += 1
                 if self.monitoring_manager._monitoring_failure_count >= self.monitoring_manager._monitoring_max_failures:
                     self._log(
