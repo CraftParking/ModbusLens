@@ -199,6 +199,42 @@ def apply_fixed_light_theme(app):
     # and the minimal stylesheet ensures light theme consistency
 
 
+class TagTableWidget(QTableWidget):
+    """Tags table with drag-and-drop row reordering.
+
+    Every cell here holds a live QWidget (combobox, spinbox, or line edit), not a plain
+    QTableWidgetItem -- Qt's built-in InternalMove drag-drop only relocates item data, so it
+    can't be trusted to carry these widgets along correctly. dropEvent is overridden to instead
+    hand off to the main window, which tears the dragged row down and rebuilds it at the drop
+    position with the same values.
+    """
+
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropOverwriteMode(False)
+        self.setDropIndicatorShown(True)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+
+    def dropEvent(self, event):
+        # Never let Qt's own item-move machinery run -- it doesn't know about cell widgets.
+        event.ignore()
+
+        if event.source() is not self:
+            return
+
+        source_row = self.currentRow()
+        target_row = self.indexAt(event.position().toPoint()).row()
+        if target_row == -1:
+            target_row = self.rowCount() - 1
+
+        if source_row != -1 and target_row != -1:
+            self.main_window._move_tag_row(source_row, target_row)
+
+
 class ModbusGUI(QMainWindow):
     _open_windows = []  # keeps extra connection windows alive (see _new_connection_window)
 
@@ -587,7 +623,7 @@ class ModbusGUI(QMainWindow):
         tag_layout.setSpacing(10)
         tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
 
-        self.monitoring_tag_table = QTableWidget()
+        self.monitoring_tag_table = TagTableWidget(self)
         self.monitoring_tag_table.setColumnCount(11)
         self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp"])
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
@@ -810,43 +846,46 @@ class ModbusGUI(QMainWindow):
             w.setContextMenuPolicy(Qt.NoContextMenu)
         return w
  
-    def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None, comment=""): 
-        # Get selected row for insertion, or append to end if none selected
-        selected_rows = self._get_selected_tag_rows()
-        if selected_rows:
-            # Insert below the last selected row
-            insert_row = max(selected_rows) + 1
-        else:
-            # Append to end if no row selected
-            insert_row = self.monitoring_tag_table.rowCount()
-        
+    def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None,
+                             comment="", insert_row=None, read_value="", raw_hex="", write_value="", timestamp=""):
+        # An explicit insert_row is used when rebuilding a row that's being dragged to a new
+        # position (see _move_tag_row) -- otherwise fall back to the normal Add Tag behavior.
+        if insert_row is None:
+            selected_rows = self._get_selected_tag_rows()
+            if selected_rows:
+                # Insert below the last selected row
+                insert_row = max(selected_rows) + 1
+            else:
+                # Append to end if no row selected
+                insert_row = self.monitoring_tag_table.rowCount()
+
         self.monitoring_tag_table.insertRow(insert_row)
         self.monitoring_manager.handle_row_inserted(insert_row)
 
         if value_format is None:
             value_format = "Bool" if tag_type in ("Coil", "Discrete Input") else "U16"
- 
-        self.monitoring_tag_table.setCellWidget(insert_row, 0, self._create_monitoring_tag_widget("lineedit", tag_name)) 
-        self.monitoring_tag_table.setCellWidget(insert_row, 1, self._create_monitoring_tag_widget("mode_combo", mode)) 
-        type_widget = self._create_monitoring_tag_widget("type_combo", tag_type)
-        self.monitoring_tag_table.setCellWidget(insert_row, 2, type_widget) 
- 
-        address_widget = self._create_monitoring_tag_widget("spinbox", address) 
-        self.monitoring_tag_table.setCellWidget(insert_row, 3, address_widget) 
 
-        count_widget = self._create_monitoring_tag_widget("spinbox", count) 
-        count_widget.setRange(1, 125) 
-        self.monitoring_tag_table.setCellWidget(insert_row, 4, count_widget) 
+        self.monitoring_tag_table.setCellWidget(insert_row, 0, self._create_monitoring_tag_widget("lineedit", tag_name))
+        self.monitoring_tag_table.setCellWidget(insert_row, 1, self._create_monitoring_tag_widget("mode_combo", mode))
+        type_widget = self._create_monitoring_tag_widget("type_combo", tag_type)
+        self.monitoring_tag_table.setCellWidget(insert_row, 2, type_widget)
+
+        address_widget = self._create_monitoring_tag_widget("spinbox", address)
+        self.monitoring_tag_table.setCellWidget(insert_row, 3, address_widget)
+
+        count_widget = self._create_monitoring_tag_widget("spinbox", count)
+        count_widget.setRange(1, 125)
+        self.monitoring_tag_table.setCellWidget(insert_row, 4, count_widget)
 
         format_widget = self._create_monitoring_tag_widget("format_combo", value_format)
         self.monitoring_tag_table.setCellWidget(insert_row, 5, format_widget)
-        self.monitoring_tag_table.setCellWidget(insert_row, 6, self._create_monitoring_tag_widget("lineedit", ""))  # Read Value
-        raw_hex_widget = self._create_monitoring_tag_widget("lineedit", "")
+        self.monitoring_tag_table.setCellWidget(insert_row, 6, self._create_monitoring_tag_widget("lineedit", read_value))  # Read Value
+        raw_hex_widget = self._create_monitoring_tag_widget("lineedit", raw_hex)
         raw_hex_widget.setReadOnly(True)
         self.monitoring_tag_table.setCellWidget(insert_row, 7, raw_hex_widget)  # Raw (Hex)
-        self.monitoring_tag_table.setCellWidget(insert_row, 8, self._create_monitoring_tag_widget("lineedit", ""))  # Write Value
+        self.monitoring_tag_table.setCellWidget(insert_row, 8, self._create_monitoring_tag_widget("lineedit", write_value))  # Write Value
         self.monitoring_tag_table.setCellWidget(insert_row, 9, self._create_monitoring_tag_widget("lineedit", comment))  # Comment
-        self.monitoring_tag_table.setCellWidget(insert_row, 10, self._create_monitoring_tag_widget("lineedit", ""))  # Timestamp
+        self.monitoring_tag_table.setCellWidget(insert_row, 10, self._create_monitoring_tag_widget("lineedit", timestamp))  # Timestamp
 
         # Keep "count" valid for 32-bit formats (U32/S32/F32 require even register count).
         if hasattr(format_widget, "currentTextChanged"):
@@ -864,6 +903,55 @@ class ModbusGUI(QMainWindow):
         # Auto-select the newly inserted row
         self.monitoring_tag_table.selectRow(insert_row)
         self.monitoring_tag_table.setCurrentCell(insert_row, 0)
+
+    def _capture_tag_row(self, row):
+        """Snapshot every column of a Tags row so it can be torn down and rebuilt at a new
+        row index -- used for drag-and-drop reordering, since the cell contents are live
+        QWidgets, not plain QTableWidgetItems Qt's built-in row move can relocate on its own."""
+        def widget_at(column):
+            return self.monitoring_tag_table.cellWidget(row, column)
+
+        name_widget, mode_widget, type_widget = widget_at(0), widget_at(1), widget_at(2)
+        address_widget, count_widget, format_widget = widget_at(3), widget_at(4), widget_at(5)
+        read_value_widget, raw_hex_widget = widget_at(6), widget_at(7)
+        write_value_widget, comment_widget, timestamp_widget = widget_at(8), widget_at(9), widget_at(10)
+
+        return {
+            "tag_name": name_widget.text() if name_widget else "",
+            "mode": mode_widget.currentText() if mode_widget else "Read",
+            "tag_type": type_widget.currentText() if type_widget else "Coil",
+            "address": address_widget.value() if address_widget else 1,
+            "count": count_widget.value() if count_widget else 1,
+            "value_format": format_widget.currentText() if format_widget else "U16",
+            "read_value": read_value_widget.text() if read_value_widget else "",
+            "raw_hex": raw_hex_widget.text() if raw_hex_widget else "",
+            "write_value": write_value_widget.text() if write_value_widget else "",
+            "comment": comment_widget.text() if comment_widget else "",
+            "timestamp": timestamp_widget.text() if timestamp_widget else "",
+        }
+
+    def _move_tag_row(self, source_row, target_row):
+        """Move a Tags row to a new position by rebuilding it there, preserving its live
+        values and alarm configuration. Called from TagTableWidget's drop handler."""
+        row_count = self.monitoring_tag_table.rowCount()
+        if source_row == target_row or not (0 <= source_row < row_count) or not (0 <= target_row < row_count):
+            return
+
+        data = self._capture_tag_row(source_row)
+        alarm = self.monitoring_manager.tag_alarms.get(source_row)
+
+        self.monitoring_tag_table.removeRow(source_row)
+        self.monitoring_manager.handle_row_removed(source_row)
+
+        if target_row > source_row:
+            target_row -= 1  # the row above it just shifted up by one
+
+        self._add_monitoring_tag(insert_row=target_row, **data)
+
+        if alarm:
+            self.monitoring_manager.tag_alarms[target_row] = alarm
+
+        self._log(f"Moved tag '{data['tag_name']}' to row {target_row + 1}")
 
     def _on_tag_address_mode_changed(self, checked):
         """Toggle Tags between user-facing 1-based and protocol 0-based address input."""
@@ -1959,6 +2047,10 @@ Unit ID: {unit_id}<br><br>
         self.remove_tag_btn.setEnabled(enabled and bool(self._get_selected_tag_rows()))
         if hasattr(self, 'tag_offset_checkbox'):
             self.tag_offset_checkbox.setEnabled(enabled)
+        # Row drag-to-reorder is a configuration action too -- keep it disabled while the
+        # poll loop is iterating rows by index, same as Add/Remove Tag.
+        self.monitoring_tag_table.setDragEnabled(enabled)
+        self.monitoring_tag_table.setAcceptDrops(enabled)
 
     def _restart_monitoring_timers(self, read_interval):
         tags = self._get_monitoring_tags()
