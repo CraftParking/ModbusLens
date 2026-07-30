@@ -2338,13 +2338,13 @@ Unit ID: {unit_id}<br><br>
         than having it guessed back out of the free-form title string.
         """
         timestamp = time.strftime('%H:%M:%S')
-        function_code, function_name = function_info if function_info else (None, None)
+        function_code, _function_name = function_info if function_info else (None, None)
         if function_code is None:
             function_code = self._get_function_code_from_title(title)
 
         exception_code = self._get_exception_code_from_error() if data is None else None
 
-        # Update statistics
+        # Update statistics (Show Statistics still breaks this down by function/exception code)
         self.advanced_diagnostics.update_request_stats(
             success=data is not None,
             response_time=elapsed_ms,
@@ -2354,18 +2354,9 @@ Unit ID: {unit_id}<br><br>
 
         if hasattr(self, 'diagnostics_dialogs'):
             error_text = getattr(self.modbus, 'last_error', None) if data is None else None
-            exception_desc = (
-                self.advanced_diagnostics.get_exception_code_description(exception_code)
-                if exception_code is not None else None
-            )
-            unit_id = getattr(self.modbus, 'unit_id', None)
             tx_bytes = getattr(self.modbus, 'last_tx_bytes', None)
             rx_bytes = getattr(self.modbus, 'last_rx_bytes', None)
-            self.diagnostics_dialogs.add_raw_data_row(
-                timestamp, title, data, elapsed_ms, error_text,
-                function_code, function_name, unit_id, exception_desc,
-                tx_bytes, rx_bytes,
-            )
+            self.diagnostics_dialogs.add_raw_data_row(timestamp, title, data, elapsed_ms, error_text, tx_bytes, rx_bytes)
     
     def _get_function_code_from_title(self, title):
         """Extract function code from title for statistics."""

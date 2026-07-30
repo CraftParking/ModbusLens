@@ -127,7 +127,7 @@
 - One row per Modbus transaction: time, operation, raw value in decimal and hex, Success/Failed status, and round-trip latency  
 - TX/RX Bytes - the literal bytes sent and received on the wire for that transaction (captured via pymodbus's trace hook), one level more raw than the decoded register values  
 - Color-coded status (green success, red failure) at a glance, same coloring as the other logs  
-- Advanced Diagnostics toggle - reveals Function code, Unit ID, and Details (register/bit count, or the classified exception on failure) as real columns, populated retroactively for rows already logged  
+- Filter by tag name/address/value, and by Success/Failed status, live as new rows arrive  
 - Show Statistics - total requests, success/failure counts, and average/min/max response times across everything logged, not just what's currently visible  
 - Capped at 1000 rows so it can't grow unbounded; oldest rows fall off automatically  
 
