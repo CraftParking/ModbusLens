@@ -471,6 +471,9 @@ class AddressTableWidget(QWidget):
             else:
                 return
 
+            if hasattr(self.parent_window, '_display_raw_data'):
+                self.parent_window._display_raw_data(f"AddressTable[{self.current_function}]", data)
+
             if data is not None:
                 self.update_table_values(data)
             else:
@@ -600,18 +603,25 @@ class AddressTableWidget(QWidget):
                 return False
 
             if "Write Single Coil" in self.current_function:
-                return self.parent_window.modbus.write_coil(protocol_offset, value)
+                success = self.parent_window.modbus.write_coil(protocol_offset, value)
             elif "Write Single Register" in self.current_function:
-                return self.parent_window.modbus.write_register(protocol_offset, value)
+                success = self.parent_window.modbus.write_register(protocol_offset, value)
             elif "Write Multiple Coils" in self.current_function:
                 # Each row is edited independently, so this only ever writes one coil at a time
-                return self.parent_window.modbus.write_coils(protocol_offset, [value])
+                success = self.parent_window.modbus.write_coils(protocol_offset, [value])
             elif "Write Multiple Registers" in self.current_function:
                 # Each row is edited independently, so this only ever writes one register at a time
-                return self.parent_window.modbus.write_registers(protocol_offset, [value])
+                success = self.parent_window.modbus.write_registers(protocol_offset, [value])
             else:
                 self.log(f"Error: Write operation not supported for function: {self.current_function}")
                 return False
+
+            if hasattr(self.parent_window, '_display_raw_data'):
+                self.parent_window._display_raw_data(
+                    f"AddressTable Write[{self.current_function}] addr={address}",
+                    value if success else None,
+                )
+            return success
         except Exception as e:
             self.log(f"Write error: {e}")
             return False
@@ -641,3 +651,6 @@ class AddressTableWidget(QWidget):
         timestamp = time.strftime("[%H:%M:%S]")
         self.log_output.append(f"{timestamp} {message}")
         self.log_output.verticalScrollBar().setValue(self.log_output.verticalScrollBar().maximum())
+        # Also forward to the main window's System Logs, not just this tab's own panel.
+        if hasattr(self.parent_window, '_log'):
+            self.parent_window._log(f"[Address Table] {message}")

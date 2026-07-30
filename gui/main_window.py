@@ -1502,6 +1502,8 @@ Unit ID: {unit_id}<br><br>
                     finally:
                         self._end_modbus_operation(tag, "write")
 
+                    self._display_raw_data(f"Tag[{tag['name']}] Write", written_value if success else None)
+
                     if success:
                         wrote_any = True
                         timestamp = time.strftime("%H:%M:%S")
@@ -2007,6 +2009,7 @@ Unit ID: {unit_id}<br><br>
 
                     display_value = self._format_monitoring_value(tag, value)
                     raw_hex = self.monitoring_manager.format_raw_hex(tag, value)
+                    self._display_raw_data(f"Tag[{tag['name']}] (write-mode, current value)", value)
                     self._add_monitoring_row(
                         tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
                         tag["comment"], timestamp, raw_hex
