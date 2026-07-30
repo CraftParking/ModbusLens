@@ -199,6 +199,11 @@ pip install scapy
 - Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
 - Broader Modbus function-code coverage beyond core read/write (diagnostics, file record access, device identification)  
 - Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
+- Register scanner - auto-discover which addresses actually respond on a connected device, and scan an RTU/ASCII bus for live slave addresses  
+- Gateway mode - relay real traffic between RTU/ASCII serial and TCP instead of only simulating a device  
+- 64-bit numeric formats and a string/text data type, beyond the current 32-bit cap  
+- Single-bit read/write within a register, plus Masked Bit Write (FC22) support for legacy devices  
+- RTU/ASCII framing encapsulated over TCP/UDP, for serial-to-Ethernet converters that tunnel raw framing instead of translating it  
 
 ---
 
