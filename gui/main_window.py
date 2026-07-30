@@ -1937,7 +1937,14 @@ Unit ID: {unit_id}<br><br>
         self._log("Stopped monitoring")
 
     def _set_tag_editor_enabled(self, enabled):
-        self.monitoring_tag_table.setEnabled(enabled)
+        """Lock the tag *configuration* columns while monitoring is active, without disabling
+        the table itself -- disabling the whole QTableWidget also blocked column resize and
+        Write Value edits, even though writing while monitoring is a supported feature."""
+        for row in range(self.monitoring_tag_table.rowCount()):
+            for column in range(6):  # Tag Name, Mode, Type, Address, Count, Format
+                widget = self.monitoring_tag_table.cellWidget(row, column)
+                if widget is not None:
+                    widget.setEnabled(enabled)
         self.add_tag_btn.setEnabled(enabled)
         self.remove_tag_btn.setEnabled(enabled and bool(self._get_selected_tag_rows()))
         if hasattr(self, 'tag_offset_checkbox'):
