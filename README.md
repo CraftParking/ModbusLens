@@ -102,6 +102,7 @@
 - Modbus TCP (IP/Port/Unit ID) or Modbus Serial (COM port, baud, parity, stop bits, byte size, and RTU/ASCII framing) - pick per connection in Settings  
 - Address table for quick testing  
 - Optional Min/Max write bounds per register - a write outside the range is rejected before it reaches the device, no matter if it came from the Address Table, Tags, or a Script  
+- Auto-reconnect with backoff after an unexpected drop, and automatic resume of Tags monitoring once the connection recovers  
 - Multiple simultaneous connections via independent windows (File > New Connection Window)  
 
 ### Data Handling
@@ -206,7 +207,8 @@ pip install scapy
 - RTU/ASCII framing encapsulated over TCP/UDP, for serial-to-Ethernet converters that tunnel raw framing instead of translating it  
 - Engineering-unit scaling per tag/register (linear scale + offset, e.g. raw 0-4095 -> 0-100 PSI)  
 - Color-coded log entries distinguishing reads, writes, and errors at a glance  
-- Auto-reconnect with backoff after a dropped connection, instead of requiring a manual reconnect  
+- Trend markers - select a time range and see min/max/average for the pens in it  
+- Calculated tags combining multiple registers via an expression, as a persistent Tag/Trend source (Scripting can already do this ad hoc; this would make it a saved, always-on tag)  
 
 ---
 

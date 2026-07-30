@@ -327,6 +327,7 @@ class MonitoringManager:
                 self._monitoring_failure_count += 1
                 if self._monitoring_failure_count >= self._monitoring_max_failures:
                     self.parent._log(f"Stopping monitoring after {self._monitoring_failure_count} consecutive failures")
+                    self.parent._monitoring_paused_by_disconnect = True
                     self.parent._stop_monitoring()
                     return
             else:
