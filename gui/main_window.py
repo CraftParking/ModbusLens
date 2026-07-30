@@ -218,6 +218,7 @@ class ModbusGUI(QMainWindow):
         self.parity = "N"
         self.stopbits = 1
         self.bytesize = 8
+        self.serial_framer = "rtu"  # "rtu" or "ascii"
 
         # Initialize extracted components
         self.advanced_diagnostics = AdvancedDiagnostics()
@@ -404,7 +405,8 @@ class ModbusGUI(QMainWindow):
 
     def _target_description(self):
         if self.connection_mode == "serial":
-            return f"{self.serial_port} @ {self.baudrate} baud"
+            framer_label = "ASCII" if self.serial_framer == "ascii" else "RTU"
+            return f"{self.serial_port} @ {self.baudrate} baud ({framer_label})"
         return f"{self.target_ip}:{self.target_port}"
 
     def _build_connection_string(self):
@@ -412,7 +414,7 @@ class ModbusGUI(QMainWindow):
         if self.connection_mode == "serial":
             return (
                 f"serial:{self.serial_port}:{self.baudrate}:{self.parity}:"
-                f"{self.bytesize}:{self.stopbits}:{self.target_unit_id}"
+                f"{self.bytesize}:{self.stopbits}:{self.target_unit_id}:{self.serial_framer}"
             )
         return f"{self.target_ip}:{self.target_port}:{self.target_unit_id}"
 
@@ -1124,6 +1126,7 @@ class ModbusGUI(QMainWindow):
             self.parity = vals['parity']
             self.stopbits = vals['stopbits']
             self.bytesize = vals['bytesize']
+            self.serial_framer = vals['serial_framer']
             self.connection_history = vals['history']
             self._update_connection_info()
             self._save_settings()
@@ -1141,6 +1144,7 @@ class ModbusGUI(QMainWindow):
                 self.modbus = ModbusClient(
                     unit_id=unit_id, mode="serial", serial_port=self.serial_port,
                     baudrate=self.baudrate, parity=self.parity, stopbits=self.stopbits, bytesize=self.bytesize,
+                    serial_framer=self.serial_framer,
                 )
             else:
                 self.modbus = ModbusClient(self.target_ip, self.target_port, unit_id)
@@ -2591,7 +2595,7 @@ class ConnectionSettingsDialog(QDialog):
         mode_group = QGroupBox("Connection Type")
         mode_layout = QHBoxLayout(mode_group)
         self.tcp_radio = QRadioButton("Modbus TCP")
-        self.serial_radio = QRadioButton("Modbus RTU (Serial)")
+        self.serial_radio = QRadioButton("Modbus Serial (RTU/ASCII)")
         (self.serial_radio if current.connection_mode == "serial" else self.tcp_radio).setChecked(True)
         self.tcp_radio.toggled.connect(self._update_mode_visibility)
         mode_layout.addWidget(self.tcp_radio)
@@ -2681,6 +2685,15 @@ class ConnectionSettingsDialog(QDialog):
             self.bytesize_combo.addItem(str(size), size)
         self.bytesize_combo.setCurrentIndex(self.BYTE_SIZES.index(current.bytesize) if current.bytesize in self.BYTE_SIZES else 1)
         serial_grid.addWidget(self.bytesize_combo, 4, 1)
+
+        serial_grid.addWidget(QLabel("Framing:"), 5, 0)
+        self.framer_combo = QComboBox()
+        self.framer_combo.setStyleSheet(parent._get_input_style())
+        self.framer_combo.addItem("RTU (binary)", "rtu")
+        self.framer_combo.addItem("ASCII", "ascii")
+        framer_index = 1 if getattr(current, "serial_framer", "rtu") == "ascii" else 0
+        self.framer_combo.setCurrentIndex(framer_index)
+        serial_grid.addWidget(self.framer_combo, 5, 1)
         layout.addWidget(self.serial_group)
 
         # 4. Unit ID (shared by both modes)
@@ -2734,13 +2747,23 @@ class ConnectionSettingsDialog(QDialog):
         self._populate_history_combo()
 
     def _friendly_history_label(self, entry):
-        """A raw history token like 'serial:COM5:9600:N:8:1:1' isn't something a user
+        """A raw history token like 'serial:COM5:9600:N:8:1:1:rtu' isn't something a user
         should have to parse by eye -- show it the same way the rest of the dialog does."""
         parts = entry.split(":")
-        if entry.startswith("serial:") and len(parts) == 7:
-            _, serial_port, baud, parity, bytesize, stopbits, unit = parts
+        if entry.startswith("serial:") and len(parts) in (7, 8):
+            # Older saved history entries have 7 fields (no framer) -- treat those as RTU,
+            # since that's what every version before ASCII support only ever wrote.
+            if len(parts) == 8:
+                _, serial_port, baud, parity, bytesize, stopbits, unit, framer = parts
+            else:
+                _, serial_port, baud, parity, bytesize, stopbits, unit = parts
+                framer = "rtu"
             parity_label = next((label for label, code in self.PARITIES if code == parity), parity)
-            return f"{serial_port} @ {baud} baud ({parity_label} parity, {bytesize}/{stopbits}, Unit {unit})"
+            framer_label = "ASCII" if framer == "ascii" else "RTU"
+            return (
+                f"{serial_port} @ {baud} baud ({parity_label} parity, {bytesize}/{stopbits}, "
+                f"{framer_label}, Unit {unit})"
+            )
         if len(parts) >= 3:
             return f"{parts[0]}:{parts[1]} (Unit {parts[2]})"
         return entry
@@ -2764,9 +2787,15 @@ class ConnectionSettingsDialog(QDialog):
 
         if entry.startswith("serial:"):
             parts = entry.split(":")
-            if len(parts) != 7:
+            if len(parts) not in (7, 8):
                 return
-            _, serial_port, baud, parity, bytesize, stopbits, unit = parts
+            if len(parts) == 8:
+                _, serial_port, baud, parity, bytesize, stopbits, unit, framer = parts
+            else:
+                # Older saved entries have no framer field -- they predate ASCII support,
+                # so they were always RTU.
+                _, serial_port, baud, parity, bytesize, stopbits, unit = parts
+                framer = "rtu"
             self.serial_port_combo.setCurrentText(serial_port)
             self.baud_combo.setCurrentText(baud)
             parity_index = next((i for i, (_, code) in enumerate(self.PARITIES) if code == parity), 0)
@@ -2776,6 +2805,7 @@ class ConnectionSettingsDialog(QDialog):
             if int(stopbits) in self.STOP_BITS:
                 self.stopbits_combo.setCurrentIndex(self.STOP_BITS.index(int(stopbits)))
             self.unit_input.setValue(int(unit))
+            self.framer_combo.setCurrentIndex(1 if framer == "ascii" else 0)
             return
 
         parts = entry.split(":")
@@ -2795,6 +2825,7 @@ class ConnectionSettingsDialog(QDialog):
             'parity': self.parity_combo.currentData(),
             'stopbits': self.stopbits_combo.currentData(),
             'bytesize': self.bytesize_combo.currentData(),
+            'serial_framer': self.framer_combo.currentData(),
             'history': self.history,
         }
 

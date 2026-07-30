@@ -1,20 +1,22 @@
 import logging
 from typing import Optional, List, Union
+from pymodbus import FramerType
 from pymodbus.client import ModbusTcpClient, ModbusSerialClient
 
 logger = logging.getLogger(__name__)
 
 
 class ModbusClient:
-    """Wraps a pymodbus TCP or serial (RTU) client behind one interface.
+    """Wraps a pymodbus TCP or serial (RTU/ASCII) client behind one interface.
 
     Every read/write method below only ever touches self.client, so the rest of the app
     (Address Table, Tags, Trend, Server, Script) works unchanged regardless of transport --
-    only connect() needs to know the difference between TCP and serial.
+    only connect() needs to know the difference between TCP and serial, and RTU vs ASCII framing.
     """
 
     def __init__(self, ip="127.0.0.1", port=502, unit_id=1, timeout=1.5, retries=1,
-                 mode="tcp", serial_port="COM1", baudrate=19200, parity="N", stopbits=1, bytesize=8):
+                 mode="tcp", serial_port="COM1", baudrate=19200, parity="N", stopbits=1, bytesize=8,
+                 serial_framer="rtu"):
         self.mode = mode  # "tcp" or "serial"
         self.ip = ip
         self.port = port
@@ -26,6 +28,7 @@ class ModbusClient:
         self.parity = parity
         self.stopbits = stopbits
         self.bytesize = bytesize
+        self.serial_framer = serial_framer  # "rtu" or "ascii" -- only meaningful when mode == "serial"
         self.client: Optional[Union[ModbusTcpClient, ModbusSerialClient]] = None
         self._connected = False
         self.last_error: Optional[str] = None
@@ -56,7 +59,8 @@ class ModbusClient:
 
     def target_description(self):
         if self.mode == "serial":
-            return f"{self.serial_port} @ {self.baudrate} baud"
+            framer_label = "ASCII" if self.serial_framer == "ascii" else "RTU"
+            return f"{self.serial_port} @ {self.baudrate} baud ({framer_label})"
         return f"{self.ip}:{self.port}"
 
     def connect(self):
@@ -64,8 +68,9 @@ class ModbusClient:
             self.client.close()
         try:
             if self.mode == "serial":
+                framer = FramerType.ASCII if self.serial_framer == "ascii" else FramerType.RTU
                 self.client = ModbusSerialClient(
-                    port=self.serial_port, baudrate=self.baudrate, parity=self.parity,
+                    port=self.serial_port, framer=framer, baudrate=self.baudrate, parity=self.parity,
                     stopbits=self.stopbits, bytesize=self.bytesize,
                     timeout=self.timeout, retries=self.retries,
                 )

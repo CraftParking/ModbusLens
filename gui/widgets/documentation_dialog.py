@@ -53,7 +53,7 @@ its own tab now rather than under this menu - see the tab list above.</li>
     ("Connecting to a Device", """
 <h2>Connecting to a Device</h2>
 <p>Open <b>Settings</b> in the top-right of the connection bar. Choose <b>Modbus TCP</b> or
-<b>Modbus RTU (Serial)</b> at the top of the dialog, then fill in the fields for that mode.</p>
+<b>Modbus Serial (RTU/ASCII)</b> at the top of the dialog, then fill in the fields for that mode.</p>
 
 <h3>Modbus TCP</h3>
 <ul>
@@ -65,12 +65,16 @@ full picture - every adapter's IP and subnet mask - <b>Tools &gt; IP Configurati
 of them at once, like running <code>ipconfig</code>.</li>
 </ul>
 
-<h3>Modbus RTU (Serial)</h3>
+<h3>Modbus Serial (RTU/ASCII)</h3>
 <ul>
 <li><b>Serial Port</b> - the COM port the device is connected to (via USB-RS485/RS232 adapter or
 a native serial port).</li>
 <li><b>Baud Rate, Parity, Stop Bits, Byte Size</b> - must match the device's configuration exactly,
 or communication will fail or return garbage.</li>
+<li><b>Framing</b> - <b>RTU</b> (binary, the default and far more common) or <b>ASCII</b>
+(hex-encoded, human-readable on the wire, framed with a leading <code>:</code> and trailing
+CR/LF). The two are incompatible - a device speaking one will not respond correctly to the other,
+so this has to match the device exactly, the same as baud rate and parity.</li>
 </ul>
 
 <h3>Both modes</h3>
