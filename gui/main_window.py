@@ -4,11 +4,17 @@ import time
 import struct
 import csv
 import math
+import socket
 from pathlib import Path
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QTableWidget,
+    QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QComboBox, QSpinBox, QDoubleSpinBox, QTabWidget, QGroupBox,
     QApplication, QMessageBox, QDialog, QCheckBox,
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton
@@ -301,6 +307,8 @@ class ModbusGUI(QMainWindow):
         tools_menu.addAction("Connection Settings", self._show_connection_settings)
         tools_menu.addAction("Connection Profiles", self._manage_profiles)
         tools_menu.addAction("Data Templates", self._manage_templates)
+        tools_menu.addSeparator()
+        tools_menu.addAction("IP Configuration", self._show_ip_config)
 
         # Diagnostics menu
         diagnostics_menu = menubar.addMenu("&Diagnostics")
@@ -2292,6 +2300,70 @@ Unit ID: {unit_id}<br><br>
     def _manage_templates(self):
         """Manage data templates."""
         QMessageBox.information(self, "Data Templates", "Template management will be implemented in the next update!")
+
+    def _show_ip_config(self):
+        """Show a small ipconfig-style dialog listing this machine's network adapters."""
+        if psutil is None:
+            QMessageBox.warning(self, "IP Configuration", "psutil is not available, so adapter information can't be read.")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("IP Configuration")
+        dialog.resize(560, 320)
+        layout = QVBoxLayout(dialog)
+
+        table = QTableWidget()
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["Adapter", "IP Address", "Subnet Mask", "Status"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.setStyleSheet("""
+            QTableWidget {
+                background-color: #FFFFFF;
+                color: #000000;
+                gridline-color: #D0D0D0;
+                border: 1px solid #CCCCCC;
+            }
+            QHeaderView::section {
+                background-color: #E9E9E9;
+                color: #000000;
+                border: 1px solid #CCCCCC;
+                padding: 6px;
+                font-weight: bold;
+            }
+        """)
+
+        rows = []
+        try:
+            interface_stats = psutil.net_if_stats()
+            for name, addresses in psutil.net_if_addrs().items():
+                stats = interface_stats.get(name)
+                status = "Up" if stats and stats.isup else "Down"
+                for addr in addresses:
+                    if addr.family == socket.AF_INET:
+                        rows.append((name, addr.address, addr.netmask or "-", status))
+        except Exception as e:
+            self._log(f"IP Configuration error: {e}")
+
+        table.setRowCount(len(rows))
+        for row, (name, ip_address, subnet_mask, status) in enumerate(rows):
+            table.setItem(row, 0, QTableWidgetItem(name))
+            table.setItem(row, 1, QTableWidgetItem(ip_address))
+            table.setItem(row, 2, QTableWidgetItem(subnet_mask))
+            table.setItem(row, 3, QTableWidgetItem(status))
+
+        layout.addWidget(table)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.setStyleSheet(self._get_button_style())
+        close_btn.clicked.connect(dialog.accept)
+        button_row.addWidget(close_btn)
+        layout.addLayout(button_row)
+
+        dialog.exec()
 
     def _network_diagnostics(self):
         """Show network diagnostics.""" 
