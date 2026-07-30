@@ -40,6 +40,7 @@ from network.network_diagnostics import NetworkDiagnosticsDialog
 
 from core.modbus_client import ModbusClient
 from app_paths import resource_path, app_data_dir
+from log_format import format_log_html
 
 __version__ = "2.0.0"
 
@@ -2304,72 +2305,39 @@ Unit ID: {unit_id}<br><br>
         return True
 
     def _log(self, message):
-        """Add message to log output."""
+        """Add message to the System Logs, color-coded by what kind of event it looks like
+        (write, connect, error) so the right lines stand out at a glance in a busy log."""
         timestamp = time.strftime("[%H:%M:%S]")
-        formatted_message = f"{timestamp} {message}"
-        
-        # Update main log output if it exists
-        if hasattr(self, 'log_output'):
-            current_text = self.log_output.toPlainText()
-            if current_text:
-                current_text += "\n"
-            current_text += formatted_message
-            self.log_output.setPlainText(current_text)
-            
-            # Auto scroll to bottom
-            scrollbar = self.log_output.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
-        
-        # Update diagnostics log if it exists
         if hasattr(self, 'diagnostics_log_output'):
-            current_text = self.diagnostics_log_output.toPlainText()
-            if current_text:
-                current_text += "\n"
-            current_text += formatted_message
-            self.diagnostics_log_output.setPlainText(current_text)
-            
-            # Auto scroll to bottom
+            self.diagnostics_log_output.append(format_log_html(timestamp, message))
             scrollbar = self.diagnostics_log_output.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
 
     def _display_raw_data(self, title, data):
-        """Display raw data in the data output tab."""
+        """Display raw data in the Raw Data tab."""
         timestamp = time.strftime('[%H:%M:%S]')
-        
+
         # Update statistics
         self.advanced_diagnostics.update_request_stats(
-            success=data is not None, 
+            success=data is not None,
             function_code=self._get_function_code_from_title(title),
             exception_code=self._get_exception_code_from_error() if data is None else None
         )
-        
+
         if self.advanced_diagnostics.advanced_diagnostics:
             # Create detailed diagnostics information
             detailed_info = self.advanced_diagnostics.create_advanced_diagnostics(title, data, self.modbus)
             formatted_data = f"{timestamp} {title}:\n{data}\n\n--- Advanced Diagnostics ---\n{detailed_info}"
         else:
             formatted_data = f"{timestamp} {title}:\n{data}"
-        
-        # Update main data output if it exists
-        if hasattr(self, 'data_output'):
-            current_text = self.data_output.toPlainText()
-            if current_text:
-                current_text += "\n\n"
-            current_text += formatted_data
-            self.data_output.setPlainText(current_text)
-            
-            # Auto scroll to bottom
-            scrollbar = self.data_output.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
-        
-        # Update diagnostics raw data if it exists
+
         if hasattr(self, 'diagnostics_data_output'):
             current_text = self.diagnostics_data_output.toPlainText()
             if current_text:
                 current_text += "\n\n"
             current_text += formatted_data
             self.diagnostics_data_output.setPlainText(current_text)
-            
+
             # Auto scroll to bottom
             scrollbar = self.diagnostics_data_output.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())

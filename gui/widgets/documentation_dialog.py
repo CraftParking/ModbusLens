@@ -158,7 +158,10 @@ two don't compete for the connection.</p>
 
 <h3>Status Log</h3>
 <p>The panel on the right shows what the table is doing - reads, writes, and any errors,
-each with a timestamp. This is the first place to look when a write doesn't seem to take effect.</p>
+each with a timestamp and color-coded so the right lines stand out: writes in blue, connection
+events in green, errors in red, everything else in the default color. This is the first place
+to look when a write doesn't seem to take effect. The same coloring applies to System Logs and
+the Script console.</p>
 """),
 
     ("Tags Monitoring", """

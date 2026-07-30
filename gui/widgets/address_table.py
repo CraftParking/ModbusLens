@@ -7,6 +7,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 import time
 
+from log_format import format_log_html
+
 
 class AddressTableWidget(QWidget):
     """ModScan-like address table for live monitoring and editing of Modbus registers/coils."""
@@ -637,7 +639,7 @@ class AddressTableWidget(QWidget):
 
     def log(self, message):
         timestamp = time.strftime("[%H:%M:%S]")
-        self.log_output.append(f"{timestamp} {message}")
+        self.log_output.append(format_log_html(timestamp, message))
         self.log_output.verticalScrollBar().setValue(self.log_output.verticalScrollBar().maximum())
         # Also forward to the main window's System Logs, not just this tab's own panel.
         if hasattr(self.parent_window, '_log'):
