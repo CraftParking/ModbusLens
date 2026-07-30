@@ -198,12 +198,9 @@ class MonitoringManager:
             timestamp_widget.setText(timestamp)
 
     def clear_monitoring_results(self):
-        """Clear cached monitoring values and the diagnostics results table."""
+        """Clear cached monitoring values."""
         self._monitoring_read_value_cache.clear()
         self._monitoring_write_value_cache.clear()
-
-        if hasattr(self.parent, 'diagnostics_results_table'):
-            self.parent.diagnostics_results_table.setRowCount(0)
 
     def read_tag_for_monitoring(self, tag, is_one_based=None):
         """Read data for a specific tag during monitoring."""
