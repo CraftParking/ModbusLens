@@ -785,8 +785,8 @@ class ModbusGUI(QMainWindow):
         # Get selected row for insertion, or append to end if none selected
         selected_rows = self._get_selected_tag_rows()
         if selected_rows:
-            # Insert at the first selected row position
-            insert_row = min(selected_rows)
+            # Insert below the last selected row
+            insert_row = max(selected_rows) + 1
         else:
             # Append to end if no row selected
             insert_row = self.monitoring_tag_table.rowCount()
