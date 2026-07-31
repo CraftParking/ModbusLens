@@ -2367,9 +2367,9 @@ Unit ID: {unit_id}<br><br>
     
     def _get_exception_code_from_error(self):
         """Extract exception code from modbus error."""
-        if not self.modbus or not hasattr(self.modbus, 'last_error'):
+        if not self.modbus or not getattr(self.modbus, 'last_error', None):
             return None
-        
+
         error = self.modbus.last_error.lower()
         if 'illegal function' in error:
             return 0x01
