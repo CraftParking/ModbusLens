@@ -10,7 +10,8 @@ from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit,
-    QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox, QLabel, QComboBox
+    QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox, QLabel, QComboBox,
+    QTableWidget, QTableWidgetItem
 )
 
 from log_format import format_log_html
@@ -58,11 +59,18 @@ DEFAULT_SCRIPT_HELP = """# ModbusLens script - one command per line, # or // sta
 #   REPEAT <expr>
 #       ...
 #   END
+#   REPEAT UNTIL <expr> <op> <expr>        (op: == != > < >= <=)
+#       ...
+#   END
 #   IF <expr> <op> <expr> THEN <command>   (op: == != > < >= <=)
 #
 #   <expr> can mix numbers, variables, "strings", + - * / ( ), and
 #   inline reads (HR 0, or the equivalent READ HR 0). LOG concatenates
 #   strings and numbers with +.
+#
+#   REPEAT UNTIL checks the condition before each pass (so the body can run
+#   zero times if it's already true), and stops with an error rather than
+#   looping forever if it never becomes true.
 #
 # Example:
 # LET x = HR 0 + 10
@@ -75,6 +83,11 @@ DEFAULT_SCRIPT_HELP = """# ModbusLens script - one command per line, # or // sta
 #     WRITE COIL 0 = OFF
 #     WAIT 250
 # END
+#
+# REPEAT UNTIL HR 0 == 100
+#     WAIT 200
+# END
+# LOG "HR0 reached 100"
 """
 
 
@@ -268,7 +281,7 @@ def parse_script(text):
         except ScriptError as e:
             raise ScriptError(f"line {line_number}: {e}")
 
-        if instructions[-1].op == "REPEAT":
+        if instructions[-1].op in ("REPEAT", "REPEAT_UNTIL"):
             repeat_stack.append(len(instructions) - 1)
         elif instructions[-1].op == "END":
             if not repeat_stack:
@@ -281,6 +294,19 @@ def parse_script(text):
         raise ScriptError("REPEAT without matching END")
 
     return instructions
+
+
+def collect_variable_names(instructions):
+    """Every name a LET assigns, in first-seen order -- drives the Script tab's live
+    watch panel. Looks inside IF...THEN too, since its single command can itself be a LET."""
+    names = []
+    seen = set()
+    for instr in instructions:
+        target = instr.args["then"] if instr.op == "IF" else instr
+        if target.op == "LET" and target.args["name"] not in seen:
+            seen.add(target.args["name"])
+            names.append(target.args["name"])
+    return names
 
 
 def _parse_line(line):
@@ -296,10 +322,15 @@ def _parse_line(line):
         return Instruction("LET", _parse_let_args(line[4:].strip()))
 
     if upper == "REPEAT" or upper.startswith("REPEAT "):
-        count_text = line[6:].strip() if len(line) > 6 else ""
-        if not count_text:
-            raise ScriptError("REPEAT requires a count")
-        return Instruction("REPEAT", {"expr": parse_expression(count_text)})
+        rest = line[6:].strip() if len(line) > 6 else ""
+        if not rest:
+            raise ScriptError("REPEAT requires a count or 'UNTIL <condition>'")
+        if rest[:5].upper() == "UNTIL":
+            condition_text = rest[5:].strip()
+            if not condition_text:
+                raise ScriptError("REPEAT UNTIL requires a condition")
+            return Instruction("REPEAT_UNTIL", _parse_condition(condition_text))
+        return Instruction("REPEAT", {"expr": parse_expression(rest)})
 
     if upper == "END":
         return Instruction("END")
@@ -363,6 +394,17 @@ def _parse_read_args(rest):
     return {"type": data_type, "address": address}
 
 
+def _parse_condition(text):
+    """Parse '<expr> <op> <expr>', shared by IF...THEN and REPEAT UNTIL."""
+    op_match = re.search(r"(==|!=|>=|<=|>|<)", text)
+    if not op_match:
+        raise ScriptError(f"invalid condition (missing comparison operator): {text}")
+    op = op_match.group(1)
+    left_expr = parse_expression(text[:op_match.start()])
+    right_expr = parse_expression(text[op_match.end():])
+    return {"left": left_expr, "op": op, "right": right_expr}
+
+
 def _parse_if(rest):
     if " THEN " not in f" {rest.upper()} ":
         raise ScriptError("IF requires '<expr> <op> <expr> THEN <command>'")
@@ -372,18 +414,13 @@ def _parse_if(rest):
     if not then_part:
         raise ScriptError("IF ... THEN is missing a command")
 
-    op_match = re.search(r"(==|!=|>=|<=|>|<)", condition_part)
-    if not op_match:
-        raise ScriptError(f"invalid IF condition (missing comparison operator): {condition_part}")
-    op = op_match.group(1)
-    left_expr = parse_expression(condition_part[:op_match.start()])
-    right_expr = parse_expression(condition_part[op_match.end():])
+    condition = _parse_condition(condition_part)
 
     then_instruction = _parse_line(then_part)
-    if then_instruction.op in ("REPEAT", "END", "IF"):
+    if then_instruction.op in ("REPEAT", "REPEAT_UNTIL", "END", "IF"):
         raise ScriptError("IF...THEN cannot contain REPEAT, END, or a nested IF")
 
-    return Instruction("IF", {"left": left_expr, "op": op, "right": right_expr, "then": then_instruction})
+    return Instruction("IF", {**condition, "then": then_instruction})
 
 
 class ScriptRunner:
@@ -457,6 +494,20 @@ class ScriptRunner:
                 self.pc = instr.jump  # step() adds 1, landing just past END
             return None
 
+        if instr.op == "REPEAT_UNTIL":
+            if self._eval_condition(instr.args):
+                self.repeat_counters.pop(self.pc, None)
+                self.pc = instr.jump  # step() adds 1, landing just past END
+                return None
+            iterations = self.repeat_counters.get(self.pc, 0) + 1
+            if iterations > MAX_REPEAT_COUNT:
+                raise ScriptError(
+                    f"REPEAT UNTIL exceeded the {MAX_REPEAT_COUNT}-iteration limit "
+                    "without the condition becoming true"
+                )
+            self.repeat_counters[self.pc] = iterations
+            return None
+
         if instr.op == "END":
             self.pc = instr.jump - 1  # step() adds 1, landing back on REPEAT
             return None
@@ -475,13 +526,16 @@ class ScriptRunner:
             return None
 
         if instr.op == "IF":
-            left = self._eval(instr.args["left"])
-            right = self._eval(instr.args["right"])
-            if COMPARATORS[instr.args["op"]](left, right):
+            if self._eval_condition(instr.args):
                 return self._execute(instr.args["then"])
             return None
 
         raise ScriptError(f"unknown instruction {instr.op}")
+
+    def _eval_condition(self, cond):
+        left = self._eval(cond["left"])
+        right = self._eval(cond["right"])
+        return COMPARATORS[cond["op"]](left, right)
 
     # --- expression evaluation ---
 
@@ -611,7 +665,7 @@ class ScriptRunner:
 
 
 class ScriptWidget(QWidget):
-    """A small, purpose-built test-sequence language: WRITE/READ/WAIT/LOG/LET/REPEAT/IF."""
+    """A small, purpose-built test-sequence language: WRITE/READ/WAIT/LOG/LET/REPEAT/REPEAT UNTIL/IF."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -701,23 +755,78 @@ class ScriptWidget(QWidget):
 
         layout.addLayout(toolbar)
 
-        splitter = QSplitter(Qt.Vertical)
+        main_splitter = QSplitter(Qt.Horizontal)
+
+        editor_splitter = QSplitter(Qt.Vertical)
 
         self.editor = QPlainTextEdit()
         self.editor.setFont(QFont("Consolas", 10))
         self.editor.setPlaceholderText(DEFAULT_SCRIPT_HELP)
         self.editor.setContextMenuPolicy(Qt.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self._show_editor_context_menu)
-        splitter.addWidget(self.editor)
+        editor_splitter.addWidget(self.editor)
 
         self.console = QTextEdit()
         self.console.setReadOnly(True)
         self.console.setFont(QFont("Consolas", 10))
         self.console.document().setMaximumBlockCount(5000)
-        splitter.addWidget(self.console)
+        editor_splitter.addWidget(self.console)
 
-        splitter.setSizes([420, 150])
-        layout.addWidget(splitter, 1)
+        editor_splitter.setSizes([420, 150])
+        main_splitter.addWidget(editor_splitter)
+
+        main_splitter.addWidget(self._build_variables_panel())
+        main_splitter.setSizes([700, 220])
+        layout.addWidget(main_splitter, 1)
+
+    def _build_variables_panel(self):
+        """A live watch panel: every LET-defined variable in the compiled script, with its
+        current value while running -- so a script author can see state without sprinkling
+        LOG lines everywhere just to check what a variable holds mid-run."""
+        panel = QWidget()
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(4)
+        panel_layout.addWidget(QLabel("Variables"))
+
+        self.variables_table = QTableWidget(0, 2)
+        self.variables_table.setHorizontalHeaderLabels(["Name", "Value"])
+        self.variables_table.verticalHeader().setVisible(False)
+        self.variables_table.horizontalHeader().setStretchLastSection(True)
+        self.variables_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.variables_table.setSelectionMode(QTableWidget.NoSelection)
+        self.variables_table.setStyleSheet(self._table_style())
+        panel_layout.addWidget(self.variables_table)
+        return panel
+
+    def _table_style(self):
+        if self.parent_window is not None and hasattr(self.parent_window, "_get_table_style"):
+            return self.parent_window._get_table_style()
+        return ""
+
+    def _reset_variables_panel(self, names):
+        """(Re)populate the watch panel with `names`, each shown blank until LET assigns it."""
+        table = self.variables_table
+        table.setRowCount(len(names))
+        for row, name in enumerate(names):
+            name_item = QTableWidgetItem(name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            table.setItem(row, 0, name_item)
+            value_item = QTableWidgetItem("")
+            value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
+            table.setItem(row, 1, value_item)
+
+    def _refresh_variables_panel(self):
+        if self.runner is None:
+            return
+        values = self.runner.variables
+        table = self.variables_table
+        for row in range(table.rowCount()):
+            name_item = table.item(row, 0)
+            if name_item is None:
+                continue
+            value_item = table.item(row, 1)
+            value_item.setText(str(values.get(name_item.text(), "")))
 
     def _log_console(self, message):
         timestamp = time.strftime("[%H:%M:%S]")
@@ -725,7 +834,8 @@ class ScriptWidget(QWidget):
         # Only follow new lines if already scrolled to the bottom -- otherwise scrolling up
         # to read past output gets yanked back down as soon as the script logs again.
         was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
-        self.console.append(format_log_html(timestamp, message))
+        mode = getattr(self.parent_window, "_theme_mode", "light")
+        self.console.append(format_log_html(timestamp, message, mode))
         if was_at_bottom:
             scrollbar.setValue(scrollbar.maximum())
         # Also forward to the main window's System Logs, not just this tab's own console.
@@ -799,6 +909,7 @@ class ScriptWidget(QWidget):
             QMessageBox.warning(self, "Compile Error", f"Could not parse script: {e}")
             return
 
+        self._reset_variables_panel(collect_variable_names(instructions))
         self._log_console(f"Compiled OK - {len(instructions)} instruction(s)")
         QMessageBox.information(self, "Compile", f"Script compiled successfully ({len(instructions)} instruction(s)).")
 
@@ -860,6 +971,7 @@ class ScriptWidget(QWidget):
             getattr(self.parent_window, "_display_raw_data", None),
         )
         self.runner.load(instructions)
+        self._reset_variables_panel(collect_variable_names(instructions))
         self.running = True
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -883,6 +995,8 @@ class ScriptWidget(QWidget):
             self._log_console(f"Unexpected error, stopping script: {e}")
             self._stop()
             return
+
+        self._refresh_variables_panel()
 
         if self.runner.finished():
             self._log_console("Script finished")

@@ -145,9 +145,11 @@
 - Useful for testing your own SCADA/PLC program without real hardware  
 
 ### Scripting
-- A small, purpose-built test-sequence language: `WRITE`, `READ`, `WAIT`, `LOG`, `REPEAT...END`, `IF...THEN`  
+- A small, purpose-built test-sequence language instead of embedded Python - built so a controls/automation engineer can write a test sequence without knowing how to program: no imports, no client objects, no exception handling to write, just `WRITE HR 1 = 100`. The tradeoff is deliberate - it can only do Modbus reads/writes/waits/logging/arithmetic, never arbitrary code, which is also what makes the safety limits below possible in the first place  
+- `WRITE`, `READ`, `WAIT`, `LOG`, `LET`, `REPEAT...END`, `REPEAT UNTIL...END`, `IF...THEN`  
 - Runs step by step without freezing the UI, with a console showing what ran  
 - Target either a live connected device (Client-target) or ModbusLens's own Server simulator (Server-target), so you can dry-run a script safely before pointing it at real hardware  
+- Live Variables panel next to the editor shows every `LET` variable's current value while the script runs, no extra `LOG` lines needed just to watch state  
 - Insert Tag menu drops a reference to any tag from your Tags list straight into the script  
 - Live CPU usage indicator, useful for spotting a runaway loop  
 - Steps never run faster than a 20ms floor, even if a script uses `WAIT 0` or skips WAIT entirely, so a typo can't flood the device or network  
