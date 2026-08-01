@@ -354,7 +354,9 @@ checks you'd otherwise click through by hand every time.</p>
 <tr><td><code>LET &lt;name&gt; = &lt;expr&gt;</code></td><td>Assign a variable.</td></tr>
 <tr><td><code>LOG &lt;expr&gt;</code></td><td>Print text/numbers to the console.</td></tr>
 <tr><td><code>WAIT &lt;expr, ms&gt;</code></td><td>Pause without freezing the UI.</td></tr>
-<tr><td><code>REPEAT &lt;expr&gt; ... END</code></td><td>Loop a block of commands.</td></tr>
+<tr><td><code>REPEAT &lt;expr&gt; ... END</code></td><td>Loop a block of commands a fixed number of times.</td></tr>
+<tr><td><code>REPEAT UNTIL &lt;expr&gt; &lt;op&gt; &lt;expr&gt; ... END</code></td>
+<td>Loop until a condition becomes true, checked before each pass.</td></tr>
 <tr><td><code>IF &lt;expr&gt; &lt;op&gt; &lt;expr&gt; THEN &lt;command&gt;</code></td>
 <td>Run one command conditionally. op is <code>== != &gt; &lt; &gt;= &lt;=</code>.</td></tr>
 </table>
@@ -378,6 +380,13 @@ at any point.</p>
 (<b>Client-target</b>) or to ModbusLens's own Server tab (<b>Server-target</b>), so you can dry-run
 a sequence safely with no real device attached - start a server, switch the script to
 Server-target, and run it exactly as it would run against the real thing.</p>
+
+<h3>Variables panel</h3>
+<p>The panel on the right lists every variable your script assigns with <code>LET</code>, updating
+live as the script runs - no need to sprinkle <code>LOG</code> lines everywhere just to see what a
+variable currently holds. It populates as soon as you <b>Compile</b> (values blank until the script
+actually runs), keeps updating on every step while running, and holds the last values after the
+script finishes or is stopped, so you can still read them afterward.</p>
 
 <h3>Other tools in the editor</h3>
 <ul>
@@ -420,11 +429,23 @@ REPEAT 60
 END
 LOG "Done polling"</pre>
 <p>Checks holding register 2 once a second for up to a minute - useful for waiting on a startup
-sequence, a warm-up temperature, or any value that changes slowly on its own. Note that
-<code>REPEAT</code> doesn't have a break/exit, so this always runs the full 60 checks; it's meant
-as a bounded polling window rather than a wait-until-true loop.</p>
+sequence, a warm-up temperature, or any value that changes slowly on its own. Plain
+<code>REPEAT</code> doesn't have a break/exit, so this always runs the full 60 checks even after
+the target is reached; it's a bounded polling window with a built-in timeout. See the next example
+for a version that stops the instant the condition is met.</p>
 
-<h4>4. Ramp a setpoint up gradually</h4>
+<h4>4. Wait until a value is reached, no fixed check count</h4>
+<pre>REPEAT UNTIL HR 2 &gt;= 500
+    WAIT 1000
+END
+LOG "Target reached"</pre>
+<p>Same idea as the previous example, but stops the moment holding register 2 hits 500 instead of
+always running a fixed number of checks - and if it's already &gt;= 500 before the loop starts, the
+body never runs at all (the condition is checked before each pass). If the condition never becomes
+true, this stops on its own with a clear error after a very large number of iterations rather than
+hanging forever - see Limits below.</p>
+
+<h4>5. Ramp a setpoint up gradually</h4>
 <pre>LET setpoint = HR 10
 REPEAT 10
     LET setpoint = setpoint + 5
@@ -435,7 +456,7 @@ END</pre>
 <p>Steps a holding register up by 5 every 2 seconds instead of jumping straight to a final value -
 useful for equipment that shouldn't see a large setpoint change all at once.</p>
 
-<h4>5. Read several points and log them together</h4>
+<h4>6. Read several points and log them together</h4>
 <pre>LET temp = HR 0
 LET pressure = HR 1
 LET running = COIL 0
@@ -443,7 +464,7 @@ LOG "Temp=" + temp + " Pressure=" + pressure + " Running=" + running</pre>
 <p>A one-shot snapshot across mixed types (registers and a coil) in a single readable log line -
 handy at the start or end of a longer script to record a baseline.</p>
 
-<h4>6. Conditional checks with IF</h4>
+<h4>7. Conditional checks with IF</h4>
 <pre>LET temp = HR 0
 IF temp &gt; 90 THEN LOG "WARNING: temperature high (" + temp + ")"
 IF temp &lt; 10 THEN LOG "WARNING: temperature low (" + temp + ")"
@@ -460,9 +481,11 @@ variable, or a literal number.</p>
 <p>To keep a typo from hanging the app or running forever: a loop with no WAIT still hands
 control back to the interface regularly instead of freezing it, and REPEAT counts, WAIT
 durations, expression nesting, and total script length are all capped with a clear error if
-exceeded. Separately, consecutive steps are never scheduled less than 20ms apart even if a
-script asks for <code>WAIT 0</code> or omits WAIT entirely, so a typo can't flood the device or
-network. See <b>Troubleshooting</b> for what the common error messages mean.</p>
+exceeded. <code>REPEAT UNTIL</code> shares that same iteration cap - if the condition never
+becomes true, it stops with an error instead of looping forever. Separately, consecutive steps are
+never scheduled less than 20ms apart even if a script asks for <code>WAIT 0</code> or omits WAIT
+entirely, so a typo can't flood the device or network. See <b>Troubleshooting</b> for what the
+common error messages mean.</p>
 """),
 
     ("Multiple Windows", """
@@ -590,6 +613,9 @@ Target is Server-target but the Server tab hasn't been started.</li>
 Discrete Input or Input Register, which are read-only by the Modbus spec.</li>
 <li><code>read failed for HR 12</code> (or similar) - the read inside an expression failed against
 the live device; check the address is valid, the same way you would for a Tags tab ERROR.</li>
+<li><code>REPEAT UNTIL exceeded the 1000000-iteration limit without the condition becoming true</code>
+- the condition never became true; double-check the address/comparison, or that the device is
+actually changing the value you're waiting on.</li>
 </ul>
 
 <h3>Network Discovery isn't finding a device, or feels slow</h3>
