@@ -47,56 +47,68 @@
 <p align="center">
   <img src="assets/Main_window.PNG" width="90%">
 </p>
-
-### Address Table (Read / Write)
-<p align="center">
-  <img src="assets/address_table.PNG" width="90%">
-</p>
+<p align="center"><em>Address Table - quick read/write grid for a contiguous register range, with live monitoring and a status log alongside it.</em></p>
 
 ### Tag Monitoring
 <p align="center">
   <img src="assets/tag_address.PNG" width="90%">
 </p>
+<p align="center"><em>Named tags across different addresses and types, monitored and written together in one list.</em></p>
+
+### Raw Data
+<p align="center">
+  <img src="assets/Raw_data.PNG" width="90%">
+</p>
+<p align="center"><em>Every transaction's actual wire bytes, decoded value, latency, and status - the ground truth behind whatever a Tag or Address Table row shows.</em></p>
 
 ### Trend
 <p align="center">
   <img src="assets/trend.PNG" width="90%">
 </p>
+<p align="center"><em>Live graphing of monitored values over time, up to 20 pens per graph.</em></p>
 
 ### Server Mode
 <p align="center">
   <img src="assets/server.PNG" width="90%">
 </p>
+<p align="center"><em>ModbusLens acting as a Modbus TCP slave, so you can test a SCADA/PLC program - or another ModbusLens window - against it without real hardware.</em></p>
 
 ### Scripting
 <p align="center">
   <img src="assets/script.PNG" width="90%">
 </p>
+<p align="center"><em>A write/wait/read test sequence running against the Server simulator, with the live Variables panel tracking state on the right.</em></p>
 
 ### Scanner
 <p align="center">
-  <img src="assets/scanner.PNG" width="90%">
+  <img src="assets/Scanner.PNG" width="90%">
 </p>
+<p align="center"><em>Auto-discovering which Holding Register addresses respond on the connected device, in blocks rather than one address at a time.</em></p>
+
+### Connection Settings
+<p align="center">
+  <img src="assets/connection_para.PNG" width="45%">
+  <img src="assets/connection_para_serial.PNG" width="45%">
+</p>
+<p align="center"><em>Modbus TCP (left) and Modbus Serial RTU/ASCII (right) - one dialog, switchable per connection.</em></p>
+
+### IP Configuration
+<p align="center">
+  <img src="assets/ip_config_window.PNG" width="70%">
+</p>
+<p align="center"><em>Read-only view of this machine's own network adapters, for figuring out which one to connect from.</em></p>
+
+### Theme
+<p align="center">
+  <img src="assets/Theme.png" width="70%">
+</p>
+<p align="center"><em>Light, Dark, or Follow System, switchable from View > Theme (takes effect after restart).</em></p>
 
 ### Network Discovery & Diagnostics
 <p align="center">
   <img src="assets/network_diag.PNG" width="90%">
 </p>
-
-### Communication Log
-<p align="center">
-  <img src="assets/communication_log.PNG" width="90%">
-</p>
-
-### Connection Parameters
-<p align="center">
-  <img src="assets/connection_para.PNG" width="90%">
-</p>
-
-### Status & Monitoring View
-<p align="center">
-  <img src="assets/com_and_stats.PNG" width="90%">
-</p>
+<p align="center"><em>ARP-based device discovery plus Modbus detection, for finding a device's IP when you don't already know it.</em></p>
 
 ---
 
