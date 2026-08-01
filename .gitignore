@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Generated at runtime by gui/theme.py (theme-colored spinbox arrow icons)
+gui/_generated_icons/
+
 # C extensions
 *.so
 

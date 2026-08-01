@@ -5,6 +5,8 @@ values, so the whole app can be re-themed by changing MODE and restarting -- no
 per-widget re-styling at runtime (see README's Upcoming Features / this feature's
 own scope: restart-to-apply, not live switching).
 """
+import os
+
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QColor, QPalette
 
@@ -88,6 +90,51 @@ DARK = {
 
 def get_colors(mode):
     return DARK if mode == "dark" else LIGHT
+
+
+_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_generated_icons")
+
+
+def _draw_arrow_icon(path, direction, color_hex):
+    from PySide6.QtCore import Qt, QPoint
+    from PySide6.QtGui import QPixmap, QPainter, QPolygon
+
+    size = 10
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(color_hex))
+    if direction == "up":
+        triangle = QPolygon([QPoint(1, 7), QPoint(9, 7), QPoint(5, 2)])
+    else:
+        triangle = QPolygon([QPoint(1, 2), QPoint(9, 2), QPoint(5, 7)])
+    painter.drawPolygon(triangle)
+    painter.end()
+    pixmap.save(path, "PNG")
+
+
+def get_arrow_icon_paths(mode):
+    """Path to a small up/down triangle PNG matching this theme's text color.
+
+    QSpinBox's native increment/decrement arrows only render as long as
+    ::up-button/::down-button are left completely unstyled; once _get_input_style()
+    gives them a background/border (needed so the button itself is visible), Qt's
+    style sheet engine stops drawing the built-in arrow glyph and requires an
+    explicit ::up-arrow/::down-arrow image instead. Generated once per mode and
+    cached on disk rather than shipped as a static asset, so both themes stay
+    colored from the same token table as everything else.
+    """
+    c = get_colors(mode)
+    os.makedirs(_ICON_DIR, exist_ok=True)
+    up_path = os.path.join(_ICON_DIR, f"spin_up_{mode}.png").replace("\\", "/")
+    down_path = os.path.join(_ICON_DIR, f"spin_down_{mode}.png").replace("\\", "/")
+    if not os.path.exists(up_path):
+        _draw_arrow_icon(up_path, "up", c["text_secondary"])
+    if not os.path.exists(down_path):
+        _draw_arrow_icon(down_path, "down", c["text_secondary"])
+    return up_path, down_path
 
 
 def load_saved_mode():

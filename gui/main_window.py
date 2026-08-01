@@ -681,6 +681,7 @@ class ModbusGUI(QMainWindow):
     def _get_input_style(self):
         """Get consistent input widget style."""
         c = self._c
+        up_arrow, down_arrow = theme.get_arrow_icon_paths(self._theme_mode)
         return f"""
             QSpinBox, QLineEdit {{
                 background-color: {c["surface"]};
@@ -712,6 +713,16 @@ class ModbusGUI(QMainWindow):
             }}
             QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {{
                 background-color: {c["pressed"]};
+            }}
+            QSpinBox::up-arrow {{
+                image: url({up_arrow});
+                width: 7px;
+                height: 7px;
+            }}
+            QSpinBox::down-arrow {{
+                image: url({down_arrow});
+                width: 7px;
+                height: 7px;
             }}
         """
 
