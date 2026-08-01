@@ -1191,14 +1191,15 @@ class NetworkDiagnosticsDialog:
             self.capture_capability = detect_packet_capture_capability()
             
             self.capture_mode_label = QLabel(self.capture_capability["label"])
-            self.capture_mode_label.setStyleSheet("""
-                QLabel {
-                    color: #333333;
-                    background-color: #F1F3F5;
-                    border: 1px solid #D0D0D0;
+            nc = self.parent._colors()
+            self.capture_mode_label.setStyleSheet(f"""
+                QLabel {{
+                    color: {nc["text_secondary"]};
+                    background-color: {nc["surface_alt2"]};
+                    border: 1px solid {nc["border"]};
                     padding: 6px;
                     font-size: 12px;
-                }
+                }}
             """)
             layout.addWidget(self.capture_mode_label)
             
@@ -1280,16 +1281,16 @@ class NetworkDiagnosticsDialog:
             self.output_text = QTextEdit()
             self.output_text.setReadOnly(True)
             self.output_text.document().setMaximumBlockCount(5000)  # cap growth during continuous scanning
-            self.output_text.setStyleSheet("""
-                QTextEdit {
-                    background-color: #f8f9fa;
-                    color: #333333;
-                    border: 1px solid #dee2e6;
+            self.output_text.setStyleSheet(f"""
+                QTextEdit {{
+                    background-color: {nc["surface_alt2"]};
+                    color: {nc["text_secondary"]};
+                    border: 1px solid {nc["border"]};
                     border-radius: 6px;
                     padding: 10px;
                     font-family: 'Consolas', 'Monaco', monospace;
                     font-size: 12px;
-                }
+                }}
             """)
             layout.addWidget(self.output_text)
 

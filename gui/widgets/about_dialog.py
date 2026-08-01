@@ -26,6 +26,7 @@ engineers working with industrial automation systems.</p>
 <li>Scripting language for repeatable test sequences, targeting either your live connection or the local Server tab</li>
 <li>Multiple simultaneous connections (one per window)</li>
 <li>Network discovery & diagnostics (ARP + Modbus detection)</li>
+<li>Light, Dark, and Follow-System themes</li>
 </ul>
 
 <h4>Upcoming Features</h4>

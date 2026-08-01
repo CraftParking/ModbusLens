@@ -103,14 +103,15 @@ class AddressTableWidget(QWidget):
         self.log_output.setMinimumHeight(200)
         self.log_output.setMaximumWidth(300)
         self.log_output.setReadOnly(True)
-        self.log_output.setStyleSheet("""
-            QTextEdit {
-                background-color: #F8F9FA;
-                color: #333333;
-                border: 1px solid #CCCCCC;
+        c = self.parent_window._colors()
+        self.log_output.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {c["surface_alt2"]};
+                color: {c["text_secondary"]};
+                border: 1px solid {c["border"]};
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 10px;
-            }
+            }}
         """)
         log_layout.addWidget(self.log_output)
 
@@ -134,31 +135,31 @@ class AddressTableWidget(QWidget):
         self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.table.viewport().setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed | QTableWidget.AnyKeyPressed)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                background-color: #FFFFFF;
-                color: #000000;
-                gridline-color: #D0D0D0;
-                border: 1px solid #CCCCCC;
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {c["surface"]};
+                color: {c["text"]};
+                gridline-color: {c["pressed"]};
+                border: 1px solid {c["border"]};
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 12px;
-            }
-            QHeaderView::section {
-                background-color: #E9E9E9;
-                color: #000000;
-                border: 1px solid #CCCCCC;
+            }}
+            QHeaderView::section {{
+                background-color: {c["header_bg"]};
+                color: {c["text"]};
+                border: 1px solid {c["border"]};
                 padding: 6px;
                 font-weight: bold;
-            }
-            QTableWidget::item {
+            }}
+            QTableWidget::item {{
                 padding: 4px;
-                border-bottom: 1px solid #E0E0E0;
-                border-right: 1px solid #E0E0E0;
-            }
-            QTableWidget::item:selected {
-                background-color: #0078D4;
-                color: white;
-            }
+                border-bottom: 1px solid {c["border_light"]};
+                border-right: 1px solid {c["border_light"]};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {c["selection_bg"]};
+                color: {c["selection_text"]};
+            }}
         """)
         self.table.cellChanged.connect(self.on_cell_changed)
         layout.addWidget(self.table)
@@ -311,7 +312,7 @@ class AddressTableWidget(QWidget):
 
             address_item = QTableWidgetItem(modbus_address)
             address_item.setFlags(address_item.flags() & ~Qt.ItemIsEditable)
-            address_item.setBackground(QColor("#F0F0F0"))
+            address_item.setBackground(QColor(self.parent_window._colors()["header_bg"]))
             self.table.setItem(i, 0, address_item)
 
             if is_write and "Coil" in function:
@@ -500,12 +501,12 @@ class AddressTableWidget(QWidget):
             value_item = self.table.item(i, 1)
             if value_item and not value_item.flags() & Qt.ItemIsEditable:
                 value_item.setText(str(int(value)))
-                value_item.setBackground(QColor("#E8F5E8"))
+                value_item.setBackground(QColor(self.parent_window._colors()["success_flash"]))
 
             hex_item = self.table.item(i, 2)
             if hex_item:
                 hex_item.setText(self._format_hex(value))
-                hex_item.setBackground(QColor("#E8F5E8"))
+                hex_item.setBackground(QColor(self.parent_window._colors()["success_flash"]))
 
             original_address = self.current_start_address + i
             self.current_data[original_address] = value
@@ -663,7 +664,8 @@ class AddressTableWidget(QWidget):
         # Only follow new lines if already scrolled to the bottom -- otherwise the user
         # can never hold a scrolled-up position to read something while polling continues.
         was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
-        self.log_output.append(format_log_html(timestamp, message))
+        mode = getattr(self.parent_window, "_theme_mode", "light")
+        self.log_output.append(format_log_html(timestamp, message, mode))
         if was_at_bottom:
             scrollbar.setValue(scrollbar.maximum())
         # Also forward to the main window's System Logs, not just this tab's own panel.

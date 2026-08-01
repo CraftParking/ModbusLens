@@ -6,8 +6,18 @@ from PySide6.QtGui import QPainter, QColor, QBrush, QFont
 class StatusIndicator(QWidget):
     """Professional SCADA-style rectangular status badge."""
 
-    def __init__(self, parent=None):
+    # Status text needs to stay readable against the connection bar's own background, which
+    # switches between a light and dark surface with the app theme -- the tint/border accent
+    # colors are saturated enough to read fine either way, but text needs a brighter variant
+    # for a dark background.
+    _TEXT_COLORS = {
+        False: {"connected": "#2E7D32", "connecting": "#E65100", "error": "#C62828", "disconnected": "#616161"},
+        True: {"connected": "#81C784", "connecting": "#FFB74D", "error": "#EF5350", "disconnected": "#BDBDBD"},
+    }
+
+    def __init__(self, parent=None, dark=False):
         super().__init__(parent)
+        self._dark = dark
         self.status = "disconnected"
         self.connection_info = ""
         self.setFixedSize(140, 35)
@@ -21,7 +31,7 @@ class StatusIndicator(QWidget):
         # Animation Properties (Initial Disconnected State)
         self._bg_color = QColor(245, 245, 245, 20)  # Very light tint
         self._border_color = QColor("#9E9E9E")      # Used as Accent Color
-        self._text_color = QColor("#424242")
+        self._text_color = QColor(self._TEXT_COLORS[dark]["disconnected"])
 
         # Animation Group
         self.anim_group = QParallelAnimationGroup(self)
@@ -63,14 +73,15 @@ class StatusIndicator(QWidget):
         
         # Define Target Colors
         # t_bg uses low alpha (20/255 ~= 8%) for a subtle tint
+        texts = self._TEXT_COLORS[self._dark]
         if status == "connected":
-            t_bg, t_border, t_text = QColor(232, 245, 233, 25), QColor("#4CAF50"), QColor("#2E7D32")
+            t_bg, t_border, t_text = QColor(232, 245, 233, 25), QColor("#4CAF50"), QColor(texts["connected"])
         elif status == "connecting":
-            t_bg, t_border, t_text = QColor(255, 243, 224, 25), QColor("#FF9800"), QColor("#E65100")
+            t_bg, t_border, t_text = QColor(255, 243, 224, 25), QColor("#FF9800"), QColor(texts["connecting"])
         elif status == "error":
-            t_bg, t_border, t_text = QColor(255, 235, 238, 25), QColor("#F44336"), QColor("#C62828")
+            t_bg, t_border, t_text = QColor(255, 235, 238, 25), QColor("#F44336"), QColor(texts["error"])
         else: # disconnected
-            t_bg, t_border, t_text = QColor(245, 245, 245, 20), QColor("#9E9E9E"), QColor("#616161")
+            t_bg, t_border, t_text = QColor(245, 245, 245, 20), QColor("#9E9E9E"), QColor(texts["disconnected"])
 
         # Setup and start transitions
         self.anim_group.stop()
