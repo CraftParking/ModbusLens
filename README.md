@@ -37,7 +37,8 @@
 - Act as a Modbus TCP slave for testing your own SCADA/PLC programs
 - Talk to multiple devices at once, each in its own window
 - Simple scripting for repeatable write/wait/read test sequences, against either a live device or ModbusLens's own Server simulator
-- Scanner: auto-discover which addresses actually respond on a connected device, or sweep common serial settings to find the baud rate/parity/stop bits a device actually uses
+- Serial Discovery: sweep common baud rate/parity/stop-bit/Unit ID combinations to find the settings a serial device actually uses
+- Scanner: auto-discover which addresses actually respond on a connected device (TCP or serial)
 
 ---
 
@@ -178,9 +179,15 @@
 - Packet capture (Npcap required)  
 - Device filtering (Modbus only)  
 
+### Serial Discovery
+- Diagnostics menu tool that sweeps common baud rate/parity/stop-bit combinations - plus a Unit ID range - against a COM port to find which one a serial device actually speaks, for when its settings aren't documented  
+- Opens its own short-lived connection per combination (byte size fixed at 8), so it needs the port free - disconnect ModbusLens first if it's the one holding it open  
+- A **Scan for Connection Parameters...** button in Connection Settings' Serial section closes that dialog and opens Serial Discovery directly, with the COM port already filled in  
+
 ### Scanner
-- **Register** - auto-discovers which addresses respond for a chosen function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range. Probes the largest block the function allows first, and only narrows down address-by-address where a block doesn't fully respond - far fewer requests than checking one address at a time. Reuses the app's existing connection (like Address Table/Tags/Script), pausing Tags/Address Table live monitoring first so nothing else is polling the same connection at the same time  
-- **Serial** - sweeps common baud rate/parity/stop-bit combinations against a COM port to find which one a device actually speaks, for when its settings aren't documented. Opens its own short-lived connection per combination (byte size fixed at 8), so it needs the port free - disconnect ModbusLens first if it's the one holding it open  
+- Auto-discovers which addresses respond for a chosen function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range - works the same way whether the current connection is TCP or serial  
+- Probes the largest block the function allows first, and only narrows down address-by-address where a block doesn't fully respond - far fewer requests than checking one address at a time  
+- Reuses the app's existing connection (like Address Table/Tags/Script), pausing Tags/Address Table live monitoring first so nothing else is polling the same connection at the same time  
 - A configurable probe timeout keeps scanning fast over TCP; over a serial connection each probe is one bus round-trip, so a large range takes noticeably longer  
 
 ### UI Improvements

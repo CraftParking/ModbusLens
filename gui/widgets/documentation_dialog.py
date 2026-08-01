@@ -84,6 +84,9 @@ you know a device's address.</li>
 <ol>
 <li><b>Network Discovery &amp; Diagnostics</b> - opens the network scanning dialog (ARP-based
 device discovery plus Modbus detection). See <b>Troubleshooting &gt; Network Discovery</b>.</li>
+<li><b>Serial Discovery</b> - opens a dialog that sweeps common baud rate/parity/stop-bit/Unit ID
+combinations against a COM port to find which one a serial device actually speaks. See the
+<b>Scanner</b> topic.</li>
 <li><b>System Logs</b> - opens a dialog with the full, scrollable System Logs history (the same
 color-coded write/connect/error log shown live in the app). Handy when you need to scroll back
 further than fits on screen.</li>
@@ -544,11 +547,10 @@ common error messages mean.</p>
 
     ("Scanner", """
 <h2>Scanner</h2>
-<p>Two independent tools for when you're missing information about a device: <b>Register</b>
-auto-discovers which addresses respond, and <b>Serial</b> auto-discovers which baud
-rate/parity/stop bits a serial device actually uses.</p>
+<p>Auto-discovers which addresses respond on the connected device - useful when you don't have
+a register map yet. Works the same way regardless of whether the current connection is TCP or
+serial, since it just reuses whatever's already connected.</p>
 
-<h3>Register</h3>
 <p>Pick a <b>Function</b> (Coils/Discrete Inputs/Holding/Input Registers) and a <b>Start</b>/
 <b>End</b> address, then <b>Start Scan</b>. Rather than checking one address at a time, it
 probes the largest block the function allows first - a clean read means every address in that
@@ -566,28 +568,35 @@ invalid.</p>
 scan automatically pauses Tags monitoring and Address Table Live Monitoring if either is
 running, the same way those two already pause each other, so nothing else polls the connection
 while a scan is in progress.</p>
+<p>A shorter <b>Probe timeout</b> makes a scan faster but can misreport a slow-but-valid address
+as not-responding, especially over a serial connection where every probe is one real bus
+round-trip. If a scan seems to be missing an address you know exists, try a longer timeout.</p>
+<p>Don't know the serial connection parameters (baud rate, parity, stop bits) for a device in
+the first place? See <b>Serial Discovery</b>.</p>
+"""),
 
-<h3>Serial</h3>
-<p>For when a serial device's settings aren't documented. Pick the <b>COM Port</b>,
-<b>Framing</b> (RTU/ASCII), <b>Unit ID</b>, and a <b>Probe</b> function/address, then
-<b>Start Scan</b>. It tries every combination of 8 common baud rates, 3 parity settings, and
-2 stop-bit settings (48 total) - byte size is fixed at 8, the near-universal default - opening
-a short-lived connection for each combination and sending one probe read. Any reply, including
-a Modbus exception response, counts as a match, since that still proves the framing decoded
-correctly; a garbled response from a mismatched baud rate or parity won't parse as a valid
-Modbus frame at all.</p>
-<p>Unlike Register, this doesn't reuse the app's shared connection - it opens its own for each
-combination, since testing a physical serial setting means actually reopening the port with
-it. That also means the port needs to be free: disconnect ModbusLens first if it's the one
-connected to this port, and close any other program (Modbus Poll, a terminal, another
-ModbusLens window) that might have it open. If the port can't be opened at all, the scan stops
-immediately with that message rather than repeating the same failure 48 times.</p>
-
-<h3>Probe timeout</h3>
-<p>A shorter timeout makes a scan faster but can misreport a slow-but-valid address (or serial
-setting) as not-responding, especially over a serial connection where every probe is one real
-bus round-trip. If a scan seems to be missing something you know exists, try a longer probe
-timeout.</p>
+    ("Serial Discovery", """
+<h2>Serial Discovery</h2>
+<p><b>Diagnostics &gt; Serial Discovery</b> sweeps common baud rate/parity/stop-bit/Unit ID
+combinations against a COM port to find which one a serial device actually speaks, for when its
+settings aren't documented. There's also a <b>Scan for Connection Parameters...</b> button in
+<b>Tools &gt; Connection Settings</b>'s Serial section that closes that dialog and opens this
+one directly, with the COM port already filled in.</p>
+<p>Pick the <b>COM Port</b> and <b>Framing</b> (RTU/ASCII), a <b>Start</b>/<b>End Unit ID</b>
+range to also try, then <b>Start Scan</b>. It tries every combination of 8 common baud rates,
+3 parity settings, 2 stop-bit settings, and each Unit ID in the range - byte size is fixed at
+8, the near-universal default - opening a short-lived connection for each combination and
+sending one Holding Register read. Any reply, including a Modbus exception response, counts as
+a match, since that still proves the framing decoded correctly; a garbled response from a
+mismatched baud rate or parity won't parse as a valid Modbus frame at all.</p>
+<p>This doesn't reuse the app's shared connection - it opens its own for each combination,
+since testing a physical serial setting means actually reopening the port with it. That also
+means the port needs to be free: disconnect ModbusLens first if it's the one connected to this
+port, and close any other program (Modbus Poll, a terminal, another ModbusLens window) that
+might have it open. If the port can't be opened at all, the scan stops immediately with that
+message rather than repeating the same failure for every remaining combination.</p>
+<p>Keep the Unit ID range narrow (it defaults to just 1) unless you actually need it wider -
+each additional Unit ID multiplies the total combination count by 48.</p>
 """),
 
     ("Multiple Windows", """
