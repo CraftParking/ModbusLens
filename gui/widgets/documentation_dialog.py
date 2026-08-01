@@ -33,21 +33,75 @@ transaction, <b>Trend</b> for graphing, <b>Server</b> to act as a slave device y
 </ol>
 
 <h3>Menu bar</h3>
-<ul>
-<li><b>File</b> - open another independent connection window, start a new session, save/load a
-session, export data, exit.</li>
-<li><b>View</b> - display options (the interface is currently fixed to a light theme, listed here
-for visibility).</li>
-<li><b>Tools</b> - connection settings, and IP Configuration (a quick ipconfig-style view of this
-machine's network adapters). Connection Profiles and Data Templates are placeholders reserved for
-a future release and aren't functional yet.</li>
-<li><b>Diagnostics</b> - network discovery, system logs, clear logs. The Raw Data view lives in
-its own tab now rather than under this menu - see the tab list above.</li>
-<li><b>Help</b> - this documentation and the About dialog (which also checks GitHub for updates).</li>
-</ul>
+<p>See the <b>Menus &amp; Toolbars</b> topic on the left for a full, step-by-step list of every
+menu and option and exactly where to find it.</p>
 
 <p>See the topics on the left for details on each part of the app, and check
 <b>Troubleshooting</b> if something isn't behaving the way you expect.</p>
+"""),
+
+    ("Menus & Toolbars", """
+<h2>Menus &amp; Toolbars</h2>
+<p>Every menu, every option, and exactly what it does - a full reference for navigating the app.
+The menu bar sits at the very top of the window, below the title bar.</p>
+
+<h3>File menu</h3>
+<ol>
+<li><b>New Connection Window</b> - opens a second, fully independent ModbusLens window with its
+own connection, tabs, and Server tab. See <b>Multiple Windows</b> for details.</li>
+<li><b>New Session</b> - disconnects if connected, stops monitoring, and clears the current
+window's logs and monitoring results. Doesn't close the window or lose your Tags/script - just
+resets the live state.</li>
+<li><b>Save Session</b> / <b>Load Session</b> - not implemented yet; currently show a placeholder
+message. Use <b>Export/Import CSV</b> on the Tags tab to save/reload a tag list in the meantime.</li>
+<li><b>Export Data</b> - not implemented yet; currently shows a placeholder message. Use
+<b>Log to CSV</b> on the Tags or Trend tab for live data logging in the meantime.</li>
+<li><b>Exit</b> - closes this window (saving its settings first).</li>
+</ol>
+
+<h3>View menu</h3>
+<ol>
+<li><b>Theme</b> - a submenu with three options: <b>Light</b>, <b>Dark</b>, and
+<b>Follow System</b> (matches your OS setting). Only one is active at a time. Picking a different
+one asks to confirm, then restarts ModbusLens to apply it - the theme is set once at startup
+rather than switched live.</li>
+</ol>
+
+<h3>Tools menu</h3>
+<ol>
+<li><b>Connection Settings</b> - opens the same dialog as the <b>Settings</b> button on the
+connection bar: choose Modbus TCP or Serial (RTU/ASCII) and enter the target address/port or COM
+port parameters. See <b>Connecting to a Device</b>.</li>
+<li><b>Connection Profiles</b> / <b>Data Templates</b> - not implemented yet; currently show a
+placeholder message. Reserved for saving/reusing connection setups and register layouts in a
+future release.</li>
+<li><b>IP Configuration</b> - a quick, read-only ipconfig-style view of this machine's own network
+adapters (name, IP, subnet). Useful for figuring out which subnet to scan or connect on before
+you know a device's address.</li>
+</ol>
+
+<h3>Diagnostics menu</h3>
+<ol>
+<li><b>Network Discovery &amp; Diagnostics</b> - opens the network scanning dialog (ARP-based
+device discovery plus Modbus detection). See <b>Troubleshooting &gt; Network Discovery</b>.</li>
+<li><b>System Logs</b> - opens a dialog with the full, scrollable System Logs history (the same
+color-coded write/connect/error log shown live in the app). Handy when you need to scroll back
+further than fits on screen.</li>
+<li><b>Clear All Logs</b> - clears the System Logs and the Raw Data tab's transaction history.
+This can't be undone.</li>
+</ol>
+
+<h3>Help menu</h3>
+<ol>
+<li><b>Documentation</b> - this dialog.</li>
+<li><b>About</b> - version number, a feature list, the Support link, and an <b>Updates</b> tab
+that checks GitHub Releases for a newer version.</li>
+</ol>
+
+<h3>Connection bar (below the menu bar)</h3>
+<p>Not a menu, but always visible and worth listing here: the status indicator (left), current
+target address, and on the right, <b>Settings</b> (same as Tools &gt; Connection Settings),
+<b>Connect</b>, and <b>Disconnect</b>.</p>
 """),
 
     ("Connecting to a Device", """
