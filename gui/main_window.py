@@ -37,6 +37,7 @@ from widgets.documentation_dialog import DocumentationDialog
 from widgets.about_dialog import AboutDialog
 from diagnostics.advanced_diagnostics import AdvancedDiagnostics
 from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
+from diagnostics.register_scanner import RegisterScannerWidget
 from monitoring.monitoring_manager import MonitoringManager
 from network.network_diagnostics import NetworkDiagnosticsDialog
 
@@ -398,6 +399,9 @@ class ModbusGUI(QMainWindow):
         # Script tab
         self._setup_script_tab()
 
+        # Scanner tab
+        self._setup_register_scanner_tab()
+
         # Connect tab change signal for interlock
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
@@ -424,6 +428,11 @@ class ModbusGUI(QMainWindow):
         """Setup Script tab (WRITE/READ/WAIT/REPEAT/IF test sequences)."""
         self.script_widget = ScriptWidget(self)
         self.tab_widget.addTab(self.script_widget, "Script")
+
+    def _setup_register_scanner_tab(self):
+        """Setup Scanner tab (register address / serial parameter auto-discovery)."""
+        self.register_scanner_widget = RegisterScannerWidget(self)
+        self.tab_widget.addTab(self.register_scanner_widget, "Scanner")
 
     def _setup_monitoring_tab(self):
         """Setup monitoring tab with real-time data display."""
@@ -1453,12 +1462,15 @@ Unit ID: {unit_id}<br><br>
             # During connection attempt, disable all monitoring entry points
             if hasattr(self, 'address_table_widget'):
                 self.address_table_widget.monitoring_checkbox.setEnabled(False)
-            
+
             if hasattr(self, 'tag_start_monitoring_btn'):
                 self.tag_start_monitoring_btn.setEnabled(False)
-            
+
+            if hasattr(self, 'register_scanner_widget'):
+                self.register_scanner_widget.refresh_connection_state()
+
             return
-        
+
 
         self.connect_btn.setEnabled(not connected)
         self.disconnect_btn.setEnabled(connected)
@@ -1490,6 +1502,9 @@ Unit ID: {unit_id}<br><br>
         if hasattr(self, 'tag_offset_checkbox'):
             # Only allow editing address mode if not currently monitoring
             self.tag_offset_checkbox.setEnabled(connected and not self.monitoring_active)
+
+        if hasattr(self, 'register_scanner_widget'):
+            self.register_scanner_widget.refresh_connection_state()
 
     def on_tab_changed(self, index):
         """Handle tab change to implement smart monitoring interlock."""
@@ -2426,8 +2441,9 @@ Unit ID: {unit_id}<br><br>
         dialog.exec()
 
     def _network_diagnostics(self):
-        """Show network diagnostics.""" 
+        """Show network diagnostics."""
         self.network_diagnostics.show_diagnostics(self.target_ip, self.target_port, self.target_unit_id)
+
 
     def _show_documentation(self):
         """Show the Help documentation."""
@@ -2448,6 +2464,8 @@ Unit ID: {unit_id}<br><br>
             self._disconnect()
         if hasattr(self, 'server_widget') and self.server_widget.running:
             self.server_widget._stop_server()
+        if hasattr(self, 'register_scanner_widget'):
+            self.register_scanner_widget.stop_all_scans()
         if self in ModbusGUI._open_windows:
             ModbusGUI._open_windows.remove(self)
         self._save_settings()
