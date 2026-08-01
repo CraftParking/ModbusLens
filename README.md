@@ -163,7 +163,7 @@
 - Improved status indicators  
 - Better spacing and readability  
 - More focused workspace (Address/Tags/Trend priority)  
-- Forces a light theme even when Windows is set to dark mode  
+- Light/Dark/Follow System theme, switchable from View > Theme (takes effect after restart)  
 - Help > About has an Updates tab that checks GitHub Releases for a newer version  
 - Color-coded logs (Address Table, System Logs, Script console) - writes in blue, connection events in green, errors in red  
 
@@ -231,6 +231,8 @@ If it helps you, consider supporting development:
     <img src="assets/buy-me-a-coffee.png" height="45">
   </a>
 </p>
+
+Donations go strictly toward development of ModbusLens (time, tools, hardware for testing) — nothing else.
 
 ---
 
