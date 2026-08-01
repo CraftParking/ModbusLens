@@ -153,25 +153,27 @@ class AdvancedDiagnostics:
         stats_dialog.setGeometry(300, 300, 600, 500)
         
         layout = QVBoxLayout(stats_dialog)
-        
+
+        c = parent._colors() if parent is not None and hasattr(parent, "_colors") else {}
+
         # Title
         title = QLabel("Modbus Communication Statistics")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #333333; margin-bottom: 10px;")
+        title.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {c.get('text_secondary', '#333333')}; margin-bottom: 10px;")
         layout.addWidget(title)
-        
+
         # Statistics content
         stats_text = QTextEdit()
         stats_text.setReadOnly(True)
-        stats_text.setStyleSheet("""
-            QTextEdit {
-                background-color: #f8f9fa;
-                color: #333333;
-                border: 1px solid #dee2e6;
+        stats_text.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {c.get("surface_alt2", "#f8f9fa")};
+                color: {c.get("text_secondary", "#333333")};
+                border: 1px solid {c.get("border", "#dee2e6")};
                 border-radius: 6px;
                 padding: 10px;
                 font-family: 'Segoe UI', Arial, sans-serif;
                 font-size: 12px;
-            }
+            }}
         """)
         
         # Generate statistics report

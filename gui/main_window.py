@@ -1,4 +1,6 @@
 import sys
+import os
+import subprocess
 import logging
 import time
 import struct
@@ -20,7 +22,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton
 )
 from PySide6.QtCore import Qt, QTimer, QEvent
-from PySide6.QtGui import QColor, QIcon, QPalette
+from PySide6.QtGui import QColor, QIcon, QActionGroup
 
 # Add the gui directory to the path for relative imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -42,163 +44,14 @@ from core.modbus_client import ModbusClient
 from app_paths import resource_path, app_data_dir
 from log_format import format_log_html
 from modbus_meta import function_code_for
+import theme
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
 
-def apply_fixed_light_theme(app):
-    """
-    Apply a fixed light theme to the Qt application.
-    This forces the application to always use a light theme regardless of OS settings.
-    """
-    # Force Fusion style for consistent appearance across platforms
-    app.setStyle("Fusion")
-    
-    # Create custom light palette with explicit colors
-    palette = QPalette()
-    
-    # Window colors
-    palette.setColor(QPalette.Window, QColor(240, 240, 240))  # Main window background
-    palette.setColor(QPalette.WindowText, QColor(0, 0, 0))    # Window text
-    
-    # Base colors (for text widgets, tables, etc.)
-    palette.setColor(QPalette.Base, QColor(255, 255, 255))    # Input widget background
-    palette.setColor(QPalette.AlternateBase, QColor(245, 245, 245))  # Alternate row colors
-    palette.setColor(QPalette.Text, QColor(0, 0, 0))           # Text color
-    palette.setColor(QPalette.BrightText, QColor(255, 255, 255))  # Bright text
-    
-    # Button colors
-    palette.setColor(QPalette.Button, QColor(240, 240, 240))  # Button background
-    palette.setColor(QPalette.ButtonText, QColor(0, 0, 0))    # Button text
-    
-    # Highlight colors (selection)
-    palette.setColor(QPalette.Highlight, QColor(0, 122, 204))  # Selection background
-    palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))  # Selected text
-    
-    # Tooltip colors
-    palette.setColor(QPalette.ToolTipBase, QColor(255, 255, 220))  # Tooltip background
-    palette.setColor(QPalette.ToolTipText, QColor(0, 0, 0))        # Tooltip text
-    
-    # Disabled colors
-    palette.setColor(QPalette.Disabled, QPalette.WindowText, QColor(128, 128, 128))
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(128, 128, 128))
-    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(128, 128, 128))
-    palette.setColor(QPalette.Disabled, QPalette.Highlight, QColor(200, 200, 200))
-    palette.setColor(QPalette.Disabled, QPalette.HighlightedText, QColor(128, 128, 128))
-    
-    # Apply the palette
-    app.setPalette(palette)
-
-    # On Windows, Qt tracks the OS light/dark setting independently of the palette
-    # (QStyleHints.colorScheme()) and native/Fusion-derived colors (disabled states,
-    # tooltips, some sub-controls) follow that signal even after setPalette() above.
-    # Without this override, a system set to dark mode still bleeds dark-on-dark
-    # rendering into parts of the UI the palette doesn't fully cover.
-    style_hints = app.styleHints()
-    if hasattr(style_hints, "setColorScheme") and hasattr(Qt, "ColorScheme"):
-        style_hints.setColorScheme(Qt.ColorScheme.Light)
-
-    app.setStyleSheet("""
-        /* Minimal light theme styling - palette does most of the work */
-        
-        QMainWindow {
-            background-color: #F0F0F0;
-        }
-        
-        QMenuBar {
-            background-color: #F0F0F0;
-            color: #000000;
-            border-bottom: 1px solid #CCCCCC;
-        }
-        
-        QMenuBar::item:selected {
-            background-color: #E0E0E0;
-        }
-        
-        QMenu {
-            background-color: #FFFFFF;
-            color: #000000;
-            border: 1px solid #CCCCCC;
-        }
-        
-        QMenu::item:selected {
-            background-color: #007ACC;
-            color: #FFFFFF;
-        }
-        
-        QStatusBar {
-            background-color: #F0F0F0;
-            color: #000000;
-            border-top: 1px solid #CCCCCC;
-        }
-        
-        QTabWidget::pane {
-            border: 1px solid #CCCCCC;
-            background-color: #FFFFFF;
-        }
-        
-        QTabBar::tab {
-            background-color: #F5F5F5;
-            color: #333333;
-            padding: 8px 16px;
-            border: 1px solid #CCCCCC;
-            margin-right: 2px;
-        }
-        
-        QTabBar::tab:selected {
-            background-color: #FFFFFF;
-            color: #333333;
-            border-bottom: 1px solid #FFFFFF;
-        }
-        
-        QTabBar::tab:hover {
-            background-color: #E8E8E8;
-        }
-        
-        QGroupBox {
-            font-weight: bold;
-            color: #222222;
-            border: 1px solid #CCCCCC;
-            margin-top: 1ex;
-            background-color: #F8F8F8;
-        }
-        
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 10px 0 10px;
-        }
-        
-        QTableWidget {
-            background-color: #FFFFFF;
-            color: #000000;
-            border: 1px solid #CCCCCC;
-            gridline-color: #E0E0E0;
-        }
-        
-        QHeaderView::section {
-            background-color: #E9E9E9;
-            color: #000000;
-            border: 1px solid #CCCCCC;
-            padding: 5px;
-        }
-        
-        QTableWidget::item:selected {
-            background-color: #007ACC;
-            color: #FFFFFF;
-        }
-        
-        QTableWidget::item:selected:!active {
-            background-color: #B3D7FF;
-            color: #000000;
-        }
-    """)
-    
-    # Note: Despite the style name becoming empty after stylesheet application,
-    # the Fusion style visual characteristics are preserved through the palette
-    # and the minimal stylesheet ensures light theme consistency
+apply_theme = theme.apply_theme  # kept as a module-level name other code may reference
 
 
 class TagTableWidget(QTableWidget):
@@ -226,7 +79,7 @@ class TagTableWidget(QTableWidget):
         # show where the row would land in the table body. Draw that line ourselves, tracking
         # the header's mouse-move events for as long as a drag is in progress.
         self._drop_indicator = QFrame(self.viewport())
-        self._drop_indicator.setStyleSheet("background-color: #0078D4;")
+        self._drop_indicator.setStyleSheet(f"background-color: {main_window._colors()['accent']};")
         self._drop_indicator.setFixedHeight(2)
         self._drop_indicator.hide()
         self.verticalHeader().installEventFilter(self)
@@ -283,6 +136,13 @@ class ModbusGUI(QMainWindow):
 
     def __init__(self):
         super().__init__()
+
+        # The theme was already applied to the QApplication in main() before this window
+        # was constructed -- resolve the same mode again here so widget-level style strings
+        # (built per-widget below, since QPalette/global QSS in theme.py don't reach every
+        # custom-colored table/dialog) use matching colors instead of hardcoded light-only hex.
+        self._theme_mode = theme.resolve_mode(theme.load_saved_mode(), QApplication.instance())
+        self._c = theme.get_colors(self._theme_mode)
 
         self.modbus = None
         self.connection_history = []
@@ -365,8 +225,18 @@ class ModbusGUI(QMainWindow):
 
         # View menu
         view_menu = menubar.addMenu("&View")
-        theme_label = view_menu.addAction("Light Theme (fixed)")
-        theme_label.setEnabled(False)
+        theme_menu = view_menu.addMenu("Theme")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        saved_mode = theme.load_saved_mode()
+        self._theme_actions = {}
+        for mode, label in (("light", "Light"), ("dark", "Dark"), ("system", "Follow System")):
+            action = theme_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(mode == saved_mode)
+            action.triggered.connect(lambda checked, m=mode: self._set_theme_mode(m))
+            theme_group.addAction(action)
+            self._theme_actions[mode] = action
 
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
@@ -411,12 +281,12 @@ class ModbusGUI(QMainWindow):
         """Setup compact connection bar."""
         connection_frame = QFrame()
         connection_frame.setObjectName("connectionBar")
-        connection_frame.setStyleSheet("""
-            QFrame#connectionBar {
-                background-color: #FFFFFF;
-                border: 1px solid #E0E0E0;
+        connection_frame.setStyleSheet(f"""
+            QFrame#connectionBar {{
+                background-color: {self._c["surface"]};
+                border: 1px solid {self._c["border_light"]};
                 border-radius: 6px;
-            }
+            }}
         """)
         connection_frame.setFixedHeight(50)
 
@@ -425,19 +295,19 @@ class ModbusGUI(QMainWindow):
         main_layout.setSpacing(15)
 
         # 1. Status Section (Left)
-        self.status_indicator = StatusIndicator()
+        self.status_indicator = StatusIndicator(dark=(self._theme_mode == "dark"))
         main_layout.addWidget(self.status_indicator)
 
         # Separator
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
         sep.setFrameShadow(QFrame.Sunken)
-        sep.setStyleSheet("color: #E0E0E0;")
+        sep.setStyleSheet(f"color: {self._c['border_light']};")
         main_layout.addWidget(sep)
 
         # 2. Connection Info Label
         self.connection_info_label = QLabel()
-        self.connection_info_label.setStyleSheet("color: #444444; font-weight: 500; font-size: 12px;")
+        self.connection_info_label.setStyleSheet(f"color: {self._c['text_dim']}; font-weight: 500; font-size: 12px;")
         self._update_connection_info()
         main_layout.addWidget(self.connection_info_label)
         
@@ -488,26 +358,26 @@ class ModbusGUI(QMainWindow):
         # Tab widget for operations
         self.tab_widget = QTabWidget()
         self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #CCCCCC;
-                background-color: #FFFFFF;
-            }
-            QTabBar::tab {
-                background-color: #F5F5F5;
-                color: #333333;
+        self.tab_widget.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: 1px solid {self._c["border"]};
+                background-color: {self._c["surface"]};
+            }}
+            QTabBar::tab {{
+                background-color: {self._c["surface_alt"]};
+                color: {self._c["text_secondary"]};
                 padding: 8px 16px;
-                border: 1px solid #CCCCCC;
+                border: 1px solid {self._c["border"]};
                 margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: #FFFFFF;
-                color: #333333;
-                border-bottom: 1px solid #FFFFFF;
-            }
-            QTabBar::tab:hover {
-                background-color: #E8E8E8;
-            }
+            }}
+            QTabBar::tab:selected {{
+                background-color: {self._c["surface"]};
+                color: {self._c["text_secondary"]};
+                border-bottom: 1px solid {self._c["surface"]};
+            }}
+            QTabBar::tab:hover {{
+                background-color: {self._c["hover_strong"]};
+            }}
         """)
 
         # Address Table tab (ModScan-like interface)
@@ -564,20 +434,7 @@ class ModbusGUI(QMainWindow):
 
         # Control buttons section
         control_group = QGroupBox("Monitoring Controls")
-        control_group.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                color: #222222;
-                border: 1px solid #CCCCCC;
-                                margin-top: 1ex;
-                background-color: #F8F8F8;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 10px 0 10px;
-            }
-        """)
+        control_group.setStyleSheet(self._get_groupbox_style())
         control_layout = QVBoxLayout(control_group)
         control_layout.setSpacing(10)
         control_layout.setContentsMargins(15, 15, 15, 15)
@@ -613,7 +470,7 @@ class ModbusGUI(QMainWindow):
 
         # Interval controls
         interval_label = QLabel("Interval (ms):")
-        interval_label.setStyleSheet("color: #333333; font-weight: normal;")
+        interval_label.setStyleSheet(f"color: {self._c['text_secondary']}; font-weight: normal;")
         buttons_layout.addWidget(interval_label)
 
         self.tag_monitoring_interval = QSpinBox()
@@ -634,20 +491,7 @@ class ModbusGUI(QMainWindow):
 
         # Tag manager table (Excel-style)
         tag_group = QGroupBox("Tags")
-        tag_group.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                color: #222222;
-                border: 1px solid #CCCCCC;
-                                margin-top: 1ex;
-                background-color: #F8F8F8;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 10px 0 10px;
-            }
-        """)
+        tag_group.setStyleSheet(self._get_groupbox_style())
         tag_layout = QVBoxLayout(tag_group)
         tag_layout.setSpacing(10)
         tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
@@ -668,27 +512,7 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.monitoring_tag_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.monitoring_tag_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel) 
-        self.monitoring_tag_table.setStyleSheet(""" 
-            QTableWidget { 
-                background-color: #FFFFFF; 
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                            }
-            QHeaderView::section {
-                background-color: #E9E9E9;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                padding: 5px;
-            }
-            QTableWidget::item:selected {
-                background-color: #007ACC;
-                color: #FFFFFF;
-            }
-            QTableWidget::item:selected:!active {
-                background-color: #B3D7FF;
-                color: #000000;
-            }
-        """)
+        self.monitoring_tag_table.setStyleSheet(self._get_table_style())
         tag_layout.addWidget(self.monitoring_tag_table)
         tag_layout.setStretchFactor(self.monitoring_tag_table, 1)  # Make table expand
 
@@ -774,69 +598,151 @@ class ModbusGUI(QMainWindow):
         version = QApplication.applicationVersion()
         self.status_bar.addPermanentWidget(QLabel(f"ModbusLens v{version}"))
 
+    def _get_table_style(self):
+        c = self._c
+        return f"""
+            QTableWidget {{
+                background-color: {c["surface"]};
+                color: {c["text"]};
+                border: 1px solid {c["border"]};
+            }}
+            QHeaderView::section {{
+                background-color: {c["header_bg"]};
+                color: {c["text"]};
+                border: 1px solid {c["border"]};
+                padding: 5px;
+            }}
+            QTableWidget::item:selected {{
+                background-color: {c["selection_bg"]};
+                color: {c["selection_text"]};
+            }}
+            QTableWidget::item:selected:!active {{
+                background-color: {c["selection_inactive_bg"]};
+                color: {c["selection_inactive_text"]};
+            }}
+        """
+
+    def _get_groupbox_style(self):
+        c = self._c
+        return f"""
+            QGroupBox {{
+                font-weight: bold;
+                color: {c["heading"]};
+                border: 1px solid {c["border"]};
+                margin-top: 1ex;
+                background-color: {c["surface_alt2"]};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 10px 0 10px;
+            }}
+        """
+
+    def _colors(self):
+        """The current theme's color tokens -- other widget files reach this via
+        self.parent_window._colors() the same way they already call _get_button_style()."""
+        return self._c
+
+    def _set_theme_mode(self, mode):
+        previous_mode = theme.load_saved_mode()
+        if mode == previous_mode:
+            return
+
+        reply = QMessageBox.question(
+            self, "Restart Required",
+            f"Switch to the {mode.title()} theme?\n\nModbusLens needs to restart to apply this.",
+            QMessageBox.Ok | QMessageBox.Cancel, QMessageBox.Ok,
+        )
+        if reply != QMessageBox.Ok:
+            self._theme_actions[previous_mode].setChecked(True)
+            return
+
+        theme.save_mode(mode)
+        self._restart_application()
+
+    def _restart_application(self):
+        """Relaunch the app (frozen exe or `python gui_main.py`) and quit this instance,
+        closing every open connection window first so each one's normal cleanup
+        (stop monitoring, disconnect, stop the Server tab's listener) still runs."""
+        cmd = [sys.executable]
+        if not getattr(sys, "frozen", False):
+            cmd.append(os.path.abspath(sys.argv[0]))
+        cmd.extend(sys.argv[1:])
+        subprocess.Popen(cmd)
+
+        for window in list(ModbusGUI._open_windows) + [self]:
+            try:
+                window.close()
+            except Exception:
+                pass
+        QApplication.instance().quit()
+
     def _get_input_style(self):
         """Get consistent input widget style."""
-        return """
-            QSpinBox, QLineEdit {
-                background-color: #FFFFFF;
-                color: #000000;
-                border: 1px solid #CCCCCC;
-                                padding: 5px;
-            }
-            QSpinBox {
+        c = self._c
+        return f"""
+            QSpinBox, QLineEdit {{
+                background-color: {c["surface"]};
+                color: {c["text"]};
+                border: 1px solid {c["border"]};
+                padding: 5px;
+            }}
+            QSpinBox {{
                 padding-right: 2px;
-            }
-            QSpinBox:focus, QLineEdit:focus {
-                border-color: #007ACC;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
+            }}
+            QSpinBox:focus, QLineEdit:focus {{
+                border-color: {c["accent"]};
+            }}
+            QSpinBox::up-button, QSpinBox::down-button {{
                 subcontrol-origin: border;
                 width: 16px;
-                border-left: 1px solid #CCCCCC;
-                background-color: #F0F0F0;
-            }
-            QSpinBox::up-button {
+                border-left: 1px solid {c["border"]};
+                background-color: {c["window_bg"]};
+            }}
+            QSpinBox::up-button {{
                 subcontrol-position: top right;
-                border-bottom: 1px solid #CCCCCC;
-            }
-            QSpinBox::down-button {
+                border-bottom: 1px solid {c["border"]};
+            }}
+            QSpinBox::down-button {{
                 subcontrol-position: bottom right;
-            }
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                background-color: #E0E0E0;
-            }
-            QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
-                background-color: #D0D0D0;
-            }
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background-color: {c["hover"]};
+            }}
+            QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {{
+                background-color: {c["pressed"]};
+            }}
         """
 
     def _get_button_style(self, color=None, small=False):
         """Get professional button style (gray theme)."""
+        c = self._c
         font_size = "11px" if small else "12px"
         padding = "4px 8px" if small else "8px 16px"
-        
+
         return f"""
             QPushButton {{
-                background-color: #F5F5F5;
-                color: #333333;
-                border: 1px solid #CCCCCC;
-                                padding: {padding};
+                background-color: {c["surface_alt"]};
+                color: {c["text_secondary"]};
+                border: 1px solid {c["border"]};
+                padding: {padding};
                 font-weight: 500;
                 font-size: {font_size};
                 text-align: center;
             }}
             QPushButton:hover {{
-                background-color: #E8E8E8;
-                border-color: #BBBBBB;
+                background-color: {c["hover_strong"]};
+                border-color: {c["button_hover_border"]};
             }}
             QPushButton:pressed {{
-                background-color: #DDDDDD;
-                border-color: #AAAAAA;
+                background-color: {c["button_pressed_bg"]};
+                border-color: {c["button_pressed_border"]};
             }}
             QPushButton:disabled {{
-                background-color: #F8F8F8;
-                color: #999999;
-                border-color: #EEEEEE;
+                background-color: {c["surface_alt2"]};
+                color: {c["text_disabled"]};
+                border-color: {c["button_disabled_border"]};
             }}
         """
 
@@ -1407,15 +1313,15 @@ Unit ID: {unit_id}<br><br>
 {tips}
             """)
             dialog.setStandardButtons(QMessageBox.Ok)
-            dialog.setStyleSheet("""
-                QMessageBox {
-                    background-color: #FFFFFF;
-                }
-                QMessageBox QTextEdit {
-                    background-color: #F8F9FA;
-                    border: 1px solid #CCCCCC;
+            dialog.setStyleSheet(f"""
+                QMessageBox {{
+                    background-color: {self._c["surface"]};
+                }}
+                QMessageBox QTextEdit {{
+                    background-color: {self._c["surface_alt2"]};
+                    border: 1px solid {self._c["border"]};
                     padding: 8px;
-                }
+                }}
             """)
             dialog.exec()
         except Exception as e:
@@ -2324,7 +2230,7 @@ Unit ID: {unit_id}<br><br>
             # Only follow new lines if the user was already at the bottom -- otherwise a
             # scroll-up to inspect something gets yanked back down on every new entry.
             was_at_bottom = scrollbar.value() >= scrollbar.maximum() - 2
-            self.diagnostics_log_output.append(format_log_html(timestamp, message))
+            self.diagnostics_log_output.append(format_log_html(timestamp, message, self._theme_mode))
             if was_at_bottom:
                 scrollbar.setValue(scrollbar.maximum())
 
@@ -2366,22 +2272,14 @@ Unit ID: {unit_id}<br><br>
         return 0x01  # Default to Read Coils
     
     def _get_exception_code_from_error(self):
-        """Extract exception code from modbus error."""
-        if not self.modbus or not getattr(self.modbus, 'last_error', None):
+        """The numeric Modbus exception code (1=Illegal Function, 2=Illegal Data Address, ...)
+        from the device's own exception response, captured directly on the client rather than
+        guessed from last_error's text -- pymodbus's error text doesn't spell out the exception
+        name, only its number, so string-matching against phrases like "illegal data address"
+        never actually matched anything real."""
+        if not self.modbus:
             return None
-
-        error = self.modbus.last_error.lower()
-        if 'illegal function' in error:
-            return 0x01
-        elif 'illegal data address' in error or 'illegal address' in error:
-            return 0x02
-        elif 'illegal data value' in error:
-            return 0x03
-        elif 'server device failure' in error:
-            return 0x04
-        elif 'server device busy' in error:
-            return 0x06
-        return None
+        return getattr(self.modbus, 'last_exception_code', None)
 
     def _load_settings(self):
         """Load user settings and preferences."""
@@ -2469,20 +2367,20 @@ Unit ID: {unit_id}<br><br>
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setAlternatingRowColors(True)
-        table.setStyleSheet("""
-            QTableWidget {
-                background-color: #FFFFFF;
-                color: #000000;
-                gridline-color: #D0D0D0;
-                border: 1px solid #CCCCCC;
-            }
-            QHeaderView::section {
-                background-color: #E9E9E9;
-                color: #000000;
-                border: 1px solid #CCCCCC;
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {self._c["surface"]};
+                color: {self._c["text"]};
+                gridline-color: {self._c["pressed"]};
+                border: 1px solid {self._c["border"]};
+            }}
+            QHeaderView::section {{
+                background-color: {self._c["header_bg"]};
+                color: {self._c["text"]};
+                border: 1px solid {self._c["border"]};
                 padding: 6px;
                 font-weight: bold;
-            }
+            }}
         """)
 
         rows = []
@@ -2545,9 +2443,10 @@ Unit ID: {unit_id}<br><br>
         event.accept()
  
 
-class SafetyWarningDialog(QDialog): 
-    def __init__(self, parent=None):
+class SafetyWarningDialog(QDialog):
+    def __init__(self, parent=None, colors=None):
         super().__init__(parent)
+        self._c = colors or theme.LIGHT
         self.setWindowTitle("Safety Warning")
         self.setModal(True)
         self.setMinimumWidth(680)
@@ -2561,7 +2460,7 @@ class SafetyWarningDialog(QDialog):
 
         title = QLabel("WARNING: Live Machine Risk")
         title.setWordWrap(True)
-        title.setStyleSheet("font-weight: bold; font-size: 14px; color: #B00020;")
+        title.setStyleSheet(f"font-weight: bold; font-size: 14px; color: {self._c['danger']};")
         layout.addWidget(title)
 
         body = QLabel(
@@ -2577,12 +2476,12 @@ class SafetyWarningDialog(QDialog):
             "simulator or isolated network. If you are not sure, exit now."
         )
         body.setWordWrap(True)
-        body.setStyleSheet("color: #222222;")
+        body.setStyleSheet(f"color: {self._c['heading']};")
         layout.addWidget(body)
 
         # Add "Don't show again" checkbox
         self.dont_show_again = QCheckBox("Don't show this warning again")
-        self.dont_show_again.setStyleSheet("color: #222222;")
+        self.dont_show_again.setStyleSheet(f"color: {self._c['heading']};")
         layout.addWidget(self.dont_show_again)
 
         buttons = QHBoxLayout()
@@ -2984,14 +2883,17 @@ def main():
         if app is None: 
             app = QApplication(sys.argv)
 
-        app.setApplicationName("ModbusLens") 
-        app.setApplicationVersion(__version__) 
-        app.setOrganizationName("ModbusLens") 
-        
-        # Apply fixed light theme before creating any widgets
-        apply_fixed_light_theme(app)
- 
-        warning = SafetyWarningDialog()
+        app.setApplicationName("ModbusLens")
+        app.setApplicationVersion(__version__)
+        app.setOrganizationName("ModbusLens")
+
+        # Resolve the saved theme preference ("light"/"dark"/"system") to a concrete
+        # mode and apply it before creating any widgets -- widgets read colors from
+        # this resolved mode at construction time (see ModbusGUI._colors).
+        resolved_theme = theme.resolve_mode(theme.load_saved_mode(), app)
+        theme.apply_theme(app, resolved_theme)
+
+        warning = SafetyWarningDialog(colors=theme.get_colors(resolved_theme))
         if warning.should_show_again():
             if warning.exec() != QDialog.Accepted:
                 sys.exit(0)

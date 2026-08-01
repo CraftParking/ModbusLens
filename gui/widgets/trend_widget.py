@@ -294,11 +294,15 @@ class TrendWidget(QWidget):
         self.mode = "live"
         self.window_seconds = TIME_WINDOWS[0][1]
         self.running = False
+        c = parent._colors() if parent is not None and hasattr(parent, "_colors") else {}
+        is_dark = bool(parent) and getattr(parent, "_theme_mode", "light") == "dark"
         self.graph_settings = {
-            "background_color": QColor("#FFFFFF"),
-            "axis_color": QColor("#333333"),
+            "background_color": QColor(c.get("surface", "#FFFFFF")),
+            "axis_color": QColor(c.get("text_secondary", "#333333")),
             "grid_visible": True,
-            "grid_color": QColor("#000000"),
+            # High-contrast against the plot background specifically -- the generic border
+            # token is too subtle here (thin grid lines need more contrast than a panel border).
+            "grid_color": QColor("#FFFFFF" if is_dark else "#000000"),
             "x_title": "Time",
             "y_auto": True,
             "y_min": 0.0,
@@ -493,7 +497,13 @@ class TrendWidget(QWidget):
 
     def _apply_graph_settings(self):
         s = self.graph_settings
+        # QChart.setBackgroundBrush() alone only paints the chart's outer margin -- the plot
+        # area itself (where the grid and series actually sit) is a separate layer that stays
+        # on the QChartView's own white palette background unless explicitly given a brush too.
         self.chart.setBackgroundBrush(s["background_color"])
+        self.chart.setPlotAreaBackgroundBrush(s["background_color"])
+        self.chart.setPlotAreaBackgroundVisible(True)
+        self.chart_view.setBackgroundBrush(s["background_color"])
         axis_pen = QPen(s["axis_color"])
         self.axis_x.setLinePen(axis_pen)
         self.axis_y.setLinePen(axis_pen)

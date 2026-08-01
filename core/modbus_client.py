@@ -32,6 +32,9 @@ class ModbusClient:
         self.client: Optional[Union[ModbusTcpClient, ModbusSerialClient]] = None
         self._connected = False
         self.last_error: Optional[str] = None
+        # Numeric Modbus exception code (1=Illegal Function, 2=Illegal Data Address, ...)
+        # from the device's own exception response, when last_error came from one.
+        self.last_exception_code: Optional[int] = None
         # Optional per-register (holding register) write bounds: address -> (min, max).
         # Enforced here so every write path -- Address Table, Tags, Script -- is
         # covered the same way, regardless of which one originated the write.
@@ -131,6 +134,7 @@ class ModbusClient:
     def read_coils(self, address, count):
         if not self.is_connected():
             self.last_error = "Not connected to Modbus server"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return None
         self._reset_trace()
@@ -138,18 +142,22 @@ class ModbusClient:
             result = self.client.read_coils(address, count=count, device_id=self.unit_id)
             if result.isError():
                 self.last_error = f"Error reading coils at address {address}: {result}"
+                self.last_exception_code = getattr(result, "exception_code", None)
                 logger.error(self.last_error)
                 return None
             self.last_error = None
-            return result.bits
+            self.last_exception_code = None
+            return result.bits[:count]
         except Exception as e:
             self.last_error = f"Exception reading coils: {e}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return None
 
     def read_discrete_inputs(self, address, count):
         if not self.is_connected():
             self.last_error = "Not connected to Modbus server"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return None
         self._reset_trace()
@@ -157,18 +165,22 @@ class ModbusClient:
             result = self.client.read_discrete_inputs(address, count=count, device_id=self.unit_id)
             if result.isError():
                 self.last_error = f"Error reading discrete inputs at address {address}: {result}"
+                self.last_exception_code = getattr(result, "exception_code", None)
                 logger.error(self.last_error)
                 return None
             self.last_error = None
-            return result.bits
+            self.last_exception_code = None
+            return result.bits[:count]
         except Exception as e:
             self.last_error = f"Exception reading discrete inputs: {e}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return None
 
     def read_registers(self, address, count):
         if not self.is_connected():
             self.last_error = "Not connected to Modbus server"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return None
         self._reset_trace()
@@ -176,18 +188,22 @@ class ModbusClient:
             result = self.client.read_holding_registers(address, count=count, device_id=self.unit_id)
             if result.isError():
                 self.last_error = f"Error reading registers at address {address}: {result}"
+                self.last_exception_code = getattr(result, "exception_code", None)
                 logger.error(self.last_error)
                 return None
             self.last_error = None
+            self.last_exception_code = None
             return result.registers
         except Exception as e:
             self.last_error = f"Exception reading registers: {e}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return None
 
     def read_input_registers(self, address, count):
         if not self.is_connected():
             self.last_error = "Not connected to Modbus server"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return None
         self._reset_trace()
@@ -195,18 +211,22 @@ class ModbusClient:
             result = self.client.read_input_registers(address, count=count, device_id=self.unit_id)
             if result.isError():
                 self.last_error = f"Error reading input registers at address {address}: {result}"
+                self.last_exception_code = getattr(result, "exception_code", None)
                 logger.error(self.last_error)
                 return None
             self.last_error = None
+            self.last_exception_code = None
             return result.registers
         except Exception as e:
             self.last_error = f"Exception reading input registers: {e}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return None
 
     def write_coil(self, address, value):
         if not self.is_connected():
             self.last_error = "Not connected to Modbus server"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False
         self._reset_trace()
@@ -214,23 +234,28 @@ class ModbusClient:
             result = self.client.write_coil(address, value, device_id=self.unit_id)
             if result.isError():
                 self.last_error = f"Error writing coil at address {address}: {result}"
+                self.last_exception_code = getattr(result, "exception_code", None)
                 logger.error(self.last_error)
                 return False
             self.last_error = None
+            self.last_exception_code = None
             return True
         except Exception as e:
             self.last_error = f"Exception writing coil: {e}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False
 
     def write_register(self, address, value):
         if not self.is_connected():
             self.last_error = "Not connected to Modbus server"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False
         bounds_error = self._check_write_bounds(address, [value])
         if bounds_error:
             self.last_error = f"Write rejected: {bounds_error}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False
         self._reset_trace()
@@ -238,18 +263,22 @@ class ModbusClient:
             result = self.client.write_register(address, value, device_id=self.unit_id)
             if result.isError():
                 self.last_error = f"Error writing register at address {address}: {result}"
+                self.last_exception_code = getattr(result, "exception_code", None)
                 logger.error(self.last_error)
                 return False
             self.last_error = None
+            self.last_exception_code = None
             return True
         except Exception as e:
             self.last_error = f"Exception writing register: {e}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False
 
     def write_coils(self, address, values):
         if not self.is_connected():
             self.last_error = "Not connected to Modbus server"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False
         self._reset_trace()
@@ -257,23 +286,28 @@ class ModbusClient:
             result = self.client.write_coils(address, values, device_id=self.unit_id)
             if result.isError():
                 self.last_error = f"Error writing coils at address {address}: {result}"
+                self.last_exception_code = getattr(result, "exception_code", None)
                 logger.error(self.last_error)
                 return False
             self.last_error = None
+            self.last_exception_code = None
             return True
         except Exception as e:
             self.last_error = f"Exception writing coils: {e}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False
 
     def write_registers(self, address, values):
         if not self.is_connected():
             self.last_error = "Not connected to Modbus server"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False
         bounds_error = self._check_write_bounds(address, values)
         if bounds_error:
             self.last_error = f"Write rejected: {bounds_error}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False
         self._reset_trace()
@@ -281,11 +315,14 @@ class ModbusClient:
             result = self.client.write_registers(address, values, device_id=self.unit_id)
             if result.isError():
                 self.last_error = f"Error writing registers at address {address}: {result}"
+                self.last_exception_code = getattr(result, "exception_code", None)
                 logger.error(self.last_error)
                 return False
             self.last_error = None
+            self.last_exception_code = None
             return True
         except Exception as e:
             self.last_error = f"Exception writing registers: {e}"
+            self.last_exception_code = None
             logger.error(self.last_error)
             return False

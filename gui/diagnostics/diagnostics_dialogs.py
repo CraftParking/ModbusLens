@@ -4,8 +4,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QColor
 
-from log_format import ERROR_COLOR, CONNECT_COLOR
-
 MAX_RAW_DATA_ROWS = 1000  # oldest rows are dropped past this so the table can't grow unbounded
 
 RAW_DATA_COLUMNS = ["Time", "Operation", "Value", "Raw (Hex)", "TX Bytes", "RX Bytes", "Status", "Latency (ms)"]
@@ -51,21 +49,45 @@ class DiagnosticsDialogs:
         self.filter_text = ""
         self.filter_status = "All"
 
+    def _log_text_style(self):
+        c = self.parent._colors()
+        return f"""
+            QTextEdit {{
+                background-color: {c["surface"]};
+                color: {c["text"]};
+                border: 1px solid {c["border"]};
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 10px;
+            }}
+        """
+
+    def _raw_table_style(self):
+        c = self.parent._colors()
+        return f"""
+            QTableWidget {{
+                background-color: {c["surface"]};
+                color: {c["text"]};
+                gridline-color: {c["pressed"]};
+                border: 1px solid {c["border"]};
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 11px;
+            }}
+            QHeaderView::section {{
+                background-color: {c["header_bg"]};
+                color: {c["text"]};
+                border: 1px solid {c["border"]};
+                padding: 4px;
+                font-weight: bold;
+            }}
+        """
+
     def setup_diagnostics_widgets(self):
         """Initialize diagnostics widgets early to ensure they exist when needed."""
         # Initialize diagnostics log output widget
         if not hasattr(self.parent, 'diagnostics_log_output'):
             self.parent.diagnostics_log_output = QTextEdit()
             self.parent.diagnostics_log_output.setReadOnly(True)
-            self.parent.diagnostics_log_output.setStyleSheet("""
-                QTextEdit {
-                    background-color: #FFFFFF;
-                    color: #000000;
-                    border: 1px solid #CCCCCC;
-                    font-family: 'Consolas', 'Monaco', monospace;
-                    font-size: 10px;
-                }
-            """)
+            self.parent.diagnostics_log_output.setStyleSheet(self._log_text_style())
 
         # Initialize the Raw Data transaction table
         if not hasattr(self.parent, 'raw_data_table'):
@@ -81,23 +103,7 @@ class DiagnosticsDialogs:
             table.setEditTriggers(QTableWidget.NoEditTriggers)
             table.setSelectionBehavior(QTableWidget.SelectRows)
             table.setAlternatingRowColors(True)
-            table.setStyleSheet("""
-                QTableWidget {
-                    background-color: #FFFFFF;
-                    color: #000000;
-                    gridline-color: #D0D0D0;
-                    border: 1px solid #CCCCCC;
-                    font-family: 'Consolas', 'Monaco', monospace;
-                    font-size: 11px;
-                }
-                QHeaderView::section {
-                    background-color: #E9E9E9;
-                    color: #000000;
-                    border: 1px solid #CCCCCC;
-                    padding: 4px;
-                    font-weight: bold;
-                }
-            """)
+            table.setStyleSheet(self._raw_table_style())
             self.parent.raw_data_table = table
 
     def show_diagnostics_logs(self):
@@ -119,15 +125,7 @@ class DiagnosticsDialogs:
                 # Fallback: create new widget if initialization failed
                 self.parent.diagnostics_log_output = QTextEdit()
                 self.parent.diagnostics_log_output.setReadOnly(True)
-                self.parent.diagnostics_log_output.setStyleSheet("""
-                    QTextEdit {
-                        background-color: #FFFFFF;
-                        color: #000000;
-                        border: 1px solid #CCCCCC;
-                        font-family: 'Consolas', 'Monaco', monospace;
-                        font-size: 10px;
-                    }
-                """)
+                self.parent.diagnostics_log_output.setStyleSheet(self._log_text_style())
                 layout.addWidget(self.parent.diagnostics_log_output)
 
             # Buttons
@@ -159,7 +157,7 @@ class DiagnosticsDialogs:
         header_layout = QHBoxLayout()
 
         title_label = QLabel("Raw Modbus Data")
-        title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #333333;")
+        title_label.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {self.parent._colors()['heading']};")
         header_layout.addWidget(title_label)
 
         header_layout.addStretch()
@@ -248,7 +246,8 @@ class DiagnosticsDialogs:
         rx_text = _format_wire_bytes(rx_bytes)
         status_text = "Success" if success else "Failed"
         latency_text = f"{elapsed_ms:.1f}" if elapsed_ms is not None else ""
-        status_color = QColor(CONNECT_COLOR) if success else QColor(ERROR_COLOR)
+        c = self.parent._colors()
+        status_color = QColor(c["log_connect"]) if success else QColor(c["log_error"])
 
         scrollbar = table.verticalScrollBar()
         # Only follow new rows if already scrolled to the bottom -- otherwise a scroll-up
