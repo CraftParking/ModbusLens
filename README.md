@@ -37,6 +37,7 @@
 - Act as a Modbus TCP slave for testing your own SCADA/PLC programs
 - Talk to multiple devices at once, each in its own window
 - Simple scripting for repeatable write/wait/read test sequences, against either a live device or ModbusLens's own Server simulator
+- Scanner: auto-discover which addresses actually respond on a connected device, or sweep common serial settings to find the baud rate/parity/stop bits a device actually uses
 
 ---
 
@@ -70,6 +71,11 @@
 ### Scripting
 <p align="center">
   <img src="assets/script.PNG" width="90%">
+</p>
+
+### Scanner
+<p align="center">
+  <img src="assets/scanner.PNG" width="90%">
 </p>
 
 ### Network Discovery & Diagnostics
@@ -160,6 +166,11 @@
 - Packet capture (Npcap required)  
 - Device filtering (Modbus only)  
 
+### Scanner
+- **Register** - auto-discovers which addresses respond for a chosen function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range. Probes the largest block the function allows first, and only narrows down address-by-address where a block doesn't fully respond - far fewer requests than checking one address at a time. Reuses the app's existing connection (like Address Table/Tags/Script), pausing Tags/Address Table live monitoring first so nothing else is polling the same connection at the same time  
+- **Serial** - sweeps common baud rate/parity/stop-bit combinations against a COM port to find which one a device actually speaks, for when its settings aren't documented. Opens its own short-lived connection per combination (byte size fixed at 8), so it needs the port free - disconnect ModbusLens first if it's the one holding it open  
+- A configurable probe timeout keeps scanning fast over TCP; over a serial connection each probe is one bus round-trip, so a large range takes noticeably longer  
+
 ### UI Improvements
 - Cleaner layout with compact connection bar  
 - Improved status indicators  
@@ -211,7 +222,6 @@ pip install scapy
 - Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
 - Broader Modbus function-code coverage beyond core read/write (diagnostics, file record access, device identification)  
 - Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
-- Register scanner - auto-discover which addresses actually respond on a connected device, and scan an RTU/ASCII bus for live slave addresses  
 - Gateway mode - relay real traffic between RTU/ASCII serial and TCP instead of only simulating a device  
 - 64-bit numeric formats and a string/text data type, beyond the current 32-bit cap  
 - Single-bit read/write within a register, plus Masked Bit Write (FC22) support for legacy devices  

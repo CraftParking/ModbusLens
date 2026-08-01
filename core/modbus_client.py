@@ -124,6 +124,22 @@ class ModbusClient:
     def is_connected(self):
         return self._connected
 
+    def get_timeout(self):
+        """The response-wait timeout actually in effect, including any override from
+        set_timeout() -- not just the value the client was originally constructed with."""
+        if self.client is not None and hasattr(self.client, "comm_params"):
+            return self.client.comm_params.timeout_connect
+        return self.timeout
+
+    def set_timeout(self, seconds):
+        """Override the response-wait timeout on an already-connected client without
+        reconnecting -- pymodbus has no per-call timeout parameter, so this reaches into
+        the live client's comm_params directly. Used by the Register Scanner to probe
+        many addresses quickly; callers are responsible for restoring the original value
+        (via get_timeout() beforehand) once they're done."""
+        if self.client is not None and hasattr(self.client, "comm_params"):
+            self.client.comm_params.timeout_connect = seconds
+
     def __enter__(self):
         self.connect()
         return self
