@@ -38,6 +38,7 @@ from widgets.about_dialog import AboutDialog
 from diagnostics.advanced_diagnostics import AdvancedDiagnostics
 from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
 from diagnostics.register_scanner import RegisterScannerWidget
+from diagnostics.serial_discovery import SerialDiscoveryDialog
 from monitoring.monitoring_manager import MonitoringManager
 from network.network_diagnostics import NetworkDiagnosticsDialog
 
@@ -165,6 +166,7 @@ class ModbusGUI(QMainWindow):
         self.diagnostics_dialogs = DiagnosticsDialogs(self)
         self.monitoring_manager = MonitoringManager(self)
         self.network_diagnostics = NetworkDiagnosticsDialog(self)
+        self.serial_discovery = SerialDiscoveryDialog(self)
         
         self._updating_tag_table = False
         self._modbus_busy = False
@@ -250,6 +252,7 @@ class ModbusGUI(QMainWindow):
         # Diagnostics menu
         diagnostics_menu = menubar.addMenu("&Diagnostics")
         diagnostics_menu.addAction("Network Discovery & Diagnostics", self._network_diagnostics)
+        diagnostics_menu.addAction("Serial Discovery", self._serial_discovery)
         diagnostics_menu.addSeparator()
         diagnostics_menu.addAction("System Logs", self._show_diagnostics_logs)
         diagnostics_menu.addSeparator()
@@ -1177,6 +1180,8 @@ class ModbusGUI(QMainWindow):
             self.connection_history = vals['history']
             self._update_connection_info()
             self._save_settings()
+        elif dialog.scan_requested_port is not None:
+            self._serial_discovery(dialog.scan_requested_port)
 
     def _connect(self):
         """Connect to Modbus server."""
@@ -2444,6 +2449,9 @@ Unit ID: {unit_id}<br><br>
         """Show network diagnostics."""
         self.network_diagnostics.show_diagnostics(self.target_ip, self.target_port, self.target_unit_id)
 
+    def _serial_discovery(self, initial_port=None):
+        """Show the Serial Discovery dialog, optionally pre-filled with a COM port."""
+        self.serial_discovery.show_discovery(initial_port or self.serial_port)
 
     def _show_documentation(self):
         """Show the Help documentation."""
@@ -2661,6 +2669,9 @@ class ConnectionSettingsDialog(QDialog):
         self.setWindowTitle("Connection Settings")
         self.setMinimumWidth(450)
         self.history = history[:]
+        # Set by _open_serial_scan() -- the caller checks this after exec() to decide
+        # whether to open Serial Discovery once this dialog has closed.
+        self.scan_requested_port = None
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
@@ -2769,6 +2780,10 @@ class ConnectionSettingsDialog(QDialog):
         framer_index = 1 if getattr(current, "serial_framer", "rtu") == "ascii" else 0
         self.framer_combo.setCurrentIndex(framer_index)
         serial_grid.addWidget(self.framer_combo, 5, 1)
+
+        scan_btn = QPushButton("Scan for Connection Parameters...")
+        scan_btn.clicked.connect(self._open_serial_scan)
+        serial_grid.addWidget(scan_btn, 6, 0, 1, 2)
         layout.addWidget(self.serial_group)
 
         # 4. Unit ID (shared by both modes)
@@ -2813,6 +2828,12 @@ class ConnectionSettingsDialog(QDialog):
         except Exception:
             pass
         return ConnectionSettingsDialog.SERIAL_PORTS_HINT
+
+    def _open_serial_scan(self):
+        """Close this dialog without saving and let the caller open Serial Discovery,
+        pre-filled with whichever COM port is currently selected here."""
+        self.scan_requested_port = self.serial_port_combo.currentText().strip()
+        self.reject()
 
     def _update_mode_visibility(self):
         is_serial = self.serial_radio.isChecked()
