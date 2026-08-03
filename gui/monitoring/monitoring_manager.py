@@ -343,5 +343,6 @@ class MonitoringManager:
                 self._monitoring_failure_count = 0
         finally:
             self._monitoring_poll_in_progress = False
-            self.parent.monitoring_timer.start()
+            if self.parent.monitoring_active:
+                self.parent.monitoring_timer.start()
 

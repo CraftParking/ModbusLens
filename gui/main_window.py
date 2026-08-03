@@ -1245,6 +1245,12 @@ class ModbusGUI(QMainWindow):
         self._reconnect_attempt = 0
         self._monitoring_paused_by_disconnect = False
 
+        # A Scanner worker thread may still be mid-read on self.modbus -- stop and wait
+        # for it before tearing the connection down, otherwise it can hit a closed/
+        # replaced client from another thread.
+        if hasattr(self, 'register_scanner_widget'):
+            self.register_scanner_widget.stop_all_scans()
+
         if self.modbus:
             self.modbus.disconnect()
             self.modbus = None
@@ -1422,7 +1428,7 @@ Unit ID: {unit_id}<br><br>
                 
                 # Validate CSV structure
                 required_fields = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment']
-                if not all(field in reader.fieldnames for field in required_fields):
+                if not reader.fieldnames or not all(field in reader.fieldnames for field in required_fields):
                     QMessageBox.warning(self, "Invalid CSV", 
                         "CSV file must contain columns: Tag Name, Mode, Type, Address, Count, Format, Comment")
                     return
@@ -2466,14 +2472,19 @@ Unit ID: {unit_id}<br><br>
 
     def closeEvent(self, event):
         """Handle application close event."""
+        # Stop any in-progress scan before touching the connection it's using --
+        # _disconnect() below now does this too, but do it explicitly first so a hang
+        # in the worker thread doesn't leave the connection torn down under it.
+        if hasattr(self, 'register_scanner_widget'):
+            self.register_scanner_widget.stop_all_scans()
+        if hasattr(self, 'serial_discovery'):
+            self.serial_discovery.stop_all_scans()
         if self.monitoring_active:
             self._stop_monitoring()
         if self.modbus:
             self._disconnect()
         if hasattr(self, 'server_widget') and self.server_widget.running:
             self.server_widget._stop_server()
-        if hasattr(self, 'register_scanner_widget'):
-            self.register_scanner_widget.stop_all_scans()
         if self in ModbusGUI._open_windows:
             ModbusGUI._open_windows.remove(self)
         self._save_settings()

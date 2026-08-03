@@ -18,12 +18,15 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QHBoxLayout, QT
 NPCAP_DOWNLOAD_URL = "https://npcap.com/#download"
 
 
-def get_local_subnet_info():
-    """Get local IP and subnet mask for subnet matching."""
+def get_local_subnet_info(preferred_ip=None):
+    """Get local IP and subnet mask for subnet matching. On a multi-homed machine
+    (VPN + Ethernet + Wi-Fi all up at once), gethostbyname(hostname) can resolve to a
+    different adapter than the one the user picked to scan on -- pass the selected
+    interface's IP as preferred_ip so the netmask lookup matches what's actually being
+    scanned, instead of silently marking real devices on the chosen subnet unreachable."""
     try:
-        hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
-        
+        local_ip = preferred_ip or socket.gethostbyname(socket.gethostname())
+
         # Try to get subnet mask from psutil
         if PSUTIL_AVAILABLE:
             for interface, addrs in psutil.net_if_addrs().items():
@@ -1717,14 +1720,8 @@ class NetworkDiagnosticsDialog:
         
         # Parse IP to get base network (e.g., 192.168.1.1 -> 192.168.1.0)
         try:
-            parts = host.split('.')
-            if len(parts) != 4:
-                self.output_text.setText("Error: Invalid IP address format")
-                return
-            
-            # Use the first 3 octets and set last to 0 for network base
-            base_ip = f"{parts[0]}.{parts[1]}.{parts[2]}.0"
-            
+            octets = ipaddress.IPv4Address(host).packed
+            base_ip = f"{octets[0]}.{octets[1]}.{octets[2]}.0"
         except ValueError:
             self.output_text.setText("Error: Invalid IP address format")
             return
@@ -1734,7 +1731,9 @@ class NetworkDiagnosticsDialog:
         self.modbus_devices.clear()  # Clear previous Modbus probe results
         
         # Get local subnet info for Modbus probing
-        self.subnet_info = get_local_subnet_info()
+        self.subnet_info = get_local_subnet_info(
+            self.selected_interface["ip"] if self.selected_interface else None
+        )
         
         # Show progress bar and disable buttons
         self.progress_bar.setVisible(True)
@@ -1910,7 +1909,9 @@ class NetworkDiagnosticsDialog:
     def start_modbus_probing(self):
         """Start Modbus probing for discovered devices."""
         # Get local subnet info
-        self.subnet_info = get_local_subnet_info()
+        self.subnet_info = get_local_subnet_info(
+            self.selected_interface["ip"] if self.selected_interface else None
+        )
         
         # Prepare device list for probing
         device_list = [(ip, device['mac'], device['vendor']) for ip, device in self.arp_devices.items()]

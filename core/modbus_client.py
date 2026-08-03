@@ -85,7 +85,10 @@ class ModbusClient:
 
     def connect(self):
         if self.client:
-            self.client.close()
+            try:
+                self.client.close()
+            except Exception as e:
+                logger.error(f"Error closing previous connection: {e}")
         try:
             if self.mode == "serial":
                 framer = FramerType.ASCII if self.serial_framer == "ascii" else FramerType.RTU
@@ -117,8 +120,12 @@ class ModbusClient:
 
     def disconnect(self):
         if self.client:
-            self.client.close()
-            self._connected = False
+            try:
+                self.client.close()
+            except Exception as e:
+                logger.error(f"Error closing connection: {e}")
+            finally:
+                self._connected = False
             logger.info("Disconnected from Modbus server")
 
     def is_connected(self):
