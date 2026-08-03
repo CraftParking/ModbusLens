@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 GITHUB_REPO = "CraftParking/ModbusLens"
 GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_RELEASES_PAGE = f"https://github.com/{GITHUB_REPO}/releases"
+GITHUB_ISSUES_PAGE = f"https://github.com/{GITHUB_REPO}/issues"
 
 ABOUT_HTML = """
 <h3>ModbusLens</h3>
@@ -24,6 +25,10 @@ real-time monitoring, scripting, a device simulator, and network diagnostics in 
 <p>Donations go strictly toward development of ModbusLens (time, tools, hardware for
 testing) - nothing else.</p>
 
+<h4>Found a Bug? Have Feedback?</h4>
+<p>Report issues or suggest features on GitHub:<br>
+<a href="{issues}">{issues}</a></p>
+
 <h4>GitHub</h4>
 <p><a href="https://github.com/{repo}">https://github.com/{repo}</a></p>
 
@@ -33,7 +38,7 @@ testing) - nothing else.</p>
 <p style='margin-top: 15px;'><i>Note: Verify behavior before use in critical industrial systems.</i></p>
 <hr>
 <p align='center' style='color: #666666;'>&copy; 2026 ModbusLens | CraftParking</p>
-""".format(repo=GITHUB_REPO)
+""".format(repo=GITHUB_REPO, issues=GITHUB_ISSUES_PAGE)
 
 # Every feature of the current build, grouped the same way as the README's Features section.
 FEATURES_HTML = """
