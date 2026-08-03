@@ -202,7 +202,12 @@ class ServerWidget(QWidget):
 
         try:
             self.sim_context = ModbusSimulatorContext(self._build_config(), None)
-            server_context = ModbusServerContext(devices=self.sim_context, single=True)
+            # pymodbus's single= is deprecated and ignored -- passing devices as a bare
+            # context (not a dict) makes it fall back to device id 0 for *any* request,
+            # regardless of Unit ID configured above, silently answering every unit id
+            # the same way. Keying it under the configured unit id is what actually
+            # makes the simulator only answer as that unit.
+            server_context = ModbusServerContext(devices={self.unit_input.value(): self.sim_context})
         except Exception as e:
             QMessageBox.warning(self, "Server Setup Failed", f"Could not build the device datastore: {e}")
             self.sim_context = None
@@ -248,6 +253,13 @@ class ServerWidget(QWidget):
             pass  # already stopped or never fully started -- nothing more to clean up
         if _active_server_widget is self:
             _active_server_widget = None
+
+        if self.server_thread is not None:
+            # ServerStop() asks the listener's event loop to exit, but doesn't wait for
+            # it -- join so the OS has actually released the port before this returns,
+            # otherwise an immediate Start on the same port can spuriously fail with
+            # "address already in use" even though nothing is really wrong.
+            self.server_thread.join(timeout=2.0)
 
         self.refresh_timer.stop()
         self.running = False
@@ -295,6 +307,8 @@ class ServerWidget(QWidget):
         server isn't running or the address is out of range."""
         if not self.running or self.sim_context is None:
             return None
+        if not (0 <= address < SPACE_SIZE):
+            return None
         fc = _TYPE_TO_FC[data_type]
         offset = self.sim_context.fc_offset[fc]
         if fc in BIT_SPACES:
@@ -311,6 +325,8 @@ class ServerWidget(QWidget):
         itself, so setting an Input Register/Discrete Input directly is the point).
         Returns False if the server isn't running or the address is out of range."""
         if not self.running or self.sim_context is None:
+            return False
+        if not (0 <= address < SPACE_SIZE):
             return False
         fc = _TYPE_TO_FC[data_type]
         offset = self.sim_context.fc_offset[fc]
@@ -343,7 +359,14 @@ class ServerWidget(QWidget):
                 addr_item.setFlags(addr_item.flags() & ~Qt.ItemIsEditable)
                 self.table.setItem(i, 0, addr_item)
 
-                if is_bit_space:
+                # Start + Count can run past this space's own SPACE_SIZE cells (they're
+                # set independently in the UI); idx would still land inside the shared
+                # registers array at that point -- just inside the *next* space's slice
+                # of it -- so bound against SPACE_SIZE here, not just the array length,
+                # to avoid silently showing/aliasing another space's data.
+                if addr >= SPACE_SIZE:
+                    value_text = ""
+                elif is_bit_space:
                     bit = self._read_bit(offset, addr)
                     value_text = "" if bit is None else ("1" if bit else "0")
                 else:
@@ -369,6 +392,11 @@ class ServerWidget(QWidget):
         addr = self.start_address_input.value() + item.row()
         text = item.text().strip()
 
+        if addr >= SPACE_SIZE:
+            # Past this space's own size -- reject rather than write into the next
+            # space's slice of the shared registers array. Restore on the next tick.
+            return
+
         if fc in BIT_SPACES:
             self._write_bit(offset, addr, text.lower() in ("1", "true", "on"))
             return
@@ -379,5 +407,12 @@ class ServerWidget(QWidget):
         try:
             value = int(text) & 0xFFFF
         except ValueError:
+            # Reject and restore the last real value rather than silently leaving the
+            # invalid text sitting in the cell until the next refresh tick overwrites it.
+            self._updating_table = True
+            try:
+                item.setText(str(self.sim_context.registers[idx].value))
+            finally:
+                self._updating_table = False
             return
         self.sim_context.registers[idx].value = value

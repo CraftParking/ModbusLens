@@ -261,6 +261,16 @@ class SerialDiscoveryDialog:
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
 
-    def _on_dialog_close(self, event):
+    def stop_all_scans(self):
+        """Called when the main window is closing (or the dialog itself is), so an
+        in-progress scan doesn't keep a QThread running -- and, on app exit, doesn't get
+        torn down by Qt/Python mid-run, which can abort the process. Blocks until the
+        worker has actually exited (it checks should_stop at least once per trial, so
+        this returns within one probe timeout, not indefinitely)."""
         self._stop_scan()
+        if self.worker and self.worker.isRunning():
+            self.worker.wait(10000)
+
+    def _on_dialog_close(self, event):
+        self.stop_all_scans()
         event.accept()

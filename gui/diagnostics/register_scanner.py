@@ -243,7 +243,10 @@ class RegisterScannerWidget(QWidget):
         """The Scanner reuses the app's single shared connection, so anything else
         that's polling it needs to be paused first -- otherwise two threads issue Modbus
         requests on the same socket/serial port at once. Mirrors how Address Table's Live
-        Monitoring and Tags monitoring already stop one another for the same reason."""
+        Monitoring and Tags monitoring already stop one another for the same reason. The
+        reconnect watchdog is the same hazard from the other direction: if it fires mid-scan
+        it can call connect() and swap out self.parent_window.modbus.client out from under
+        the worker thread that's mid-read on it."""
         if getattr(self.parent_window, "monitoring_active", False):
             self.parent_window._stop_monitoring()
             self.output_text.append("Paused Tags monitoring for the scan.")
@@ -251,6 +254,10 @@ class RegisterScannerWidget(QWidget):
         if address_table is not None and getattr(address_table, "monitoring_active", False):
             address_table.monitoring_checkbox.setChecked(False)
             self.output_text.append("Paused Address Table live monitoring for the scan.")
+        watchdog = getattr(self.parent_window, "_reconnect_watchdog_timer", None)
+        self._watchdog_was_active = bool(watchdog and watchdog.isActive())
+        if watchdog is not None:
+            watchdog.stop()
 
     def _start_address_scan(self):
         if not (self.parent_window.modbus and self.parent_window.modbus.is_connected()):
@@ -259,7 +266,6 @@ class RegisterScannerWidget(QWidget):
         if self._scan_in_progress():
             self.output_text.append("A scan is already running -- wait for it to finish first.")
             return
-        self._pause_shared_connection_monitoring()
 
         start = self.addr_start_input.value()
         end = self.addr_end_input.value()
@@ -267,6 +273,7 @@ class RegisterScannerWidget(QWidget):
             self.output_text.append("Start address must not be greater than End address.")
             return
 
+        self._pause_shared_connection_monitoring()
         self._found_ranges = []
         self.output_text.append(
             f"Scanning {self.addr_function_combo.currentText()} {start}-{end}..."
@@ -307,10 +314,23 @@ class RegisterScannerWidget(QWidget):
         self.addr_stop_btn.setEnabled(False)
         self.refresh_connection_state()
 
+        # Resume the reconnect watchdog we paused before the scan, if the connection it
+        # was watching is still the live one.
+        if getattr(self, "_watchdog_was_active", False):
+            self._watchdog_was_active = False
+            watchdog = getattr(self.parent_window, "_reconnect_watchdog_timer", None)
+            if watchdog is not None and self.parent_window.modbus and self.parent_window.modbus.is_connected():
+                watchdog.start(self.parent_window.WATCHDOG_HEALTHY_INTERVAL_MS)
+
     def _scan_in_progress(self):
         return bool(self.address_worker and self.address_worker.isRunning())
 
     def stop_all_scans(self):
-        """Called when the main window is closing, so an in-progress scan doesn't keep a
-        QThread running (and the connection's timeout unrestored) after exit."""
+        """Called when the main window is closing or disconnecting, so an in-progress
+        scan doesn't keep a QThread running -- and, more importantly, doesn't touch the
+        shared connection after the caller has moved on to closing/replacing it. Blocks
+        until the worker thread has actually exited (it checks should_stop at least once
+        per probe, so this returns within one probe timeout, not indefinitely)."""
         self._stop_address_scan()
+        if self.address_worker and self.address_worker.isRunning():
+            self.address_worker.wait(10000)
