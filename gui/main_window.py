@@ -32,7 +32,7 @@ from widgets.status_indicator import StatusIndicator
 from widgets.address_table import AddressTableWidget
 from widgets.trend_widget import TrendWidget
 from widgets.server_widget import ServerWidget
-from widgets.script_widget import ScriptWidget
+from widgets.script_widget import ScriptWidget, validate_tag_name
 from widgets.documentation_dialog import DocumentationDialog
 from widgets.about_dialog import AboutDialog
 from diagnostics.advanced_diagnostics import AdvancedDiagnostics
@@ -509,9 +509,10 @@ class ModbusGUI(QMainWindow):
         tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
 
         self.monitoring_tag_table = TagTableWidget(self)
-        self.monitoring_tag_table.setColumnCount(11)
-        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp"])
+        self.monitoring_tag_table.setColumnCount(13)
+        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale"])
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
+        self.monitoring_tag_table.setColumnWidth(11, 130)
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.monitoring_tag_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.monitoring_tag_table.customContextMenuRequested.connect(self._show_tag_context_menu)
@@ -805,7 +806,8 @@ class ModbusGUI(QMainWindow):
         return w
  
     def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None,
-                             comment="", insert_row=None, read_value="", raw_hex="", write_value="", timestamp=""):
+                             comment="", insert_row=None, read_value="", raw_hex="", write_value="", timestamp="",
+                             engineering_value=""):
         # An explicit insert_row is used when rebuilding a row that's being dragged to a new
         # position (see _move_tag_row) -- otherwise fall back to the normal Add Tag behavior.
         if insert_row is None:
@@ -823,7 +825,8 @@ class ModbusGUI(QMainWindow):
         if value_format is None:
             value_format = "Bool" if tag_type in ("Coil", "Discrete Input") else "U16"
 
-        self.monitoring_tag_table.setCellWidget(insert_row, 0, self._create_monitoring_tag_widget("lineedit", tag_name))
+        name_widget = self._create_monitoring_tag_widget("lineedit", tag_name)
+        self.monitoring_tag_table.setCellWidget(insert_row, 0, name_widget)
         self.monitoring_tag_table.setCellWidget(insert_row, 1, self._create_monitoring_tag_widget("mode_combo", mode))
         type_widget = self._create_monitoring_tag_widget("type_combo", tag_type)
         self.monitoring_tag_table.setCellWidget(insert_row, 2, type_widget)
@@ -845,6 +848,15 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table.setCellWidget(insert_row, 9, self._create_monitoring_tag_widget("lineedit", comment))  # Comment
         self.monitoring_tag_table.setCellWidget(insert_row, 10, self._create_monitoring_tag_widget("lineedit", timestamp))  # Timestamp
 
+        eng_value_widget = self._create_monitoring_tag_widget("lineedit", engineering_value)
+        eng_value_widget.setReadOnly(True)
+        self.monitoring_tag_table.setCellWidget(insert_row, 11, eng_value_widget)  # Engineering Value
+
+        scale_widget = QCheckBox()
+        scale_widget.setToolTip("Enable engineering-unit scaling for this tag")
+        self.monitoring_tag_table.setCellWidget(insert_row, 12, scale_widget)  # Scale
+        scale_widget.toggled.connect(self._on_scale_checkbox_toggled)
+
         # Keep "count" valid for 32-bit formats (U32/S32/F32 require even register count).
         if hasattr(format_widget, "currentTextChanged"):
             format_widget.currentTextChanged.connect(self._on_monitoring_tag_format_changed)
@@ -854,6 +866,8 @@ class ModbusGUI(QMainWindow):
             address_widget.editingFinished.connect(self._on_monitoring_tag_address_edited)
         if hasattr(type_widget, "currentTextChanged"):
             type_widget.currentTextChanged.connect(self._on_monitoring_tag_address_or_type_changed)
+        if hasattr(name_widget, "editingFinished"):
+            name_widget.editingFinished.connect(self._on_monitoring_tag_name_edited)
 
         self._coerce_monitoring_tag_count(insert_row)
         self._ensure_unique_monitoring_tag_address(insert_row)
@@ -873,6 +887,7 @@ class ModbusGUI(QMainWindow):
         address_widget, count_widget, format_widget = widget_at(3), widget_at(4), widget_at(5)
         read_value_widget, raw_hex_widget = widget_at(6), widget_at(7)
         write_value_widget, comment_widget, timestamp_widget = widget_at(8), widget_at(9), widget_at(10)
+        eng_value_widget = widget_at(11)
 
         return {
             "tag_name": name_widget.text() if name_widget else "",
@@ -886,6 +901,7 @@ class ModbusGUI(QMainWindow):
             "write_value": write_value_widget.text() if write_value_widget else "",
             "comment": comment_widget.text() if comment_widget else "",
             "timestamp": timestamp_widget.text() if timestamp_widget else "",
+            "engineering_value": eng_value_widget.text() if eng_value_widget else "",
         }
 
     def _move_tag_row(self, source_row, target_row):
@@ -904,6 +920,7 @@ class ModbusGUI(QMainWindow):
 
         data = self._capture_tag_row(source_row)
         alarm = self.monitoring_manager.tag_alarms.get(source_row)
+        scaling = self.monitoring_manager.tag_scaling.get(source_row)
 
         self.monitoring_tag_table.removeRow(source_row)
         self.monitoring_manager.handle_row_removed(source_row)
@@ -912,6 +929,16 @@ class ModbusGUI(QMainWindow):
 
         if alarm:
             self.monitoring_manager.tag_alarms[target_row] = alarm
+
+        if scaling:
+            self.monitoring_manager.tag_scaling[target_row] = scaling
+            scale_widget = self.monitoring_tag_table.cellWidget(target_row, 12)
+            if scale_widget:
+                try:
+                    self._updating_tag_table = True
+                    scale_widget.setChecked(True)
+                finally:
+                    self._updating_tag_table = False
 
         self._log(f"Moved tag '{data['tag_name']}' to row {target_row + 1}")
 
@@ -969,6 +996,22 @@ class ModbusGUI(QMainWindow):
         if row is None:
             return
         self._coerce_monitoring_tag_count(row)
+
+    def _on_monitoring_tag_name_edited(self, _value=None):
+        if self._updating_tag_table:
+            return
+        sender = self.sender()
+        row = self._find_monitoring_tag_row(sender, 0)
+        if row is None:
+            return
+        error = validate_tag_name(sender.text())
+        if error:
+            QMessageBox.warning(self, "Invalid Tag Name", error)
+            try:
+                self._updating_tag_table = True
+                sender.clear()
+            finally:
+                self._updating_tag_table = False
 
     def _on_monitoring_tag_address_edited(self, _value=None):
         # Bound to editingFinished (not valueChanged) so the duplicate-address
@@ -1097,6 +1140,32 @@ class ModbusGUI(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self.monitoring_manager.tag_alarms[row] = dialog.values()
             self._log(f"Alarm configured for {tag['name']}")
+
+    def _on_scale_checkbox_toggled(self, checked):
+        if self._updating_tag_table:
+            return
+        sender = self.sender()
+        row = self._find_monitoring_tag_row(sender, 12)
+        if row is None:
+            return
+
+        if not checked:
+            self.monitoring_manager.tag_scaling.pop(row, None)
+            eng_widget = self.monitoring_tag_table.cellWidget(row, 11)
+            if eng_widget:
+                eng_widget.clear()
+            return
+
+        existing = self.monitoring_manager.tag_scaling.get(row)
+        dialog = ScalingConfigDialog(existing, self)
+        if dialog.exec() == QDialog.Accepted:
+            self.monitoring_manager.tag_scaling[row] = dialog.values()
+        else:
+            try:
+                self._updating_tag_table = True
+                sender.setChecked(False)
+            finally:
+                self._updating_tag_table = False
 
     def _remove_all_monitoring_tags(self):
         """Remove all tags from the monitoring table."""
@@ -2485,6 +2554,8 @@ Unit ID: {unit_id}<br><br>
             self._disconnect()
         if hasattr(self, 'server_widget') and self.server_widget.running:
             self.server_widget._stop_server()
+        if hasattr(self, 'trend_widget') and self.trend_widget._detach_window is not None:
+            self.trend_widget._redock()
         if self in ModbusGUI._open_windows:
             ModbusGUI._open_windows.remove(self)
         self._save_settings()
@@ -2664,6 +2735,78 @@ class AlarmConfigDialog(QDialog):
             result["low_enabled"] = self.low_enable.isChecked()
             result["low"] = self.low_spin.value()
         return result
+
+
+class ScalingConfigDialog(QDialog):
+    """Configure a linear engineering-unit scale (raw min/max -> scaled min/max) for one
+    Tags row -- e.g. raw ADC counts 0-4095 -> 0-100 PSI."""
+
+    def __init__(self, existing_scaling, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Engineering Scaling")
+        existing_scaling = existing_scaling or {}
+
+        layout = QVBoxLayout(self)
+
+        raw_row = QHBoxLayout()
+        raw_row.addWidget(QLabel("Raw Min:"))
+        self.raw_min_spin = QDoubleSpinBox()
+        self.raw_min_spin.setRange(-1e9, 1e9)
+        self.raw_min_spin.setValue(existing_scaling.get("raw_min", 0.0))
+        raw_row.addWidget(self.raw_min_spin)
+        raw_row.addWidget(QLabel("Raw Max:"))
+        self.raw_max_spin = QDoubleSpinBox()
+        self.raw_max_spin.setRange(-1e9, 1e9)
+        self.raw_max_spin.setValue(existing_scaling.get("raw_max", 4095.0))
+        raw_row.addWidget(self.raw_max_spin)
+        layout.addLayout(raw_row)
+
+        scaled_row = QHBoxLayout()
+        scaled_row.addWidget(QLabel("Scaled Min:"))
+        self.scaled_min_spin = QDoubleSpinBox()
+        self.scaled_min_spin.setRange(-1e9, 1e9)
+        self.scaled_min_spin.setValue(existing_scaling.get("scaled_min", 0.0))
+        scaled_row.addWidget(self.scaled_min_spin)
+        scaled_row.addWidget(QLabel("Scaled Max:"))
+        self.scaled_max_spin = QDoubleSpinBox()
+        self.scaled_max_spin.setRange(-1e9, 1e9)
+        self.scaled_max_spin.setValue(existing_scaling.get("scaled_max", 100.0))
+        scaled_row.addWidget(self.scaled_max_spin)
+        layout.addLayout(scaled_row)
+
+        type_row = QHBoxLayout()
+        type_row.addWidget(QLabel("Store scaled value as:"))
+        self.value_type_combo = QComboBox()
+        self.value_type_combo.addItems(["Real", "Integer"])
+        self.value_type_combo.setCurrentText(existing_scaling.get("value_type", "Real"))
+        type_row.addWidget(self.value_type_combo)
+        layout.addLayout(type_row)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(self._on_ok)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(ok_btn)
+        button_row.addWidget(cancel_btn)
+        layout.addLayout(button_row)
+
+    def _on_ok(self):
+        if self.raw_min_spin.value() == self.raw_max_spin.value():
+            QMessageBox.warning(self, "Invalid Range", "Raw Min and Raw Max can't be equal.")
+            return
+        self.accept()
+
+    def values(self):
+        return {
+            "enabled": True,
+            "raw_min": self.raw_min_spin.value(),
+            "raw_max": self.raw_max_spin.value(),
+            "scaled_min": self.scaled_min_spin.value(),
+            "scaled_max": self.scaled_max_spin.value(),
+            "value_type": self.value_type_combo.currentText(),
+        }
 
 
 class ConnectionSettingsDialog(QDialog):
