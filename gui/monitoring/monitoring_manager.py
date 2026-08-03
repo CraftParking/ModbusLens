@@ -17,6 +17,7 @@ class MonitoringManager:
         self._monitoring_max_failures = 3
         self._write_poll_in_progress = False
         self.tag_alarms = {}  # row index -> alarm config dict
+        self.tag_scaling = {}  # row index -> engineering-unit scaling config dict
         self._log_file = None
         self._log_writer = None
 
@@ -50,13 +51,16 @@ class MonitoringManager:
         self._log_file.flush()
 
     def handle_row_inserted(self, row):
-        """Keep tag_alarms aligned with table rows after a new row is inserted at `row`."""
+        """Keep tag_alarms/tag_scaling aligned with table rows after a new row is inserted at `row`."""
         self.tag_alarms = {(r + 1 if r >= row else r): cfg for r, cfg in self.tag_alarms.items()}
+        self.tag_scaling = {(r + 1 if r >= row else r): cfg for r, cfg in self.tag_scaling.items()}
 
     def handle_row_removed(self, row):
-        """Keep tag_alarms aligned with table rows after the row at `row` is removed."""
+        """Keep tag_alarms/tag_scaling aligned with table rows after the row at `row` is removed."""
         self.tag_alarms.pop(row, None)
         self.tag_alarms = {(r - 1 if r > row else r): cfg for r, cfg in self.tag_alarms.items()}
+        self.tag_scaling.pop(row, None)
+        self.tag_scaling = {(r - 1 if r > row else r): cfg for r, cfg in self.tag_scaling.items()}
 
     def check_alarm(self, tag, value):
         """Return True if this tag's current value violates its configured alarm."""
@@ -140,7 +144,7 @@ class MonitoringManager:
             })
         return tags
 
-    def add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex="", in_alarm=False):
+    def add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex="", in_alarm=False, engineering_value=""):
         """Add or update a tag row in the integrated Tags table."""
         key = (tag_name, data_type, str(address))
         
@@ -182,6 +186,10 @@ class MonitoringManager:
             raw_hex_widget = target_table.cellWidget(target_row, 7)
             if raw_hex_widget:
                 raw_hex_widget.setText(raw_hex)
+
+        eng_value_widget = target_table.cellWidget(target_row, 11)
+        if eng_value_widget:
+            eng_value_widget.setText(engineering_value)
 
         # Only touch the write column if we have something meaningful to show,
         # so polling doesn't stomp on a value the user is currently typing.
@@ -247,6 +255,47 @@ class MonitoringManager:
         else:
             return ", ".join(str(v) for v in decoded)
 
+    def _decode_numeric_value(self, tag, value):
+        """The single decoded number behind a tag's Read Value, for scaling -- None for bit
+        types or a value that doesn't resolve to exactly one number."""
+        if tag["type"] in ("Coil", "Discrete Input") or value is None:
+            return None
+        if not isinstance(value, list):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        registers = value[: tag["count"]]
+        value_format = (tag.get("format") or "U16").strip().upper()
+        try:
+            decoded = self.parent._decode_register_values(registers, value_format)
+        except Exception:
+            return None
+        result = decoded[0] if isinstance(decoded, list) else decoded
+        try:
+            return float(result)
+        except (TypeError, ValueError):
+            return None
+
+    def compute_engineering_value(self, tag, value):
+        """Linear raw-to-scaled transform configured via tag_scaling -- "" if scaling isn't
+        enabled for this tag or the value can't be decoded to a single number."""
+        config = self.tag_scaling.get(tag["row"])
+        if not config or not config.get("enabled"):
+            return ""
+        raw = self._decode_numeric_value(tag, value)
+        if raw is None:
+            return ""
+        raw_min, raw_max = config["raw_min"], config["raw_max"]
+        scaled_min, scaled_max = config["scaled_min"], config["scaled_max"]
+        if raw_max == raw_min:
+            return ""
+        scaled = (raw - raw_min) / (raw_max - raw_min) * (scaled_max - scaled_min) + scaled_min
+        if config.get("value_type") == "Integer":
+            return str(int(round(scaled)))
+        return f"{scaled:g}"
+
     def format_raw_hex(self, tag, value):
         """Format the raw register/bit value(s), independent of the tag's decoded format."""
         if value is None:
@@ -307,6 +356,7 @@ class MonitoringManager:
                     display_value = self.format_monitoring_value(tag, value)
                     raw_hex = self.format_raw_hex(tag, value)
                     in_alarm = self.check_alarm(tag, value)
+                    engineering_value = self.compute_engineering_value(tag, value)
 
                     # Display raw data in diagnostics for Tags monitoring
                     self.parent._display_raw_data(
@@ -315,7 +365,7 @@ class MonitoringManager:
 
                     self.add_monitoring_row(
                         tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                        tag["comment"], timestamp, raw_hex, in_alarm
+                        tag["comment"], timestamp, raw_hex, in_alarm, engineering_value
                     )
                     self._log_row(tag, log_timestamp, display_value, raw_hex)
                 except Exception as e:
