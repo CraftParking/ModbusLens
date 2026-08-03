@@ -16,6 +16,18 @@ def build_exe():
         '--onefile',   # Create single EXE file
         '--icon=assets/icon.ico' if os.path.exists('assets/icon.ico') else '',
         f'--add-data=assets{os.pathsep}assets',
+        # main_window.py puts the gui/ folder itself on sys.path so its sibling modules
+        # can use bare imports (import log_format, from widgets.x import y, ...) instead
+        # of gui.widgets.x everywhere. In dev that folder is real on disk; --onefile only
+        # bundles code inside a compiled archive under dotted names, so those bare
+        # imports find nothing there unless the gui/ source tree is also copied in as
+        # loose files at the same path.
+        f'--add-data=gui{os.pathsep}gui',
+        # Walk every module under gui/ at analysis time (not just the ones explicitly
+        # listed below) so PyInstaller actually opens files like log_format.py/theme.py/
+        # register_scanner.py and bundles THEIR imports too (e.g. log_format.py's plain
+        # `import html`) -- hand-listing only the top-level ones above missed this.
+        '--collect-submodules=gui',
         '--hidden-import=pymodbus',
         '--hidden-import=pymodbus.client',
         '--hidden-import=pymodbus.datastore',
@@ -28,6 +40,9 @@ def build_exe():
         '--hidden-import=PySide6.QtPrintSupport',
         '--hidden-import=PySide6.QtNetwork',
         '--hidden-import=gui.main_window',
+        '--hidden-import=gui.log_format',
+        '--hidden-import=gui.theme',
+        '--hidden-import=gui.modbus_meta',
         '--hidden-import=gui.widgets.status_indicator',
         '--hidden-import=gui.widgets.address_table',
         '--hidden-import=gui.widgets.trend_widget',
@@ -38,6 +53,8 @@ def build_exe():
         '--hidden-import=gui.monitoring.monitoring_manager',
         '--hidden-import=gui.diagnostics.advanced_diagnostics',
         '--hidden-import=gui.diagnostics.diagnostics_dialogs',
+        '--hidden-import=gui.diagnostics.register_scanner',
+        '--hidden-import=gui.diagnostics.serial_discovery',
         '--hidden-import=gui.network.network_diagnostics',
         '--hidden-import=core.modbus_client',
         '--hidden-import=app_paths',
