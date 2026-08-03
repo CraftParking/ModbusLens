@@ -33,7 +33,7 @@
 - Continuous live scanning (no repeated manual scans)
 - Clean, non-spam device listing
 - Integrated diagnostics + communication
-- Live/historical trend graphing with up to 20 pens
+- Trend graphing with up to 20 tag-based pens, detachable into its own resizable, always-on-top window
 - Act as a Modbus TCP slave for testing your own SCADA/PLC programs
 - Talk to multiple devices at once, each in its own window
 - Simple scripting for repeatable write/wait/read test sequences, against either a live device or ModbusLens's own Server simulator
@@ -134,10 +134,12 @@
 ### Monitoring
 - Real-time tag monitoring, with Read Value/Write Value/Timestamp built into the same Tags table  
 - Insert new tags anywhere in the list (new tags drop in below the selected row), not just at the end  
-- Drag and drop to reorder rows, preserving live values and alarm config  
+- Drag and drop to reorder rows, preserving live values, alarm, and scaling config  
 - Write to a tag while monitoring stays active  
 - A single misconfigured or failing tag no longer stops the rest of the list from updating  
 - Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting  
+- Engineering-unit scaling per tag - check the **Scale** box to set Raw Min/Max and Scaled Min/Max (linear transform, e.g. raw 0-4095 -> 0-100 PSI), shown live in the **Engineering Value** column; choose whether the scaled result displays as Real or Integer  
+- Tag names are validated as they're typed - letters/numbers/underscore only, no spaces, and script keywords/reserved words are rejected with a warning, since a tag's name also doubles as its reference in a Script and in Trend's pen picker  
 - Log live tag values to CSV  
 - CSV import/export  
 - Improved stability  
@@ -151,9 +153,14 @@
 - Capped at 1000 rows so it can't grow unbounded; oldest rows fall off automatically  
 
 ### Trend
-- Up to 20 pens, each bound to a Holding/Input Register address and numeric format (analog values only - Coils/Discrete Inputs and Bool aren't plottable pens)  
-- Live mode (follows the current time) or Historical mode (view stays put while data keeps recording)  
-- Adjustable time window, zoom in/out, and a From/To jump to a specific past range  
+- Up to 20 pens, each picked straight from your Tags list (no retyping type/address/format) - only Holding/Input Register tags with a numeric format show up, since a trend line is for continuously varying values, not on/off state  
+- A pen automatically plots its tag's scaled Engineering Value if scaling is enabled for that tag, or the raw decoded value otherwise - it always follows whatever the Tags tab is currently set to show  
+- If the view is at the live edge it keeps following as new data arrives; scroll or zoom away to look at something earlier and it stays exactly there, however long the trend keeps running, until you scroll back  
+- A scrollbar below the graph pans through everything collected in the session, live or not  
+- Hovering over the graph shows a crosshair, updates the value column per pen in the stats table below, and shows each pen's value right in the legend  
+- Live stats strip (current value, min, max, average) for every active pen, over whatever's currently visible - collapsible in the detached window to give the graph more room  
+- **Detach** pops the whole view into its own resizable window that stays on top of the main window - the Trend tab shows a red X while it's out; **Fixed** at the bottom of that window (or just closing it) docks it back  
+- Adjustable time window, zoom in/out, and a From/To jump to a specific range  
 - Graph Properties: axis titles, background/axis/grid colors, grid on/off, Y-axis auto or manual range  
 - Log plotted values to CSV  
 - Print to PNG or PDF  
@@ -169,7 +176,8 @@
 - Runs step by step without freezing the UI, with a console showing what ran  
 - Target either a live connected device (Client-target) or ModbusLens's own Server simulator (Server-target), so you can dry-run a script safely before pointing it at real hardware  
 - Live Variables panel next to the editor shows every `LET` variable's current value while the script runs, no extra `LOG` lines needed just to watch state  
-- Insert Tag menu drops a reference to any tag from your Tags list straight into the script  
+- Insert Tag menu drops a tag's name straight into the script - `WRITE <tag name> = <value>` and `READ <tag name>` (and bare tag names in expressions, e.g. `LET x = Boiler_Temp + 1`) resolve against whatever that tag is currently configured as, instead of only accepting a fixed type+address  
+- An Add Tag button on the Script tab opens a popup listing every tag (any type), and picking one drops its name in at the cursor - if the tag doesn't exist yet, the popup's own Add Tag... button jumps to the Tags tab to create one  
 - Live CPU usage indicator, useful for spotting a runaway loop  
 - Steps never run faster than a 20ms floor, even if a script uses `WAIT 0` or skips WAIT entirely, so a typo can't flood the device or network  
 
@@ -245,8 +253,6 @@ pip install scapy
 - 64-bit numeric formats and a string/text data type, beyond the current 32-bit cap  
 - Single-bit read/write within a register, plus Masked Bit Write (FC22) support for legacy devices  
 - RTU/ASCII framing encapsulated over TCP/UDP, for serial-to-Ethernet converters that tunnel raw framing instead of translating it  
-- Engineering-unit scaling per tag/register (linear scale + offset, e.g. raw 0-4095 -> 0-100 PSI)  
-- Trend markers - select a time range and see min/max/average for the pens in it  
 - Calculated tags combining multiple registers via an expression, as a persistent Tag/Trend source (Scripting can already do this ad hoc; this would make it a saved, always-on tag)  
 
 ---

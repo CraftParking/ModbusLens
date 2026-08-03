@@ -1,3 +1,4 @@
+import keyword
 import re
 import time
 
@@ -11,11 +12,12 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit,
     QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox, QLabel, QComboBox,
-    QTableWidget, QTableWidgetItem
+    QTableWidget, QTableWidgetItem, QDialog
 )
 
 from log_format import format_log_html
 from modbus_meta import function_code_for
+from widgets.trend_widget import TagPickerDialog
 
 HIDE_RUN_WARNING_KEY = "hide_script_run_warning"
 
@@ -29,6 +31,29 @@ WRITABLE_TYPES = ("Coil", "Holding Register")
 BIT_TYPES = ("Coil", "Discrete Input")
 REVERSE_TYPE_ALIASES = {full: short for short, full in TYPE_ALIASES.items()}
 MIN_ADDRESS, MAX_ADDRESS = 0, 65535
+
+TAG_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+SCRIPT_KEYWORDS = {"WRITE", "READ", "WAIT", "LOG", "LET", "REPEAT", "UNTIL", "END", "IF", "THEN", "ON", "OFF", "TRUE", "FALSE"}
+RESERVED_TAG_NAMES = (
+    SCRIPT_KEYWORDS
+    | set(TYPE_ALIASES.keys())
+    | {kw.upper() for kw in keyword.kwlist}
+    | {"EVAL", "EXEC", "IMPORT", "OPEN", "COMPILE", "GLOBALS", "LOCALS", "GETATTR", "SETATTR", "DELATTR"}
+)
+
+
+def validate_tag_name(name):
+    name = name.strip()
+    if not name:
+        return None
+    if not TAG_NAME_RE.fullmatch(name):
+        return (
+            "Tag names can only use letters, numbers, and underscores (no spaces or "
+            "other symbols), and can't start with a digit."
+        )
+    if name.upper() in RESERVED_TAG_NAMES:
+        return f"'{name}' is a reserved word and can't be used as a tag name."
+    return None
 
 COMPARATORS = {
     "==": lambda a, b: a == b,
@@ -363,20 +388,31 @@ def _parse_write_args(rest):
     """Parsed independently of the eventual run target: WRITE to any of the four types
     compiles fine here, and WRITABLE_TYPES is enforced at runtime instead, since a
     Client-target script may only write Coil/Holding Register while a Server-target
-    script (simulating the device itself) may write all four."""
+    script (simulating the device itself) may write all four.
+
+    '<TYPE> <ADDR> = <VALUE>' and '<TAG_NAME> = <VALUE>' are both accepted; a tag name
+    only resolves to a type/address at run time (against whatever's on the Tags tab then),
+    so its value text is stored unparsed and interpreted once the type is known."""
     if "=" not in rest:
-        raise ScriptError("WRITE requires '<TYPE> <ADDR> = <VALUE>'")
+        raise ScriptError("WRITE requires '<TYPE> <ADDR> = <VALUE>' or '<TAG NAME> = <VALUE>'")
     lhs, value_text = rest.split("=", 1)
     parts = lhs.split()
+    value_text = value_text.strip()
+
+    if len(parts) == 1:
+        name = parts[0]
+        if not TAG_NAME_RE.fullmatch(name) or name.upper() in TYPE_ALIASES:
+            raise ScriptError(f"invalid tag name: {name}")
+        return {"tag_name": name, "value_text": value_text}
+
     if len(parts) != 2:
-        raise ScriptError("WRITE requires '<TYPE> <ADDR> = <VALUE>'")
+        raise ScriptError("WRITE requires '<TYPE> <ADDR> = <VALUE>' or '<TAG NAME> = <VALUE>'")
     data_type = parse_type_token(parts[0])
     try:
         address = check_address(int(parts[1], 0))
     except ValueError:
         raise ScriptError(f"invalid address: {parts[1]}")
 
-    value_text = value_text.strip()
     if data_type in BIT_TYPES:
         return {"type": data_type, "address": address, "bit_value": parse_bit_keyword(value_text)}
     return {"type": data_type, "address": address, "expr": parse_expression(value_text)}
@@ -384,8 +420,13 @@ def _parse_write_args(rest):
 
 def _parse_read_args(rest):
     parts = rest.split()
+    if len(parts) == 1:
+        name = parts[0]
+        if not TAG_NAME_RE.fullmatch(name) or name.upper() in TYPE_ALIASES:
+            raise ScriptError(f"invalid tag name: {name}")
+        return {"tag_name": name}
     if len(parts) != 2:
-        raise ScriptError("READ requires '<TYPE> <ADDR>'")
+        raise ScriptError("READ requires '<TYPE> <ADDR>' or '<TAG NAME>'")
     data_type = parse_type_token(parts[0])
     try:
         address = check_address(int(parts[1], 0))
@@ -426,10 +467,11 @@ def _parse_if(rest):
 class ScriptRunner:
     """Drives a compiled script one instruction at a time; WAIT hands control back instead of blocking."""
 
-    def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None):
+    def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None, tags_getter=None):
         self.modbus_getter = modbus_getter
         self.server_getter = server_getter
         self.target_mode = target_mode  # "client" or "server"
+        self.tags_getter = tags_getter or (lambda: [])
         self.log = log_callback
         self.raw_data_callback = raw_data_callback
         self.instructions = []
@@ -513,16 +555,23 @@ class ScriptRunner:
             return None
 
         if instr.op == "WRITE":
-            if instr.args["type"] in BIT_TYPES:
+            data_type, address = self._resolve_type_address(instr.args)
+            if "tag_name" in instr.args:
+                if data_type in BIT_TYPES:
+                    value = parse_bit_keyword(instr.args["value_text"])
+                else:
+                    value = self._eval_int(parse_expression(instr.args["value_text"])) & 0xFFFF
+            elif data_type in BIT_TYPES:
                 value = instr.args["bit_value"]
             else:
                 value = self._eval_int(instr.args["expr"]) & 0xFFFF
-            self._do_write(instr.args["type"], instr.args["address"], value)
+            self._do_write(data_type, address, value)
             return None
 
         if instr.op == "READ":
-            value = self._do_read(instr.args["type"], instr.args["address"])
-            self.log(f"READ {instr.args['type']} {instr.args['address']} = {value}")
+            data_type, address = self._resolve_type_address(instr.args)
+            value = self._do_read(data_type, address)
+            self.log(f"READ {data_type} {address} = {value}")
             return None
 
         if instr.op == "IF":
@@ -562,9 +611,15 @@ class ScriptRunner:
             return node[1]
         if kind == "var":
             name = node[1]
-            if name not in self.variables:
-                raise ScriptError(f"undefined variable '{name}'")
-            return self.variables[name]
+            if name in self.variables:
+                return self.variables[name]
+            tag = self._find_tag(name)
+            if tag is not None:
+                value = self._do_read(tag["type"], tag["address"])
+                if value is None:
+                    raise ScriptError(f"read failed for tag '{name}'")
+                return value
+            raise ScriptError(f"undefined variable or tag '{name}'")
         if kind == "read":
             _, data_type, address = node
             value = self._do_read(data_type, address)
@@ -601,6 +656,20 @@ class ScriptRunner:
                 raise ScriptError("division by zero")
             return left / right
         raise ScriptError(f"unknown operator '{op}'")
+
+    def _find_tag(self, name):
+        for tag in self.tags_getter():
+            if tag["name"] == name:
+                return tag
+        return None
+
+    def _resolve_type_address(self, args):
+        if "tag_name" in args:
+            tag = self._find_tag(args["tag_name"])
+            if tag is None:
+                raise ScriptError(f"unknown tag '{args['tag_name']}'")
+            return tag["type"], tag["address"]
+        return args["type"], args["address"]
 
     def _require_modbus(self):
         modbus = self.modbus_getter()
@@ -747,6 +816,11 @@ class ScriptWidget(QWidget):
         self.clear_console_btn.clicked.connect(lambda: self.console.clear())
         toolbar.addWidget(self.clear_console_btn)
 
+        self.add_tag_btn = QPushButton("Add Tag")
+        self.add_tag_btn.setStyleSheet(self._button_style())
+        self.add_tag_btn.clicked.connect(self._open_tag_picker)
+        toolbar.addWidget(self.add_tag_btn)
+
         toolbar.addStretch()
 
         self.cpu_label = QLabel("CPU: --")
@@ -876,8 +950,39 @@ class ScriptWidget(QWidget):
         menu.exec(self.editor.mapToGlobal(pos))
 
     def _insert_tag_reference(self, tag):
-        alias = REVERSE_TYPE_ALIASES.get(tag["type"], tag["type"])
-        self.editor.insertPlainText(f"{alias} {tag['address']}")
+        self.editor.insertPlainText(tag["name"])
+
+    def _open_tag_picker(self):
+        tags = []
+        if self.parent_window is not None and hasattr(self.parent_window, "_get_monitoring_tags"):
+            tags = self.parent_window._get_monitoring_tags()
+
+        dialog = TagPickerDialog(
+            tags,
+            self,
+            hint_text="Select a tag to insert",
+            empty_hint_text="No tags configured yet",
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        if dialog.wants_add_tag():
+            self._add_tag_and_switch()
+            return
+        tag = dialog.chosen_tag()
+        if tag is not None:
+            self._insert_tag_reference(tag)
+
+    def _add_tag_and_switch(self):
+        if self.parent_window is None or not hasattr(self.parent_window, "_add_monitoring_tag"):
+            return
+        self.parent_window._add_monitoring_tag()
+        tab_widget = getattr(self.parent_window, "tab_widget", None)
+        if tab_widget is None:
+            return
+        for i in range(tab_widget.count()):
+            if tab_widget.tabText(i) == "Tags":
+                tab_widget.setCurrentIndex(i)
+                break
 
     def _target_mode(self):
         return self.target_combo.currentData()
@@ -969,6 +1074,7 @@ class ScriptWidget(QWidget):
             target_mode,
             self._log_console,
             getattr(self.parent_window, "_display_raw_data", None),
+            getattr(self.parent_window, "_get_monitoring_tags", None),
         )
         self.runner.load(instructions)
         self._reset_variables_panel(collect_variable_names(instructions))

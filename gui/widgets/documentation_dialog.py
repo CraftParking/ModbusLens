@@ -244,12 +244,27 @@ tags only).</li>
 <li><b>Comment</b> and <b>Timestamp</b>.</li>
 </ul>
 
+<h3>Naming a tag</h3>
+<p>A tag name can only use letters, numbers, and underscores - no spaces or other symbols, and it
+can't start with a digit. Script language keywords (WRITE, READ, HR, COIL, and so on) and common
+reserved words are also blocked. Entering an invalid name shows a warning and clears the field
+rather than letting it stick, since a tag's name is also how it's referenced by name in a Script
+(see the Scripting topic) and in Trend's Add Pen picker.</p>
+
 <h3>Data formats</h3>
 <p><b>Bool</b>, <b>U16/S16</b>, <b>U32/S32/F32</b> (plus <code>_SWAP</code> variants for the
 opposite word order), and <b>Hex</b>. BOOL on a Coil/Discrete Input is a simple flag; BOOL on a
 Holding/Input Register instead shows the full 16-bit pattern (e.g. <code>0000000000000101</code>)
 so you can read individual status/alarm bits out of a status word. 32-bit formats (U32/S32/F32)
 need an even <b>Count</b> (2, 4, ...) since they span two registers per value.</p>
+
+<h3>Engineering-unit scaling</h3>
+<p>Check the <b>Scale</b> box on a row to open a small popup asking for <b>Raw Min/Max</b> and
+<b>Scaled Min/Max</b> - a linear transform from whatever the device actually sends to a
+meaningful engineering unit (e.g. raw ADC counts 0-4095 mapped to 0-100 PSI). The result appears
+in the <b>Engineering Value</b> column alongside the normal Read Value, live as the tag is
+polled. Choose <b>Real</b> or <b>Integer</b> for how the scaled result is displayed. Unchecking
+<b>Scale</b> (or Cancelling the popup) turns scaling back off for that row.</p>
 
 <h3>Alarms</h3>
 <p>Right-click a tag row and choose <b>Configure Alarm...</b>. Numeric tags get a High and/or
@@ -323,27 +338,36 @@ for spotting slow drift, verifying a control loop is actually responding, or cap
 you can't watch a numeric table fast enough to catch.</p>
 
 <h3>Pens</h3>
-<p><b>Add Pen</b> opens a grid of 20 slots (SCADA-style) - enable the ones you want, and set a
-name, type, address, count, format, and color for each. Pens are analog values only (Holding or
-Input Registers with a numeric format) - Coils, Discrete Inputs, and the Bool format aren't
-offered here, since a trend line is meant for continuously varying values rather than on/off
-state. If you need to watch a digital point over time, add it as a Tag and check its Read Value
-column instead.</p>
-
-<h3>Live vs Historical mode</h3>
-<ul>
-<li><b>Live</b> - the visible window always ends at "now"; new data appears at the right edge as
-it arrives.</li>
-<li><b>Hist</b> - the view stays where you left it while data keeps recording in the background,
-so you can scroll/zoom through history without it jumping around.</li>
-</ul>
-<p>Newest data is always plotted at the current time, regardless of mode - what differs is
-whether the visible window automatically follows it.</p>
+<p><b>Add Pen</b> opens a grid of 20 slots (SCADA-style) - enable the ones you want, click the
+&#8942; button in the Name column to pick a tag from a popup list, and set a color. A pen's type,
+address, count, and format all come from whichever tag you pick, not from separate fields here.
+Only tags on Holding or Input Registers with a numeric format show up in that list - Coils,
+Discrete Inputs, and the Bool format are left out, since a trend line is meant for continuously
+varying values rather than on/off state. If you need to watch a digital point over time, add it
+as a Tag and check its Read Value column instead. If none exist yet, the popup's tag list is just
+empty - click its <b>Add Tag...</b> button to jump straight to the Tags tab and create one (this
+closes the Trend Pens grid, since adding a tag needs the Tags tab visible). If the tag has
+engineering-unit scaling enabled (see Tags Monitoring), the pen plots that scaled value instead
+of the raw one - turning scaling on or off for the tag changes what the pen shows immediately,
+no need to re-pick it.</p>
 
 <h3>Navigating</h3>
-<p><b>Time Window</b> picks how much time is visible at once. <b>Zoom In/Out</b> halves or
-doubles that span around wherever you're currently looking. <b>From</b>/<b>To</b> plus <b>Go</b>
-jumps straight to a specific historical range (this switches to Hist mode).</p>
+<p>If the view is sitting at the live edge (showing right up to "now"), it keeps following as new
+data arrives, the same as before. As soon as you scroll or zoom away to look at something earlier,
+it stops following and stays exactly where you left it, however long the trend keeps running -
+new data doesn't interrupt you. Scroll back to the live edge and it picks up following again on
+its own; there's no separate mode to switch. Everything plotted is just what's been collected in
+the current session - there's no separate historical database to switch into.</p>
+<p>The scrollbar just below the graph pans through everything collected so far, including while
+the trend is actively running - drag it right to catch up to the newest data, or left to look back.
+<b>Time Window</b> picks how much time is visible at once. <b>Zoom In/Out</b> halves or doubles
+that span around wherever you're currently looking. <b>From</b>/<b>To</b> plus <b>Go</b> jumps
+straight to a specific range.</p>
+<p>Hovering the mouse over the graph drops a crosshair line and updates the legend below each
+pen's name with its value at that point in time, so you can read an exact number off the trace
+without switching to CSV logging. The Min/Max/Average table below the graph updates to match the
+hovered point too; move the mouse away and everything goes back to showing the current live
+values.</p>
 
 <h3>Graph Properties</h3>
 <p>Set the X and Y axis titles, background/axis/grid colors, whether gridlines are shown, and
@@ -354,6 +378,15 @@ change them here if you'd rather have something more subtle for a printed report
 <p><b>Log to CSV</b> appends a timestamped row per pen on every poll tick. <b>Print</b> saves the
 current graph view as a PNG image or a PDF document - useful for attaching evidence of a fault
 condition to a service report.</p>
+
+<h3>Detach</h3>
+<p><b>Detach</b> pops the whole Trend view out into its own resizable, maximizable window that
+stays on top of the main window, so you can watch it while working in another tab (Tags,
+Script, ...) instead of switching back and forth. The Trend tab itself shows a red X while
+detached, as a reminder that the real view has moved. The floating window's <b>Hide Stats</b>
+button collapses the Min/Max/Average table to give the graph more room - this button only
+appears while detached, since the docked tab isn't usually short on space. Click <b>Fixed</b> at
+the bottom of the floating window (or just close it) to dock the view back into its tab.</p>
 """),
 
     ("Server Mode", """
@@ -407,7 +440,9 @@ checks you'd otherwise click through by hand every time.</p>
 <table cellspacing="6">
 <tr><td><code>WRITE COIL &lt;addr&gt; = ON|OFF</code></td><td>Write a coil.</td></tr>
 <tr><td><code>WRITE HR &lt;addr&gt; = &lt;expr&gt;</code></td><td>Write a holding register.</td></tr>
+<tr><td><code>WRITE &lt;tag name&gt; = &lt;expr&gt;</code></td><td>Write to whatever type/address that tag is configured for.</td></tr>
 <tr><td><code>READ COIL|DI|HR|IR &lt;addr&gt;</code></td><td>Read a value and log it.</td></tr>
+<tr><td><code>READ &lt;tag name&gt;</code></td><td>Same, by tag name instead of type/address.</td></tr>
 <tr><td><code>LET &lt;name&gt; = &lt;expr&gt;</code></td><td>Assign a variable.</td></tr>
 <tr><td><code>LOG &lt;expr&gt;</code></td><td>Print text/numbers to the console.</td></tr>
 <tr><td><code>WAIT &lt;expr, ms&gt;</code></td><td>Pause without freezing the UI.</td></tr>
@@ -421,9 +456,12 @@ checks you'd otherwise click through by hand every time.</p>
 <h3>Expressions</h3>
 <p>An expression can mix numbers, <code>"strings"</code>, variables, parentheses, and
 <code>+ - * /</code>. Writing a bare <code>HR 0</code> inside an expression reads that register
-inline (shorthand for <code>READ HR 0</code>). <code>+</code> also concatenates text with numbers,
-so <code>LOG "value is " + x</code> works as expected. Types: COIL, DI (Discrete Input),
-HR (Holding Register), IR (Input Register).</p>
+inline (shorthand for <code>READ HR 0</code>); a bare tag name works the same way (e.g.
+<code>LET x = Boiler_Temp + 1</code> reads the Boiler_Temp tag's current value). A tag name is
+only tried if the name isn't already a variable you've assigned with <code>LET</code> - a LET
+variable always takes priority over a tag of the same name. <code>+</code> also concatenates text
+with numbers, so <code>LOG "value is " + x</code> works as expected. Types: COIL, DI (Discrete
+Input), HR (Holding Register), IR (Input Register).</p>
 
 <h3>Compile and Run</h3>
 <p><b>Compile</b> checks the script's syntax without touching the device - use it to catch typos
@@ -447,8 +485,14 @@ script finishes or is stopped, so you can still read them afterward.</p>
 
 <h3>Other tools in the editor</h3>
 <ul>
-<li><b>Insert Tag</b> - drops a reference (type and address) for any tag from your Tags list
-straight into the script at the cursor, so you don't have to remember or retype addresses.</li>
+<li><b>Add Tag</b> - opens a popup listing every tag on the Tags tab (any type, not just analog),
+and picking one drops its name straight into the script at the cursor. If the tag you need doesn't
+exist yet, the popup's own <b>Add Tag...</b> button jumps to the Tags tab with a new, blank row
+ready to name and configure.</li>
+<li><b>Insert Tag</b> - the right-click menu shortcut for the same thing: drops a tag's name
+straight into the script at the cursor, so you don't have to remember or retype it - the script
+then resolves it against whatever that tag is currently configured as (see WRITE/READ above), so
+editing the tag later doesn't require touching the script.</li>
 <li><b>CPU usage indicator</b> - shows live system CPU load, useful for spotting a runaway loop
 that's spinning the interpreter faster than intended.</li>
 </ul>
@@ -533,6 +577,14 @@ block. The last line shows an IF driving a WRITE instead of a LOG: turn on coil 
 lamp) whenever coil 0 (e.g. "running") isn't set. Valid comparisons are
 <code>== != &gt; &lt; &gt;= &lt;=</code>, and either side can be a register/coil read, a
 variable, or a literal number.</p>
+
+<h4>8. The same thing, by tag name instead of type/address</h4>
+<pre>IF Boiler_Temp &gt; 90 THEN LOG "WARNING: temperature high (" + Boiler_Temp + ")"
+WRITE Pump_Enable = ON</pre>
+<p>Assumes a <code>Boiler_Temp</code> (Holding/Input Register) and <code>Pump_Enable</code>
+(Coil) tag already exist on the Tags tab - use <b>Insert Tag</b> to drop the name in without
+retyping it. Reads a tag name exactly like <code>HR 0</code>/<code>COIL 0</code> would, but stays
+correct if that tag's address ever changes, since the script only cares about the name.</p>
 
 <h3>Limits</h3>
 <p>To keep a typo from hanging the app or running forever: a loop with no WAIT still hands
