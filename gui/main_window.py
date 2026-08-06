@@ -844,7 +844,9 @@ class ModbusGUI(QMainWindow):
         raw_hex_widget = self._create_monitoring_tag_widget("lineedit", raw_hex)
         raw_hex_widget.setReadOnly(True)
         self.monitoring_tag_table.setCellWidget(insert_row, 7, raw_hex_widget)  # Raw (Hex)
-        self.monitoring_tag_table.setCellWidget(insert_row, 8, self._create_monitoring_tag_widget("lineedit", write_value))  # Write Value
+        write_value_widget = self._create_monitoring_tag_widget("lineedit", write_value)
+        self.monitoring_tag_table.setCellWidget(insert_row, 8, write_value_widget)  # Write Value
+        write_value_widget.returnPressed.connect(self._on_write_value_enter)
         self.monitoring_tag_table.setCellWidget(insert_row, 9, self._create_monitoring_tag_widget("lineedit", comment))  # Comment
         self.monitoring_tag_table.setCellWidget(insert_row, 10, self._create_monitoring_tag_widget("lineedit", timestamp))  # Timestamp
 
@@ -1457,7 +1459,8 @@ Unit ID: {unit_id}<br><br>
             # Export to CSV
             with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
                 fieldnames = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment',
-                              'Scale Enabled', 'Raw Min', 'Raw Max', 'Scaled Min', 'Scaled Max', 'Value Type']
+                              'Scale Enabled', 'Scale Mode', 'Raw Min', 'Raw Max', 'Scaled Min',
+                              'Scaled Max', 'Factor', 'Value Type']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
                 writer.writeheader()
@@ -1472,11 +1475,13 @@ Unit ID: {unit_id}<br><br>
                         'Format': tag['format'],
                         'Comment': tag['comment'],
                         'Scale Enabled': bool(scaling),
-                        'Raw Min': scaling['raw_min'] if scaling else '',
-                        'Raw Max': scaling['raw_max'] if scaling else '',
-                        'Scaled Min': scaling['scaled_min'] if scaling else '',
-                        'Scaled Max': scaling['scaled_max'] if scaling else '',
-                        'Value Type': scaling['value_type'] if scaling else '',
+                        'Scale Mode': scaling.get('mode', 'linear') if scaling else '',
+                        'Raw Min': scaling.get('raw_min', '') if scaling else '',
+                        'Raw Max': scaling.get('raw_max', '') if scaling else '',
+                        'Scaled Min': scaling.get('scaled_min', '') if scaling else '',
+                        'Scaled Max': scaling.get('scaled_max', '') if scaling else '',
+                        'Factor': scaling.get('factor', '') if scaling else '',
+                        'Value Type': scaling.get('value_type', '') if scaling else '',
                     })
             
             self._log(f"Exported {len(tags)} tags to {file_path}")
@@ -1538,15 +1543,27 @@ Unit ID: {unit_id}<br><br>
                     scale_enabled = str(row.get('Scale Enabled', '')).strip().lower() in ('true', '1', 'yes')
                     if not scale_enabled:
                         continue
+                    # Older exports have no "Scale Mode" column -- linear was the only
+                    # mode that existed when they were written.
+                    scale_mode = (row.get('Scale Mode', '') or 'linear').strip().lower()
                     try:
-                        scaling = {
-                            'enabled': True,
-                            'raw_min': float(row.get('Raw Min', 0) or 0),
-                            'raw_max': float(row.get('Raw Max', 0) or 0),
-                            'scaled_min': float(row.get('Scaled Min', 0) or 0),
-                            'scaled_max': float(row.get('Scaled Max', 0) or 0),
-                            'value_type': row.get('Value Type', '').strip() or 'Real',
-                        }
+                        if scale_mode == 'multiply':
+                            scaling = {
+                                'enabled': True,
+                                'mode': 'multiply',
+                                'factor': float(row.get('Factor', 1) or 1),
+                                'value_type': row.get('Value Type', '').strip() or 'Real',
+                            }
+                        else:
+                            scaling = {
+                                'enabled': True,
+                                'mode': 'linear',
+                                'raw_min': float(row.get('Raw Min', 0) or 0),
+                                'raw_max': float(row.get('Raw Max', 0) or 0),
+                                'scaled_min': float(row.get('Scaled Min', 0) or 0),
+                                'scaled_max': float(row.get('Scaled Max', 0) or 0),
+                                'value_type': row.get('Value Type', '').strip() or 'Real',
+                            }
                     except (ValueError, TypeError) as e:
                         self._log(f"Skipping invalid scaling config on imported row: {e}")
                         continue
@@ -1660,6 +1677,20 @@ Unit ID: {unit_id}<br><br>
 
         except Exception as e:
             self._log(f"Error in tab change: {e}")
+
+    def _on_write_value_enter(self):
+        """Enter in a Write Value cell writes just that tag -- mirrors the Modbus Poll
+        workflow of typing a value and hitting Enter, without needing to select the row
+        and click Write Selected first."""
+        if self._updating_tag_table:
+            return
+        sender = self.sender()
+        row = self._find_monitoring_tag_row(sender, 8)
+        if row is None:
+            return
+        self.monitoring_tag_table.selectRow(row)
+        self.monitoring_tag_table.setCurrentCell(row, 8)
+        self._write_selected_tags()
 
     def _write_selected_tags(self):
         """Write selected rows from the integrated Tags table."""
@@ -2778,15 +2809,30 @@ class AlarmConfigDialog(QDialog):
 
 
 class ScalingConfigDialog(QDialog):
-    """Configure a linear engineering-unit scale (raw min/max -> scaled min/max) for one
-    Tags row -- e.g. raw ADC counts 0-4095 -> 0-100 PSI."""
+    """Configure engineering-unit scaling for one Tags row -- either a linear transform
+    (raw min/max -> scaled min/max, e.g. raw ADC counts 0-4095 -> 0-100 PSI) or a simple
+    multiply-by-constant transform (e.g. raw 151 -> 15.1 via a factor of 0.1)."""
 
     def __init__(self, existing_scaling, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Configure Engineering Scaling")
         existing_scaling = existing_scaling or {}
+        is_multiply = existing_scaling.get("mode") == "multiply"
 
         layout = QVBoxLayout(self)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Scaling mode:"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["Linear (Min/Max)", "Multiply by Constant"])
+        self.mode_combo.setCurrentIndex(1 if is_multiply else 0)
+        self.mode_combo.currentIndexChanged.connect(self._update_mode_visibility)
+        mode_row.addWidget(self.mode_combo)
+        layout.addLayout(mode_row)
+
+        self.linear_group = QWidget()
+        linear_layout = QVBoxLayout(self.linear_group)
+        linear_layout.setContentsMargins(0, 0, 0, 0)
 
         raw_row = QHBoxLayout()
         raw_row.addWidget(QLabel("Raw Min:"))
@@ -2799,7 +2845,7 @@ class ScalingConfigDialog(QDialog):
         self.raw_max_spin.setRange(-1e9, 1e9)
         self.raw_max_spin.setValue(existing_scaling.get("raw_max", 4095.0))
         raw_row.addWidget(self.raw_max_spin)
-        layout.addLayout(raw_row)
+        linear_layout.addLayout(raw_row)
 
         scaled_row = QHBoxLayout()
         scaled_row.addWidget(QLabel("Scaled Min:"))
@@ -2812,7 +2858,20 @@ class ScalingConfigDialog(QDialog):
         self.scaled_max_spin.setRange(-1e9, 1e9)
         self.scaled_max_spin.setValue(existing_scaling.get("scaled_max", 100.0))
         scaled_row.addWidget(self.scaled_max_spin)
-        layout.addLayout(scaled_row)
+        linear_layout.addLayout(scaled_row)
+        layout.addWidget(self.linear_group)
+
+        self.multiply_group = QWidget()
+        multiply_layout = QHBoxLayout(self.multiply_group)
+        multiply_layout.setContentsMargins(0, 0, 0, 0)
+        multiply_layout.addWidget(QLabel("Multiply raw value by:"))
+        self.factor_spin = QDoubleSpinBox()
+        self.factor_spin.setRange(-1e9, 1e9)
+        self.factor_spin.setDecimals(6)
+        self.factor_spin.setValue(existing_scaling.get("factor", 0.1))
+        multiply_layout.addWidget(self.factor_spin)
+        multiply_layout.addWidget(QLabel("(e.g. 0.1 turns raw 151 into 15.1)"))
+        layout.addWidget(self.multiply_group)
 
         type_row = QHBoxLayout()
         type_row.addWidget(QLabel("Store scaled value as:"))
@@ -2832,15 +2891,34 @@ class ScalingConfigDialog(QDialog):
         button_row.addWidget(cancel_btn)
         layout.addLayout(button_row)
 
+        self._update_mode_visibility()
+
+    def _update_mode_visibility(self):
+        is_multiply = self.mode_combo.currentIndex() == 1
+        self.linear_group.setVisible(not is_multiply)
+        self.multiply_group.setVisible(is_multiply)
+
     def _on_ok(self):
-        if self.raw_min_spin.value() == self.raw_max_spin.value():
+        if self.mode_combo.currentIndex() == 1:
+            if self.factor_spin.value() == 0:
+                QMessageBox.warning(self, "Invalid Factor", "Multiply factor can't be zero.")
+                return
+        elif self.raw_min_spin.value() == self.raw_max_spin.value():
             QMessageBox.warning(self, "Invalid Range", "Raw Min and Raw Max can't be equal.")
             return
         self.accept()
 
     def values(self):
+        if self.mode_combo.currentIndex() == 1:
+            return {
+                "enabled": True,
+                "mode": "multiply",
+                "factor": self.factor_spin.value(),
+                "value_type": self.value_type_combo.currentText(),
+            }
         return {
             "enabled": True,
+            "mode": "linear",
             "raw_min": self.raw_min_spin.value(),
             "raw_max": self.raw_max_spin.value(),
             "scaled_min": self.scaled_min_spin.value(),

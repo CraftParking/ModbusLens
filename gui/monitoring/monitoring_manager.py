@@ -279,19 +279,25 @@ class MonitoringManager:
             return None
 
     def compute_engineering_value(self, tag, value):
-        """Linear raw-to-scaled transform configured via tag_scaling -- "" if scaling isn't
-        enabled for this tag or the value can't be decoded to a single number."""
+        """Raw-to-scaled transform configured via tag_scaling -- either linear (raw
+        min/max -> scaled min/max) or multiply-by-constant. Returns "" if scaling isn't
+        enabled for this tag or the value can't be decoded to a single number.
+        Configs saved before the "mode" field existed have no such key -- treat those as
+        linear, since that was the only mode available when they were written."""
         config = self.tag_scaling.get(tag["row"])
         if not config or not config.get("enabled"):
             return ""
         raw = self._decode_numeric_value(tag, value)
         if raw is None:
             return ""
-        raw_min, raw_max = config["raw_min"], config["raw_max"]
-        scaled_min, scaled_max = config["scaled_min"], config["scaled_max"]
-        if raw_max == raw_min:
-            return ""
-        scaled = (raw - raw_min) / (raw_max - raw_min) * (scaled_max - scaled_min) + scaled_min
+        if config.get("mode") == "multiply":
+            scaled = raw * config.get("factor", 1.0)
+        else:
+            raw_min, raw_max = config["raw_min"], config["raw_max"]
+            scaled_min, scaled_max = config["scaled_min"], config["scaled_max"]
+            if raw_max == raw_min:
+                return ""
+            scaled = (raw - raw_min) / (raw_max - raw_min) * (scaled_max - scaled_min) + scaled_min
         if config.get("value_type") == "Integer":
             return str(int(round(scaled)))
         return f"{scaled:g}"
