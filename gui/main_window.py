@@ -1456,11 +1456,13 @@ Unit ID: {unit_id}<br><br>
             
             # Export to CSV
             with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment']
+                fieldnames = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment',
+                              'Scale Enabled', 'Raw Min', 'Raw Max', 'Scaled Min', 'Scaled Max', 'Value Type']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                
+
                 writer.writeheader()
                 for tag in tags:
+                    scaling = self.monitoring_manager.tag_scaling.get(tag['row'])
                     writer.writerow({
                         'Tag Name': tag['name'],
                         'Mode': tag['mode'],
@@ -1468,7 +1470,13 @@ Unit ID: {unit_id}<br><br>
                         'Address': tag['address'],
                         'Count': tag['count'],
                         'Format': tag['format'],
-                        'Comment': tag['comment']
+                        'Comment': tag['comment'],
+                        'Scale Enabled': bool(scaling),
+                        'Raw Min': scaling['raw_min'] if scaling else '',
+                        'Raw Max': scaling['raw_max'] if scaling else '',
+                        'Scaled Min': scaling['scaled_min'] if scaling else '',
+                        'Scaled Max': scaling['scaled_max'] if scaling else '',
+                        'Value Type': scaling['value_type'] if scaling else '',
                     })
             
             self._log(f"Exported {len(tags)} tags to {file_path}")
@@ -1504,11 +1512,13 @@ Unit ID: {unit_id}<br><br>
                 
                 # Clear existing tags
                 self.monitoring_tag_table.setRowCount(0)
-                
+                self.monitoring_manager.tag_scaling.clear()
+
                 # Import tags
                 imported_count = 0
                 for row in reader:
                     try:
+                        new_row = self.monitoring_tag_table.rowCount()
                         self._add_monitoring_tag(
                             tag_name=row.get('Tag Name', '').strip(),
                             mode=row.get('Mode', 'Read').strip(),
@@ -1522,6 +1532,32 @@ Unit ID: {unit_id}<br><br>
                     except (ValueError, KeyError) as e:
                         self._log(f"Skipping invalid row: {e}")
                         continue
+
+                    # Older exports have no scaling columns -- absent means "not scaled",
+                    # not an error.
+                    scale_enabled = str(row.get('Scale Enabled', '')).strip().lower() in ('true', '1', 'yes')
+                    if not scale_enabled:
+                        continue
+                    try:
+                        scaling = {
+                            'enabled': True,
+                            'raw_min': float(row.get('Raw Min', 0) or 0),
+                            'raw_max': float(row.get('Raw Max', 0) or 0),
+                            'scaled_min': float(row.get('Scaled Min', 0) or 0),
+                            'scaled_max': float(row.get('Scaled Max', 0) or 0),
+                            'value_type': row.get('Value Type', '').strip() or 'Real',
+                        }
+                    except (ValueError, TypeError) as e:
+                        self._log(f"Skipping invalid scaling config on imported row: {e}")
+                        continue
+                    self.monitoring_manager.tag_scaling[new_row] = scaling
+                    scale_widget = self.monitoring_tag_table.cellWidget(new_row, 12)
+                    if scale_widget:
+                        try:
+                            self._updating_tag_table = True
+                            scale_widget.setChecked(True)
+                        finally:
+                            self._updating_tag_table = False
                 
                 self._log(f"Imported {imported_count} tags from {file_path}")
                 QMessageBox.information(self, "Import Complete", 
@@ -1613,10 +1649,14 @@ Unit ID: {unit_id}<br><br>
                         self.address_table_widget.monitoring_checkbox.setChecked(False)
                     self.address_table_widget.update_monitoring_availability()
 
-                # Enable tag monitoring controls
+                # Enable tag monitoring controls -- but not if monitoring is already
+                # running, or returning to this tab would wrongly re-enable Start and
+                # make an active monitoring session look stopped.
                 if hasattr(self, 'tag_start_monitoring_btn'):
                     if hasattr(self, 'modbus') and self.modbus and self.modbus.is_connected():
-                        self.tag_start_monitoring_btn.setEnabled(True)
+                        self.tag_start_monitoring_btn.setEnabled(not self.monitoring_active)
+                if hasattr(self, 'tag_stop_monitoring_btn'):
+                    self.tag_stop_monitoring_btn.setEnabled(self.monitoring_active)
 
         except Exception as e:
             self._log(f"Error in tab change: {e}")
@@ -2874,7 +2914,7 @@ class ConnectionSettingsDialog(QDialog):
         except Exception:
             self.iface_combo.addItem("Default Interface", "127.0.0.1")
 
-        self.iface_combo.currentTextChanged.connect(lambda t: self.ip_input.setText(self.iface_combo.currentData()))
+        self.iface_combo.currentTextChanged.connect(self._on_iface_changed)
         iface_layout.addWidget(self.iface_combo)
         layout.addWidget(self.iface_group)
 
@@ -2995,6 +3035,12 @@ class ConnectionSettingsDialog(QDialog):
         self.iface_group.setVisible(not is_serial)
         self.serial_group.setVisible(is_serial)
         self._populate_history_combo()
+
+    def _on_iface_changed(self, _text):
+        """Only offer the interface's IP as a convenience when Target IP is blank --
+        never overwrite an address the user already typed in."""
+        if not self.ip_input.text().strip():
+            self.ip_input.setText(self.iface_combo.currentData())
 
     def _friendly_history_label(self, entry):
         """A raw history token like 'serial:COM5:9600:N:8:1:1:rtu' isn't something a user
