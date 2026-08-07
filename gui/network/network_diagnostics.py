@@ -315,14 +315,18 @@ class NetworkDiagnosticsWorker(QThread):
 
 
 class NetworkScanner(QThread):
-    """Network device scanner for discovering Modbus devices with continuous scanning."""
-    
-    device_found = Signal(str, str, str)  # ip, port, status
+    """Threaded TCP connect-scan discovery: fans out short-timeout probes to every host in
+    the subnet at once instead of checking one IP at a time, so a /24 finishes in about a
+    second instead of minutes. Each responding host is also verified with a real Modbus
+    read (via probe_modbus_device), so results already carry a YES/NO Modbus status."""
+
+    device_found = Signal(str, str, str)  # ip, port, modbus_status ("YES" or "NO")
     progress = Signal(int)  # progress percentage
     scan_complete = Signal(int)  # number of devices found
     output = Signal(str)  # status messages
-    
-    def __init__(self, base_ip, port_range, modbus_port, continuous=False, scan_delay=2):
+
+    def __init__(self, base_ip, port_range, modbus_port, continuous=False, scan_delay=2,
+                 timeout=0.2, max_workers=100):
         super().__init__()
         self.base_ip = base_ip
         self.port_range = port_range
@@ -330,12 +334,14 @@ class NetworkScanner(QThread):
         self.should_stop = False
         self.continuous = continuous  # Enable continuous scanning
         self.scan_delay = scan_delay  # Delay between scan cycles in seconds
-        self.discovered_devices = set()  # Track discovered devices (IP addresses)
-        
+        self.timeout = timeout  # Per-host probe timeout; no retries on a miss
+        self.max_workers = max_workers
+        self.discovered_devices = set()  # Track discovered devices (IP addresses) across cycles
+
     def run(self):
         """Scan network for Modbus devices."""
         found_devices = 0
-        
+
         # Parse base IP (e.g., 192.168.1.1)
         try:
             parts = self.base_ip.split('.')
@@ -343,60 +349,69 @@ class NetworkScanner(QThread):
                 self.output.emit("Error: Invalid IP address format")
                 self.scan_complete.emit(0)
                 return
-                
+
             network_prefix = '.'.join(parts[:3]) + '.'
             start_ip = int(parts[3])
-            
+
         except ValueError:
             self.output.emit("Error: Invalid IP address format")
             self.scan_complete.emit(0)
             return
-        
-        self.output.emit(f"Starting network discovery: {network_prefix}{start_ip}-{start_ip + self.port_range - 1}")
-        self.output.emit(f"Testing Modbus port {self.modbus_port}...")
+
+        self.output.emit(
+            f"Starting fast scan: {network_prefix}{start_ip}-{start_ip + self.port_range - 1} "
+            f"on port {self.modbus_port} ({int(self.timeout * 1000)}ms timeout, {self.max_workers} workers)..."
+        )
         if self.continuous:
             self.output.emit("Continuous scanning enabled. Click 'Stop Scan' to stop.")
-        
-        total_ips = self.port_range
+
         scan_cycle = 0
-        
+
         while not self.should_stop:
             scan_cycle += 1
             cycle_new_devices = 0
-            
-            for i in range(self.port_range):
-                if self.should_stop:
-                    break
-                    
-                current_ip = f"{network_prefix}{start_ip + i}"
-                progress_percent = int((i / total_ips) * 100)
-                self.progress.emit(progress_percent)
-                
-                # Check flag before network I/O
-                if self.should_stop:
-                    break
-                    
-                # Test connection to Modbus port with a short timeout
-                if self.test_modbus_connection(current_ip, self.modbus_port, timeout=0.5):
-                    # Check if this is a new device
-                    if current_ip not in self.discovered_devices:
-                        self.discovered_devices.add(current_ip)
+            targets = [f"{network_prefix}{start_ip + i}" for i in range(self.port_range)]
+            completed = 0
+
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {
+                    executor.submit(probe_modbus_device, ip, self.modbus_port, self.timeout): ip
+                    for ip in targets
+                }
+
+                for future in as_completed(futures):
+                    if self.should_stop:
+                        break
+
+                    ip = futures[future]
+                    completed += 1
+                    self.progress.emit(int((completed / self.port_range) * 100))
+
+                    try:
+                        status = future.result()
+                    except Exception:
+                        status = "ERROR"
+
+                    # No response within the timeout -- assume unreachable and move on,
+                    # rather than retrying or waiting any longer on this host.
+                    if status in ("TIMEOUT", "ERROR"):
+                        continue
+
+                    if ip not in self.discovered_devices:
+                        self.discovered_devices.add(ip)
                         found_devices += 1
                         cycle_new_devices += 1
-                        self.device_found.emit(current_ip, str(self.modbus_port), "Modbus Device Found")
-                        self.output.emit(f"New device found: {current_ip}:{self.modbus_port}")
-                
-                # Small delay to prevent overwhelming the network
-                self.msleep(50)  # 50ms delay between individual IP checks
-            
+                    self.device_found.emit(ip, str(self.modbus_port), status)
+                    self.output.emit(f"Device found: {ip}:{self.modbus_port} (Modbus: {status})")
+
             # Report cycle results
             if cycle_new_devices > 0:
                 self.output.emit(f"Scan cycle {scan_cycle}: Found {cycle_new_devices} new device(s). Total: {found_devices}")
-            
+
             # If not continuous, break after first cycle
             if not self.continuous:
                 break
-            
+
             # If continuous, wait before next cycle
             if not self.should_stop:
                 self.output.emit(f"Waiting {self.scan_delay}s before next scan cycle...")
@@ -404,21 +419,10 @@ class NetworkScanner(QThread):
                     if self.should_stop:
                         break
                     self.msleep(100)
-        
+
         self.output.emit(f"Scan stopped. Total devices found: {found_devices}")
         self.scan_complete.emit(found_devices)
-    
-    def test_modbus_connection(self, ip, port, timeout=1):
-        """Test if a Modbus device is responding at the given IP and port."""
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(timeout)
-            result = sock.connect_ex((ip, port))
-            sock.close()
-            return result == 0
-        except Exception:
-            return False
-    
+
     def stop(self):
         """Stop the scanning process."""
         self.should_stop = True
@@ -1144,7 +1148,6 @@ class NetworkDiagnosticsDialog:
         self.modbus_devices = {}  # Store Modbus probe results: {ip: status}
         self.show_modbus_only = False  # Filter checkbox state
         self.subnet_info = None  # Local subnet information
-        self._live_probe_workers = set()  # In-flight per-device probes from continuous discovery
 
     def show_diagnostics(self, host, port, unit_id):
         """Show network diagnostics dialog."""
@@ -1417,10 +1420,6 @@ class NetworkDiagnosticsDialog:
             self._stop_worker(self.scanner, "Device scanner")
             self._stop_worker(self.modbus_prober, "Modbus prober")
             self._stop_worker(self.worker, "Diagnostics worker")
-
-            for probe in list(self._live_probe_workers):
-                self._stop_worker(probe, "Live device probe")
-            self._live_probe_workers.clear()
 
             # Disable Modbus filter
             self.disable_modbus_filter()
@@ -1754,35 +1753,14 @@ class NetworkDiagnosticsDialog:
         self.stop_btn.setEnabled(True)
     
     def on_device_found(self, ip, port, status):
-        """Handle device discovery and trigger Modbus probing for new devices."""
+        """Handle device discovery. NetworkScanner already verified Modbus capability
+        (YES/NO) as part of its probe, so no separate re-probe is needed here."""
         self.discovered_devices.append((ip, port, status))
-
-        # Trigger Modbus probing for newly discovered devices (only once per device)
-        if ip not in self.modbus_devices:
-            self.probe_modbus_for_device(ip, int(port))
-
-    def probe_modbus_for_device(self, ip, port):
-        """Probe a single newly-discovered device for Modbus capability, off the GUI thread."""
-        if not is_ip_in_subnet(ip, self.subnet_info):
-            self.modbus_devices[ip] = "UNREACHABLE (Subnet mismatch)"
-            return
-
-        self.modbus_devices[ip] = "PROBING"
-        worker = ModbusProbeWorker([(ip, "", "")], self.subnet_info, port, timeout=1.0)
-        worker.probe_complete.connect(self._on_live_probe_result)
-        worker.finished.connect(lambda w=worker: self._live_probe_workers.discard(w))
-        self._live_probe_workers.add(worker)
-        worker.start()
-
-    def _on_live_probe_result(self, ip, status):
-        """Handle an async single-device Modbus probe result from live discovery."""
         self.modbus_devices[ip] = status
         if status == "YES":
             self.output_text.append(f"  → Modbus device confirmed: {ip}")
         elif status == "NO":
             self.output_text.append(f"  → Not a Modbus device: {ip}")
-        else:
-            self.output_text.append(f"  → Modbus probe: {ip} - {status}")
     
     def on_scan_progress(self, percentage):
         """Update scan progress."""
