@@ -28,6 +28,7 @@
 ## Highlights
 
 - Modbus TCP and Modbus Serial (RTU or ASCII framing) client, switchable per connection
+- Fast parallel network scan - a full /24 subnet in about a second, each hit already Modbus-verified
 - ARP-based device discovery (no IP needed)
 - Automatic Modbus device detection
 - Continuous live scanning (no repeated manual scans)
@@ -182,8 +183,8 @@
 - Steps never run faster than a 20ms floor, even if a script uses `WAIT 0` or skips WAIT entirely, so a typo can't flood the device or network  
 
 ### Network Diagnostics
-- ARP-based discovery  
-- Modbus device detection  
+- Fast parallel TCP discovery scan - a full /24 in about a second, with live Modbus verification (no Npcap needed)  
+- Optional ARP Mode for MAC/vendor lookup (requires Npcap)  
 - Packet capture (Npcap required)  
 - Device filtering (Modbus only)  
 
