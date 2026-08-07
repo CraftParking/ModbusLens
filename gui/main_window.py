@@ -511,6 +511,7 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table = TagTableWidget(self)
         self.monitoring_tag_table.setColumnCount(13)
         self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale"])
+        self._update_tag_address_header()
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
         self.monitoring_tag_table.setColumnWidth(11, 130)
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -963,7 +964,19 @@ class ModbusGUI(QMainWindow):
         finally:
             self._updating_tag_table = False
 
+        self._update_tag_address_header()
         self._log(f"Tag address mode: {'1-based' if self.tag_address_one_based else '0-based'}")
+
+    def _update_tag_address_header(self):
+        """Label the Address column with the active addressing mode, so it's visible right
+        where a user is typing an address instead of only on the far-off toolbar checkbox."""
+        mode = "1-based" if self.tag_address_one_based else "0-based"
+        header_item = QTableWidgetItem(f"Address ({mode})")
+        header_item.setToolTip(
+            "1-based: address 1 is sent as protocol offset 0.\n"
+            "0-based: address 0 is sent as protocol offset 0."
+        )
+        self.monitoring_tag_table.setHorizontalHeaderItem(3, header_item)
 
     def _tag_user_address_to_offset(self, tag):
         """Convert a tag's user-facing address to the 0-based Modbus protocol offset."""
