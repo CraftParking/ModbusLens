@@ -260,13 +260,8 @@ class MonitoringManager:
         types or a value that doesn't resolve to exactly one number."""
         if tag["type"] in ("Coil", "Discrete Input") or value is None:
             return None
-        if not isinstance(value, list):
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return None
 
-        registers = value[: tag["count"]]
+        registers = value[: tag["count"]] if isinstance(value, list) else [value]
         value_format = (tag.get("format") or "U16").strip().upper()
         try:
             decoded = self.parent._decode_register_values(registers, value_format)

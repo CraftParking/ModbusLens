@@ -2340,10 +2340,7 @@ Unit ID: {unit_id}<br><br>
                 return ", ".join(str(bool(v)) for v in visible_values)
             return str(bool(value))
 
-        if not isinstance(value, list):
-            return str(value)
-
-        registers = value[: tag["count"]]
+        registers = value[: tag["count"]] if isinstance(value, list) else [value]
         value_format = (tag.get("format") or "U16").strip().upper()
         try:
             decoded = self._decode_register_values(registers, value_format)
