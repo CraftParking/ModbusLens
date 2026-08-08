@@ -357,6 +357,17 @@ class ModbusGUI(QMainWindow):
             )
         return f"{self.target_ip}:{self.target_port}:{self.target_unit_id}"
 
+    def _record_connection_history(self):
+        """Push the current connection settings to the front of Recent Connections,
+        deduping any existing identical entry. Shared by a successful Connect and by
+        Save Settings alone, so history stays current either way instead of only
+        updating on a live connect."""
+        connection_string = self._build_connection_string()
+        if connection_string in self.connection_history:
+            self.connection_history.remove(connection_string)
+        self.connection_history.insert(0, connection_string)
+        self.connection_history = self.connection_history[:10]
+
     def _setup_operations_section(self, parent_layout):
         """Setup operations section with full height for address tables."""
         # Tab widget for operations
@@ -1262,6 +1273,7 @@ class ModbusGUI(QMainWindow):
             self.bytesize = vals['bytesize']
             self.serial_framer = vals['serial_framer']
             self.connection_history = vals['history']
+            self._record_connection_history()
             self._update_connection_info()
             self._save_settings()
         elif dialog.scan_requested_port is not None:
@@ -1292,13 +1304,7 @@ class ModbusGUI(QMainWindow):
                 self.connection_status.setText(f"Connected: {conn_info}")
                 self._set_connection_controls(connected=True)
 
-                # Add to connection history
-                connection_string = self._build_connection_string()
-                if connection_string in self.connection_history:
-                    self.connection_history.remove(connection_string)
-
-                self.connection_history.insert(0, connection_string)
-                self.connection_history = self.connection_history[:10]
+                self._record_connection_history()
                 self._save_settings()
 
                 self._log(f"Connected to Modbus server at {target} (Unit ID: {unit_id})")
@@ -3153,14 +3159,12 @@ class ConnectionSettingsDialog(QDialog):
         return entry
 
     def _populate_history_combo(self):
-        """Only show history entries that match the currently selected connection type --
-        an RTU-format entry is meaningless while configuring a TCP target and vice versa."""
-        is_serial = self.serial_radio.isChecked()
-        matching = [entry for entry in self.history if entry.startswith("serial:") == is_serial]
-
+        """Show every saved history entry regardless of which connection type is currently
+        selected -- each label already says TCP or serial on its face (see
+        _friendly_history_label), and selecting one now switches the radio to match."""
         self.hist_combo.blockSignals(True)
         self.hist_combo.clear()
-        for entry in matching:
+        for entry in self.history:
             self.hist_combo.addItem(self._friendly_history_label(entry), entry)
         self.hist_combo.blockSignals(False)
 
@@ -3169,34 +3173,49 @@ class ConnectionSettingsDialog(QDialog):
         if not entry:
             return
 
-        if entry.startswith("serial:"):
-            parts = entry.split(":")
-            if len(parts) not in (7, 8):
+        # History is no longer filtered by the currently selected connection type (see
+        # _populate_history_combo), so picking an entry of the other type needs to flip
+        # the radio itself -- otherwise the form fields get filled in but the visible
+        # TCP/Serial group and mode never actually change to match. That toggle re-runs
+        # _populate_history_combo, which would otherwise reset the combo's own visible
+        # selection -- restore it once we're done.
+        try:
+            if entry.startswith("serial:"):
+                parts = entry.split(":")
+                if len(parts) not in (7, 8):
+                    return
+                self.serial_radio.setChecked(True)
+                if len(parts) == 8:
+                    _, serial_port, baud, parity, bytesize, stopbits, unit, framer = parts
+                else:
+                    # Older saved entries have no framer field -- they predate ASCII
+                    # support, so they were always RTU.
+                    _, serial_port, baud, parity, bytesize, stopbits, unit = parts
+                    framer = "rtu"
+                self.serial_port_combo.setCurrentText(serial_port)
+                self.baud_combo.setCurrentText(baud)
+                parity_index = next((i for i, (_, code) in enumerate(self.PARITIES) if code == parity), 0)
+                self.parity_combo.setCurrentIndex(parity_index)
+                if int(bytesize) in self.BYTE_SIZES:
+                    self.bytesize_combo.setCurrentIndex(self.BYTE_SIZES.index(int(bytesize)))
+                if int(stopbits) in self.STOP_BITS:
+                    self.stopbits_combo.setCurrentIndex(self.STOP_BITS.index(int(stopbits)))
+                self.unit_input.setValue(int(unit))
+                self.framer_combo.setCurrentIndex(1 if framer == "ascii" else 0)
                 return
-            if len(parts) == 8:
-                _, serial_port, baud, parity, bytesize, stopbits, unit, framer = parts
-            else:
-                # Older saved entries have no framer field -- they predate ASCII support,
-                # so they were always RTU.
-                _, serial_port, baud, parity, bytesize, stopbits, unit = parts
-                framer = "rtu"
-            self.serial_port_combo.setCurrentText(serial_port)
-            self.baud_combo.setCurrentText(baud)
-            parity_index = next((i for i, (_, code) in enumerate(self.PARITIES) if code == parity), 0)
-            self.parity_combo.setCurrentIndex(parity_index)
-            if int(bytesize) in self.BYTE_SIZES:
-                self.bytesize_combo.setCurrentIndex(self.BYTE_SIZES.index(int(bytesize)))
-            if int(stopbits) in self.STOP_BITS:
-                self.stopbits_combo.setCurrentIndex(self.STOP_BITS.index(int(stopbits)))
-            self.unit_input.setValue(int(unit))
-            self.framer_combo.setCurrentIndex(1 if framer == "ascii" else 0)
-            return
 
-        parts = entry.split(":")
-        if len(parts) >= 3:
-            self.ip_input.setText(parts[0])
-            self.port_input.setValue(int(parts[1]))
-            self.unit_input.setValue(int(parts[2]))
+            parts = entry.split(":")
+            if len(parts) >= 3:
+                self.tcp_radio.setChecked(True)
+                self.ip_input.setText(parts[0])
+                self.port_input.setValue(int(parts[1]))
+                self.unit_input.setValue(int(parts[2]))
+        finally:
+            restore_index = self.hist_combo.findData(entry)
+            if restore_index >= 0 and self.hist_combo.currentIndex() != restore_index:
+                self.hist_combo.blockSignals(True)
+                self.hist_combo.setCurrentIndex(restore_index)
+                self.hist_combo.blockSignals(False)
 
     def get_values(self):
         return {
