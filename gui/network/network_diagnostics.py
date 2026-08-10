@@ -343,7 +343,7 @@ class NetworkScanner(QThread):
     read (via probe_modbus_device), so results already carry a YES/NO Modbus status."""
 
     device_found = Signal(str, str, str)  # ip, port, modbus_status ("YES" or "NO")
-    progress = Signal(int)  # progress percentage
+    progress = Signal(int, str)  # percentage, IP currently being probed
     scan_complete = Signal(int)  # number of devices found
     output = Signal(str)  # status messages
 
@@ -407,7 +407,7 @@ class NetworkScanner(QThread):
 
                     ip = futures[future]
                     completed += 1
-                    self.progress.emit(int((completed / self.port_range) * 100))
+                    self.progress.emit(int((completed / self.port_range) * 100), ip)
 
                     try:
                         status = future.result()
@@ -735,7 +735,7 @@ class PacketCapture(QThread):
     modbus_detected = Signal(str, str, int)  # src_ip, dst_ip, function
     capture_complete = Signal(int)  # number of packets captured
     output = Signal(str)  # status messages
-    progress = Signal(int)  # discovery progress percentage
+    progress = Signal(int, str)  # discovery progress percentage, IP currently being probed
     
     def __init__(self, interface=None, duration=30, capture_capability=None):
         super().__init__()
@@ -990,7 +990,7 @@ class PacketCapture(QThread):
 
                 # Update progress
                 progress = int((i / total) * 100)
-                self.progress.emit(progress)
+                self.progress.emit(progress, ip)
                 bucket = (progress // 25) * 25
                 if bucket in (25, 50, 75, 100) and bucket > self._last_progress_bucket:
                     self._last_progress_bucket = bucket
@@ -1796,10 +1796,13 @@ class NetworkDiagnosticsDialog:
         elif status == "NO":
             self.output_text.append(f"  → Not a Modbus device: {ip}")
     
-    def on_scan_progress(self, percentage):
+    def on_scan_progress(self, percentage, ip=""):
         """Update scan progress."""
         self.progress_bar.setValue(percentage)
-        self.progress_bar.setFormat(f"Scanning... {percentage}%")
+        if ip:
+            self.progress_bar.setFormat(f"Scanning... {percentage}% ({ip})")
+        else:
+            self.progress_bar.setFormat(f"Scanning... {percentage}%")
     
     def on_scan_complete(self, device_count):
         """Handle scan completion."""
