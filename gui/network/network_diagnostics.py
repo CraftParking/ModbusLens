@@ -52,6 +52,24 @@ def get_local_subnet_info(preferred_ip=None):
         return None
 
 
+def compute_scan_network(host_ip, subnet_info):
+    """Build the IPv4Network to scan around host_ip, sized to the real interface
+    netmask instead of always assuming /24. The scanners below only vary the last
+    octet, so a subnet wider than /24 (e.g. a VPN-routed /16) is capped to the /24
+    containing host_ip -- probing tens of thousands of hosts one TCP connect at a
+    time isn't practical anyway."""
+    netmask = subnet_info.get("netmask") if subnet_info else None
+    try:
+        network = ipaddress.IPv4Network(f"{host_ip}/{netmask or 24}", strict=False)
+    except ValueError:
+        network = ipaddress.IPv4Network(f"{host_ip}/24", strict=False)
+
+    if network.prefixlen < 24:
+        network = ipaddress.IPv4Network(f"{host_ip}/24", strict=False)
+
+    return network
+
+
 def is_ip_in_subnet(ip, subnet_info):
     """Check if an IP is in the local subnet."""
     if not subnet_info:
@@ -868,15 +886,15 @@ class PacketCapture(QThread):
                 local_ip = socket.gethostbyname(hostname)
             self.local_ip = local_ip
 
-            # Extract network segment (e.g., 192.168.1.100 -> 192.168.1)
-            network_parts = local_ip.split('.')
-            if len(network_parts) >= 3:
-                network_base = '.'.join(network_parts[:3])
-                self.output.emit(f"Scanning network: {network_base}.x")
-                
+            try:
+                # Size the scan to the interface's real subnet mask instead of a
+                # hardcoded /24
+                scan_network = compute_scan_network(local_ip, get_local_subnet_info(local_ip))
+                self.output.emit(f"Scanning network: {scan_network}")
+
                 # Scan network for active devices
-                self.scan_network_windows(network_base)
-            else:
+                self.scan_network_windows(scan_network)
+            except ValueError:
                 self.output.emit("Error: Could not determine network segment")
                 
         except Exception as e:
@@ -884,7 +902,7 @@ class PacketCapture(QThread):
             
         self.capture_complete.emit(len(self.devices))
     
-    def scan_network_windows(self, network_base):
+    def scan_network_windows(self, network):
         """Scan network using ping and ARP table on Windows."""
         import ctypes
         from ctypes import wintypes
@@ -929,22 +947,28 @@ class PacketCapture(QThread):
                         
             else:
                 self.output.emit("Could not access ARP table. Trying alternative method...")
-                self.fallback_network_scan(network_base)
-                
+                self.fallback_network_scan(network)
+
         except Exception as e:
             self.output.emit(f"ARP table access failed: {e}")
-            self.fallback_network_scan(network_base)
-    
-    def fallback_network_scan(self, network_base):
-        """Fallback network scan using ping for Windows."""
+            self.fallback_network_scan(network)
+
+    def fallback_network_scan(self, network):
+        """Fallback network scan using ping for Windows. `network` is an
+        ipaddress.IPv4Network sized to the real interface subnet mask (see
+        compute_scan_network); .hosts() already excludes the network/broadcast
+        addresses, replacing the old hardcoded 1-254 /24 assumption."""
         self.output.emit("Using ping-based network discovery...")
-        
-        for i in range(1, 255):
+
+        hosts = list(network.hosts())
+        total = len(hosts) or 1
+
+        for i, ip_obj in enumerate(hosts, start=1):
             if self.should_stop:
                 break
 
-            ip = f"{network_base}.{i}"
-            
+            ip = str(ip_obj)
+
             # Ping the host
             try:
                 result = subprocess.run(
@@ -954,18 +978,18 @@ class PacketCapture(QThread):
                     timeout=2,
                     creationflags=SUBPROCESS_NO_WINDOW
                 )
-                
+
                 if result.returncode == 0:
                     # Host is alive, try to get MAC via ARP
                     mac = self.get_mac_via_arp_windows(ip)
                     self._register_device(ip, mac)
-                    
+
                     # Check for Modbus
                     if self.check_modbus_device_windows(ip):
                         self.modbus_detected.emit(ip, ip, 1)
-                        
+
                 # Update progress
-                progress = int((i / 254) * 100)
+                progress = int((i / total) * 100)
                 self.progress.emit(progress)
                 bucket = (progress // 25) * 25
                 if bucket in (25, 50, 75, 100) and bucket > self._last_progress_bucket:
@@ -1723,23 +1747,27 @@ class NetworkDiagnosticsDialog:
             self.output_text.setText("Error: Please enter an IP address")
             return
         
-        # Parse IP to get base network (e.g., 192.168.1.1 -> 192.168.1.0)
+        # Validate IP format
         try:
-            octets = ipaddress.IPv4Address(host).packed
-            base_ip = f"{octets[0]}.{octets[1]}.{octets[2]}.0"
+            ipaddress.IPv4Address(host)
         except ValueError:
             self.output_text.setText("Error: Invalid IP address format")
             return
-        
+
         self.output_text.clear()
         self.discovered_devices.clear()
         self.modbus_devices.clear()  # Clear previous Modbus probe results
-        
+
         # Get local subnet info for Modbus probing
         self.subnet_info = get_local_subnet_info(
             self.selected_interface["ip"] if self.selected_interface else None
         )
-        
+
+        # Size the scan to the interface's real subnet mask instead of a hardcoded /24
+        scan_network = compute_scan_network(host, self.subnet_info)
+        base_ip = str(scan_network.network_address)
+        host_count = scan_network.num_addresses
+
         # Show progress bar and disable buttons
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
@@ -1747,8 +1775,8 @@ class NetworkDiagnosticsDialog:
         self.discover_btn.setText("Scanning...")
         self.test_btn.setEnabled(False)
         
-        # Start scanner (scan 254 addresses in the network with continuous scanning)
-        self.scanner = NetworkScanner(base_ip, 254, port, continuous=True, scan_delay=2)
+        # Start scanner (scan every address in the network with continuous scanning)
+        self.scanner = NetworkScanner(base_ip, host_count, port, continuous=True, scan_delay=2)
         self.scanner.device_found.connect(self.on_device_found)
         self.scanner.progress.connect(self.on_scan_progress)
         self.scanner.output.connect(self.output_text.append)
