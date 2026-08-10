@@ -61,6 +61,13 @@ def build_exe():
         '--hidden-import=serial',
         '--hidden-import=serial.tools.list_ports',
         '--hidden-import=psutil',
+        # scapy is an optional runtime import (network_diagnostics.py falls back
+        # gracefully if missing) but PyInstaller's analysis never sees it as a
+        # real dependency, so a system-wide `pip install scapy` never reaches
+        # the frozen onefile exe. collect-all pulls in its many submodules
+        # (arch/, layers/) and data files (e.g. the MAC vendor list) that a
+        # plain hidden-import would miss.
+        '--collect-all=scapy',
         '--exclude-module=PySide6.QtWebEngine',
         '--exclude-module=PySide6.QtWebEngineCore',
         '--exclude-module=PySide6.QtWebEngineWidgets',
