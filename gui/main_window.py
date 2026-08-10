@@ -164,6 +164,10 @@ class ModbusGUI(QMainWindow):
         # a full retry/timeout cycle when a poll fails -- for LANs where a real timeout
         # means "dead device," not "slow network."
         self.fast_lan_mode = False
+        # None = let the OS pick the outgoing route (today's behavior); otherwise the IP of
+        # the interface to bind the TCP socket to, e.g. so a VPN + Ethernet + Wi-Fi machine
+        # actually goes out the NIC the user picked instead of whatever the OS defaults to.
+        self.interface_ip = None
 
         # Initialize extracted components
         self.advanced_diagnostics = AdvancedDiagnostics()
@@ -1277,6 +1281,7 @@ class ModbusGUI(QMainWindow):
             self.bytesize = vals['bytesize']
             self.serial_framer = vals['serial_framer']
             self.fast_lan_mode = vals['fast_lan_mode']
+            self.interface_ip = vals['interface_ip']
             self.connection_history = vals['history']
             self._record_connection_history()
             self._update_connection_info()
@@ -1300,9 +1305,12 @@ class ModbusGUI(QMainWindow):
                     serial_framer=self.serial_framer,
                 )
             elif self.fast_lan_mode:
-                self.modbus = ModbusClient(self.target_ip, self.target_port, unit_id, timeout=0.2, retries=0)
+                self.modbus = ModbusClient(
+                    self.target_ip, self.target_port, unit_id, timeout=0.2, retries=0,
+                    source_address=self.interface_ip,
+                )
             else:
-                self.modbus = ModbusClient(self.target_ip, self.target_port, unit_id)
+                self.modbus = ModbusClient(self.target_ip, self.target_port, unit_id, source_address=self.interface_ip)
 
             if self.modbus.connect():
                 conn_info = f"{target} (Unit {unit_id})"
@@ -3016,13 +3024,23 @@ class ConnectionSettingsDialog(QDialog):
         self.iface_combo = QComboBox()
         self.iface_combo.setStyleSheet(parent._get_input_style())
 
+        # "Auto" (data=None) keeps today's behavior -- the OS picks the outgoing route --
+        # since actually binding to a NIC is a deliberate opt-in, not a default every
+        # existing connection should suddenly start doing.
+        self.iface_combo.addItem("Auto (let OS choose route)", None)
         try:
             from network.network_diagnostics import get_network_interfaces
             interfaces = get_network_interfaces()
             for i in interfaces:
                 self.iface_combo.addItem(i['display_name'], i['ipv4'])
         except Exception:
-            self.iface_combo.addItem("Default Interface", "127.0.0.1")
+            pass
+
+        current_iface_ip = getattr(current, "interface_ip", None)
+        if current_iface_ip:
+            match_index = self.iface_combo.findData(current_iface_ip)
+            if match_index >= 0:
+                self.iface_combo.setCurrentIndex(match_index)
 
         self.iface_combo.currentTextChanged.connect(self._on_iface_changed)
         iface_layout.addWidget(self.iface_combo)
@@ -3148,9 +3166,11 @@ class ConnectionSettingsDialog(QDialog):
 
     def _on_iface_changed(self, _text):
         """Only offer the interface's IP as a convenience when Target IP is blank --
-        never overwrite an address the user already typed in."""
-        if not self.ip_input.text().strip():
-            self.ip_input.setText(self.iface_combo.currentData())
+        never overwrite an address the user already typed in. "Auto" carries no IP
+        (data=None), so there's nothing to prefill."""
+        data = self.iface_combo.currentData()
+        if data and not self.ip_input.text().strip():
+            self.ip_input.setText(data)
 
     def _friendly_history_label(self, entry):
         """A raw history token like 'serial:COM5:9600:N:8:1:1:rtu' isn't something a user
@@ -3246,6 +3266,7 @@ class ConnectionSettingsDialog(QDialog):
             'bytesize': self.bytesize_combo.currentData(),
             'serial_framer': self.framer_combo.currentData(),
             'fast_lan_mode': self.fast_lan_checkbox.isChecked(),
+            'interface_ip': self.iface_combo.currentData(),
             'history': self.history,
         }
 
