@@ -17,6 +17,10 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QHBoxLayout, QT
 
 NPCAP_DOWNLOAD_URL = "https://npcap.com/#download"
 
+# subprocess.run() on a --windowed frozen build still flashes a console window for
+# each ipconfig/ping/arp child process unless told not to open one.
+SUBPROCESS_NO_WINDOW = subprocess.CREATE_NO_WINDOW if platform.system().lower() == "windows" else 0
+
 
 def get_local_subnet_info(preferred_ip=None):
     """Get local IP and subnet mask for subnet matching. On a multi-homed machine
@@ -674,7 +678,7 @@ def get_network_interfaces_from_ipconfig():
     if platform.system().lower() != "windows":
         return []
 
-    result = subprocess.run(["ipconfig", "/all"], capture_output=True, text=True, timeout=10)
+    result = subprocess.run(["ipconfig", "/all"], capture_output=True, text=True, timeout=10, creationflags=SUBPROCESS_NO_WINDOW)
     if result.returncode != 0:
         return []
     return parse_windows_ipconfig_interfaces(result.stdout)
@@ -947,7 +951,8 @@ class PacketCapture(QThread):
                     ['ping', '-n', '1', '-w', '1000', ip],
                     capture_output=True,
                     text=True,
-                    timeout=2
+                    timeout=2,
+                    creationflags=SUBPROCESS_NO_WINDOW
                 )
                 
                 if result.returncode == 0:
@@ -982,7 +987,8 @@ class PacketCapture(QThread):
                 ['arp', '-a', ip],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
+                creationflags=SUBPROCESS_NO_WINDOW
             )
             
             if result.returncode == 0:
