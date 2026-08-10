@@ -1,5 +1,6 @@
 import csv
 import os
+import socket
 import time
 
 from modbus_meta import function_code_for
@@ -227,6 +228,20 @@ class MonitoringManager:
             return self.parent.modbus.read_registers(protocol_offset, tag["count"])
         return self.parent.modbus.read_input_registers(protocol_offset, tag["count"])
 
+    def _device_reachable(self, timeout=0.2):
+        """Bare TCP connect check against the current target -- used in Fast LAN Mode to
+        tell 'device unplugged' from 'this one register errored' after a poll failure,
+        without paying pymodbus's own connect+read cost a second time. Serial links have
+        no equivalent cheap check, so they're always treated as reachable."""
+        modbus = self.parent.modbus
+        if modbus is None or getattr(modbus, "mode", "tcp") != "tcp":
+            return True
+        try:
+            with socket.create_connection((modbus.ip, modbus.port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
     def format_monitoring_value(self, tag, value):
         """Format a monitoring value for display."""
         if value is None:
@@ -321,10 +336,21 @@ class MonitoringManager:
         self._monitoring_poll_in_progress = True
         self.parent.monitoring_timer.stop()
         failed_count = 0
+        # Fast LAN Mode: once a probe confirms the device itself is gone, skip straight to
+        # ERROR for the rest of this cycle's tags instead of paying a timeout for each one.
+        device_unreachable = False
         timestamp = time.strftime("%H:%M:%S")
         log_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         try:
             for tag in tags:
+                if device_unreachable:
+                    failed_count += 1
+                    self.add_monitoring_row(
+                        tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "",
+                        tag["comment"], timestamp
+                    )
+                    self._log_row(tag, log_timestamp, "ERROR", "")
+                    continue
                 try:
                     self.parent._validate_tag_request(tag, "read")
                     if not self.parent._begin_modbus_operation(tag, "read"):
@@ -352,6 +378,11 @@ class MonitoringManager:
                         self.parent._display_raw_data(
                             f"Tag[{tag['name']}]", None, elapsed_ms, function_code_for(tag["type"], is_write=False)
                         )
+                        if getattr(self.parent, "fast_lan_mode", False) and not self._device_reachable():
+                            device_unreachable = True
+                            self.parent._log(
+                                "Fast LAN Mode: device unreachable, skipping remaining tags this cycle"
+                            )
                         continue
 
                     display_value = self.format_monitoring_value(tag, value)

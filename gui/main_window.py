@@ -160,6 +160,10 @@ class ModbusGUI(QMainWindow):
         self.stopbits = 1
         self.bytesize = 8
         self.serial_framer = "rtu"  # "rtu" or "ascii"
+        # Short (~200ms) timeout, no retries, and a bare TCP reachability probe instead of
+        # a full retry/timeout cycle when a poll fails -- for LANs where a real timeout
+        # means "dead device," not "slow network."
+        self.fast_lan_mode = False
 
         # Initialize extracted components
         self.advanced_diagnostics = AdvancedDiagnostics()
@@ -1272,6 +1276,7 @@ class ModbusGUI(QMainWindow):
             self.stopbits = vals['stopbits']
             self.bytesize = vals['bytesize']
             self.serial_framer = vals['serial_framer']
+            self.fast_lan_mode = vals['fast_lan_mode']
             self.connection_history = vals['history']
             self._record_connection_history()
             self._update_connection_info()
@@ -1294,6 +1299,8 @@ class ModbusGUI(QMainWindow):
                     baudrate=self.baudrate, parity=self.parity, stopbits=self.stopbits, bytesize=self.bytesize,
                     serial_framer=self.serial_framer,
                 )
+            elif self.fast_lan_mode:
+                self.modbus = ModbusClient(self.target_ip, self.target_port, unit_id, timeout=0.2, retries=0)
             else:
                 self.modbus = ModbusClient(self.target_ip, self.target_port, unit_id)
 
@@ -2992,6 +2999,15 @@ class ConnectionSettingsDialog(QDialog):
         self.port_input.setValue(current.target_port)
         self.port_input.setStyleSheet(parent._get_input_style())
         grid.addWidget(self.port_input, 1, 1)
+
+        self.fast_lan_checkbox = QCheckBox("Fast LAN Mode (200ms timeout, no retries)")
+        self.fast_lan_checkbox.setToolTip(
+            "For a local network where a timeout means the device is actually gone, not "
+            "just slow. Polling also skips straight to a quick reachability check instead "
+            "of retrying every tag when the device drops off."
+        )
+        self.fast_lan_checkbox.setChecked(getattr(current, "fast_lan_mode", False))
+        grid.addWidget(self.fast_lan_checkbox, 2, 0, 1, 2)
         layout.addWidget(self.tcp_group)
 
         # 2. Network interface (TCP only)
@@ -3229,6 +3245,7 @@ class ConnectionSettingsDialog(QDialog):
             'stopbits': self.stopbits_combo.currentData(),
             'bytesize': self.bytesize_combo.currentData(),
             'serial_framer': self.framer_combo.currentData(),
+            'fast_lan_mode': self.fast_lan_checkbox.isChecked(),
             'history': self.history,
         }
 
