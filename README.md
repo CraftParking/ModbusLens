@@ -28,7 +28,9 @@
 ## Highlights
 
 - Modbus TCP and Modbus Serial (RTU or ASCII framing) client, switchable per connection
-- Fast parallel network scan - a full /24 subnet in about a second, each hit already Modbus-verified
+- Fast parallel network scan, sized to your actual subnet mask - a full /24 in about a second, each hit already Modbus-verified
+- Fast LAN Mode - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off
+- Optional interface binding - pick a specific NIC so a multi-homed machine (VPN + Ethernet + Wi-Fi) connects out the one you actually chose
 - ARP-based device discovery (no IP needed)
 - Automatic Modbus device detection
 - Continuous live scanning (no repeated manual scans)
@@ -124,6 +126,8 @@
 - Optional Min/Max write bounds per register - a write outside the range is rejected before it reaches the device, no matter if it came from the Address Table, Tags, or a Script  
 - Auto-reconnect with backoff after an unexpected drop, and automatic resume of Tags monitoring once the connection recovers  
 - Multiple simultaneous connections via independent windows (File > New Connection Window)  
+- Optional interface binding in Connection Settings - "Auto" leaves routing to the OS (default); picking a NIC binds the outgoing TCP socket to it  
+- Fast LAN Mode (Connection Settings, TCP) - 200ms timeout, no retries; on a poll failure it probes reachability once instead of paying a timeout for every remaining tag  
 
 ### Data Handling
 - BOOL, U16/S16, U32/S32, F32, HEX support  
@@ -183,7 +187,8 @@
 - Steps never run faster than a 20ms floor, even if a script uses `WAIT 0` or skips WAIT entirely, so a typo can't flood the device or network  
 
 ### Network Diagnostics
-- Fast parallel TCP discovery scan - a full /24 in about a second, with live Modbus verification (no Npcap needed)  
+- Fast parallel TCP discovery scan, sized to the real interface subnet mask (not just a hardcoded /24), with live Modbus verification (no Npcap needed)  
+- Scan progress shows the current IP being probed, not just a percentage  
 - Optional ARP Mode for MAC/vendor lookup (requires Npcap)  
 - Packet capture (Npcap required)  
 - Device filtering (Modbus only)  
@@ -231,13 +236,9 @@ ModbusLens.exe
 
 - Restart app after install  
 
-- If errors:
-  No libpcap provider available  
-  or  
-  Scapy not available  
+- Scapy itself ships bundled with the app (no separate `pip install scapy` needed anymore) - Npcap is the one piece that has to be installed separately, since it's a system driver rather than something that can be packaged into the exe  
 
-Install dependency:
-pip install scapy
+- Without Npcap, discovery still works via the fast parallel TCP scan - Npcap only adds the optional ARP Mode's MAC/vendor lookup and raw packet capture
 
 ---
 
