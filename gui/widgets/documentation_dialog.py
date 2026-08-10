@@ -116,10 +116,17 @@ target address, and on the right, <b>Settings</b> (same as Tools &gt; Connection
 <ul>
 <li><b>IP Address</b> - the target device, PLC, or gateway's Modbus TCP address.</li>
 <li><b>Port</b> - usually 502 for standard Modbus TCP.</li>
-<li><b>Network Interface</b> - a convenience dropdown that fills in a local interface's IP,
-useful when testing against yourself (e.g. against ModbusLens's own Server tab). If you need the
-full picture - every adapter's IP and subnet mask - <b>Tools &gt; IP Configuration</b> shows all
-of them at once, like running <code>ipconfig</code>.</li>
+<li><b>Network Interface</b> - <b>Auto (let OS choose route)</b> is the default: it fills in a
+local interface's IP as a convenience when Target IP is blank (e.g. testing against ModbusLens's
+own Server tab), but otherwise leaves routing entirely to the OS, same as older versions. Picking
+a specific interface instead actually binds the outgoing TCP socket to it - useful on a
+multi-homed machine (VPN + Ethernet + Wi-Fi all up at once) where the OS's default route isn't the
+NIC you actually want the connection to go out of. If you need the full picture - every adapter's
+IP and subnet mask - <b>Tools &gt; IP Configuration</b> shows all of them at once, like running
+<code>ipconfig</code>.</li>
+<li><b>Fast LAN Mode</b> - a short (200ms) timeout and no retries, for a local network where a
+timeout means the device is actually gone rather than just momentarily slow. It also changes how
+Tags monitoring reacts to a failed poll - see <b>Tags Monitoring</b>.</li>
 </ul>
 
 <h3>Modbus Serial (RTU/ASCII)</h3>
@@ -281,6 +288,12 @@ live data) - handy for keeping a reusable tag set per device model.</p>
 unresponsive) shows <code>ERROR</code> in its own Read Value cell but doesn't stop the rest of
 the list from updating. Monitoring only auto-stops if <i>every</i> tag fails on the same poll,
 which is treated as a lost connection rather than a configuration mistake on one row.</p>
+<p><b>Fast LAN Mode</b> (Connection Settings, TCP only - see Connecting to a Device) changes this
+slightly: after the first failed read in a poll cycle, it does one quick reachability check
+against the device instead of moving straight to the next tag. If the device is actually gone,
+every remaining tag in that cycle is marked <code>ERROR</code> immediately rather than each one
+individually timing out. If the check finds the device still reachable, polling continues
+normally - that one failure was specific to a single tag, not the connection.</p>
 
 <h3>Safety interlock</h3>
 <p>Writing is paused for the moment a value is being sent, then Read polling resumes automatically -
@@ -798,6 +811,13 @@ to a ping-based scan, which is slower and misses devices on networks that block 
 feels slow or misses a device you know is there, this is almost always why. Install Npcap with
 <i>WinPcap compatible mode</i> enabled during setup, then restart ModbusLens - see the README's
 Notes section for the download link and exact install options.</p>
+<p>The scan range is sized to the selected interface's actual subnet mask, not always a flat /24
+- on a /25 or smaller it only probes that real range, and on anything wider than /24 (e.g. a
+VPN-routed /16) it's capped to the /24 containing that interface's own IP, since probing tens of
+thousands of addresses one TCP connect at a time isn't practical. If a device you know exists on
+a wider VPN subnet doesn't turn up, it may simply be outside that /24 - enter its IP directly
+instead of relying on discovery. The progress bar shows the specific IP currently being probed,
+not just a percentage, so you can see exactly where a scan is up to.</p>
 
 <h3>"Check for Updates" fails or times out</h3>
 <p>The Updates tab in Help &gt; About queries GitHub directly and needs outbound internet access.
