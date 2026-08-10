@@ -16,13 +16,17 @@ class ModbusClient:
 
     def __init__(self, ip="127.0.0.1", port=502, unit_id=1, timeout=1.5, retries=1,
                  mode="tcp", serial_port="COM1", baudrate=19200, parity="N", stopbits=1, bytesize=8,
-                 serial_framer="rtu"):
+                 serial_framer="rtu", source_address=None):
         self.mode = mode  # "tcp" or "serial"
         self.ip = ip
         self.port = port
         self.unit_id = unit_id
         self.timeout = timeout
         self.retries = retries
+        # IP of the local interface to bind the outgoing TCP socket to (e.g. so a VPN +
+        # Ethernet + Wi-Fi machine goes out the NIC the user picked); None lets the OS
+        # pick the route as before. Meaningless for mode == "serial".
+        self.source_address = source_address
         self.serial_port = serial_port
         self.baudrate = baudrate
         self.parity = parity
@@ -102,6 +106,7 @@ class ModbusClient:
                 self.client = ModbusTcpClient(
                     host=self.ip, port=self.port, timeout=self.timeout, retries=self.retries,
                     trace_packet=self._trace_packet,
+                    source_address=(self.source_address, 0) if self.source_address else None,
                 )
 
             self._connected = self.client.connect()
