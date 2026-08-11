@@ -1,7 +1,7 @@
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit,
-    QComboBox, QSpinBox, QProgressBar,
+    QComboBox, QSpinBox, QProgressBar, QListWidget, QListWidgetItem,
 )
 
 from core.modbus_client import ModbusClient
@@ -17,6 +17,11 @@ PROBE_DELAY_MS = 20
 BAUD_RATES_TO_TRY = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]
 PARITIES_TO_TRY = ["N", "E", "O"]
 STOPBITS_TO_TRY = [1, 2]
+
+# Human-readable labels for the parity codes above, matching how Connection Settings
+# displays them (ConnectionSettingsDialog.PARITIES) -- kept as a local copy since
+# main_window importing this module already goes the other way.
+PARITY_LABELS = {"N": "None", "E": "Even", "O": "Odd"}
 
 # Fixed probe: a single Holding Register read is supported by virtually every device,
 # and this dialog is only about finding the serial settings, not about registers at all.
@@ -194,6 +199,29 @@ class SerialDiscoveryDialog:
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
+        layout.addWidget(QLabel("Matches found (select one, then Apply):"))
+        self.matches_list = QListWidget()
+        self.matches_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {c["surface"]};
+                color: {c["text"]};
+                border: 1px solid {c["border"]};
+            }}
+        """)
+        self.matches_list.setMaximumHeight(90)
+        self.matches_list.itemSelectionChanged.connect(self._on_match_selection_changed)
+        self.matches_list.itemDoubleClicked.connect(lambda _item: self._apply_selected_match())
+        layout.addWidget(self.matches_list)
+
+        apply_row = QHBoxLayout()
+        apply_row.addStretch()
+        self.apply_btn = QPushButton("Apply to Connection Settings")
+        self.apply_btn.setStyleSheet(self.parent._get_button_style())
+        self.apply_btn.setEnabled(False)
+        self.apply_btn.clicked.connect(self._apply_selected_match)
+        apply_row.addWidget(self.apply_btn)
+        layout.addLayout(apply_row)
+
         self.output_text = QTextEdit()
         self.output_text.setReadOnly(True)
         self.output_text.document().setMaximumBlockCount(5000)
@@ -237,6 +265,8 @@ class SerialDiscoveryDialog:
             * (end_unit - start_unit + 1)
         )
         self.output_text.append(f"Scanning serial settings on {port} ({total_combos} combination(s))...")
+        self.matches_list.clear()
+        self.apply_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.start_btn.setEnabled(False)
@@ -246,10 +276,43 @@ class SerialDiscoveryDialog:
             port, self.framer_combo.currentText().lower(), start_unit, end_unit,
             self.timeout_input.value() / 1000.0,
         )
+        self.worker.combo_matched.connect(self._on_combo_matched)
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.output.connect(self.output_text.append)
         self.worker.scan_complete.connect(self._on_scan_complete)
         self.worker.start()
+
+    def _on_combo_matched(self, baud, parity, stopbits, unit_id):
+        port = self.port_combo.currentText().strip()
+        framer_value = self.framer_combo.currentText().lower()
+        parity_label = PARITY_LABELS.get(parity, parity)
+        item = QListWidgetItem(
+            f"{port} @ {baud} baud ({parity_label} parity, 8/{stopbits}, "
+            f"{self.framer_combo.currentText()}, Unit {unit_id})"
+        )
+        item.setData(Qt.UserRole, (port, baud, parity, stopbits, unit_id, framer_value))
+        self.matches_list.addItem(item)
+
+    def _on_match_selection_changed(self):
+        self.apply_btn.setEnabled(self.matches_list.currentItem() is not None)
+
+    def _apply_selected_match(self):
+        """Hand a chosen match to Connection Settings, pre-filled but not yet saved --
+        mirrors picking a Recent Connections entry there: Save Settings is still the
+        deliberate action that commits it, this just fills the form."""
+        item = self.matches_list.currentItem()
+        if item is None:
+            return
+        port, baud, parity, stopbits, unit_id, framer = item.data(Qt.UserRole)
+        self.dialog.hide()
+        self.parent._show_connection_settings(serial_overrides={
+            "serial_port": port,
+            "baudrate": baud,
+            "parity": parity,
+            "stopbits": stopbits,
+            "unit_id": unit_id,
+            "framer": framer,
+        })
 
     def _stop_scan(self):
         if self.worker and self.worker.isRunning():
