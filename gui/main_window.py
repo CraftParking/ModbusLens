@@ -179,6 +179,16 @@ class ModbusGUI(QMainWindow):
         self._updating_tag_table = False
         self._modbus_busy = False
         self._active_ranges = []
+        # Opt-out of the per-write confirm dialog, scoped to the current connection --
+        # reset on every new connect() so it can't silently stay suppressed for months
+        # the way SafetyWarningDialog's permanent "don't show again" can (see notes.md).
+        self._write_confirm_suppressed = False
+        # Rows currently painted as selected in the Tags table (see
+        # _on_tag_table_selection_changed) -- tracked separately from Qt's own
+        # selection model because every cell is a setCellWidget(), which paints over
+        # QTableWidget's normal ::item:selected background, so selection was
+        # otherwise invisible.
+        self._highlighted_tag_rows = set()
         self.monitoring_active = False
         self._write_poll_in_progress = False
         self.tag_address_one_based = True
@@ -546,6 +556,7 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.monitoring_tag_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel) 
         self.monitoring_tag_table.setStyleSheet(self._get_table_style())
+        self.monitoring_tag_table.itemSelectionChanged.connect(self._on_tag_table_selection_changed)
         tag_layout.addWidget(self.monitoring_tag_table)
         tag_layout.setStretchFactor(self.monitoring_tag_table, 1)  # Make table expand
 
@@ -652,6 +663,11 @@ class ModbusGUI(QMainWindow):
             QTableWidget::item:selected:!active {{
                 background-color: {c["selection_inactive_bg"]};
                 color: {c["selection_inactive_text"]};
+            }}
+            QLineEdit[tagRowSelected="true"], QComboBox[tagRowSelected="true"],
+            QSpinBox[tagRowSelected="true"], QCheckBox[tagRowSelected="true"] {{
+                background-color: {c["selection_bg"]};
+                color: {c["selection_text"]};
             }}
         """
 
@@ -946,6 +962,9 @@ class ModbusGUI(QMainWindow):
 
         self.monitoring_tag_table.removeRow(source_row)
         self.monitoring_manager.handle_row_removed(source_row)
+        # Every row's widgets get rebuilt fresh below, so any tracked highlight-by-index
+        # from before the move is meaningless now -- drop it (see _remove_monitoring_tag).
+        self._highlighted_tag_rows.clear()
 
         self._add_monitoring_tag(insert_row=target_row, **data)
 
@@ -1150,6 +1169,10 @@ class ModbusGUI(QMainWindow):
         for row in selected_rows:
             self.monitoring_tag_table.removeRow(row)
             self.monitoring_manager.handle_row_removed(row)
+        # Removed rows' widgets are gone with them; nothing left to un-highlight, but
+        # the tracked set still holds now-meaningless indices -- drop them so a future
+        # diff doesn't skip highlighting a row that reused a stale index.
+        self._highlighted_tag_rows.clear()
         self._update_tag_buttons_state()
 
     def _show_tag_context_menu(self, pos):
@@ -1223,11 +1246,51 @@ class ModbusGUI(QMainWindow):
         self.remove_all_tags_btn.setEnabled(has_tags)
 
     def _get_selected_tag_rows(self):
-        selected_rows = {index.row() for index in self.monitoring_tag_table.selectedIndexes()}
-        current_row = self.monitoring_tag_table.currentRow()
-        if current_row >= 0:
-            selected_rows.add(current_row)
-        return selected_rows
+        """Rows Qt's own selection model actually considers selected -- deliberately
+        NOT falling back to currentRow() when that set is empty. currentRow() stays
+        put after clearSelection() (clicking empty space doesn't reset it), so that
+        fallback used to leave a row silently counted as "selected" for Write
+        Selected / Remove Tag well after the user had visually deselected it."""
+        return {index.row() for index in self.monitoring_tag_table.selectedIndexes()}
+
+    def _on_tag_table_selection_changed(self):
+        """Every Tags-table cell is a setCellWidget() (QComboBox/QSpinBox/QLineEdit),
+        which paints its own opaque background over Qt's normal ::item:selected
+        highlight -- so without this, selecting a row gave zero visual feedback.
+        Diff against the last-painted set instead of repainting every row every time,
+        since this fires continuously during a drag-select."""
+        new_selected = self._get_selected_tag_rows()
+        for row in self._highlighted_tag_rows - new_selected:
+            self._set_tag_row_highlight(row, False)
+        for row in new_selected - self._highlighted_tag_rows:
+            self._set_tag_row_highlight(row, True)
+        self._highlighted_tag_rows = new_selected
+
+    def _set_tag_row_highlight(self, row, highlighted):
+        """QLineEdit/QSpinBox cells carry their own local stylesheet
+        (_get_input_style(), set directly on the widget) -- a local stylesheet wins
+        over a same-specificity rule cascaded down from an ancestor's stylesheet, so
+        the tagRowSelected property selector in _get_table_style() has no effect on
+        them. Override those two types' own stylesheet directly instead; QComboBox/
+        QCheckBox have no local stylesheet, so the property selector still works
+        fine for them."""
+        if not (0 <= row < self.monitoring_tag_table.rowCount()):
+            return
+        c = self._c
+        input_highlight = (
+            f"QSpinBox, QLineEdit {{ background-color: {c['selection_bg']}; color: {c['selection_text']}; }}"
+            if highlighted else ""
+        )
+        for col in range(self.monitoring_tag_table.columnCount()):
+            widget = self.monitoring_tag_table.cellWidget(row, col)
+            if widget is None:
+                continue
+            if isinstance(widget, (QLineEdit, QSpinBox)):
+                widget.setStyleSheet(self._get_input_style() + input_highlight)
+            else:
+                widget.setProperty("tagRowSelected", highlighted)
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
 
     def _connect_signals(self):
         """Connect all UI signals to their handlers."""
@@ -1318,6 +1381,7 @@ class ModbusGUI(QMainWindow):
                 self.status_indicator.set_status("connected")
                 self.connection_status.setText(f"Connected: {conn_info}")
                 self._set_connection_controls(connected=True)
+                self._write_confirm_suppressed = False
 
                 self._record_connection_history()
                 self._save_settings()
@@ -1784,6 +1848,10 @@ Unit ID: {unit_id}<br><br>
             QMessageBox.warning(self, "No Valid Tags", "No write-mode tags with values found in selection.")
             return
 
+        if not self._confirm_write(tags_to_write):
+            self._log("Write cancelled by user")
+            return
+
         wrote_any = False
         was_monitoring = self.monitoring_active
 
@@ -1838,6 +1906,48 @@ Unit ID: {unit_id}<br><br>
 
         if wrote_any:
             self._log(f"Successfully wrote {len(tags_to_write)} tag(s)")
+
+    def _confirm_write(self, tags_to_write):
+        """Ask before any value actually reaches the wire -- mirrors the confirm
+        already required for "Remove All Tags" (a data-loss risk), extended to writes
+        (a real-equipment risk). Defaults to No so a reflexive Enter doesn't confirm it.
+
+        Includes a "don't ask again" checkbox scoped to the CURRENT connection only
+        (cleared on every new connect(), see _connect) -- unlike SafetyWarningDialog's
+        permanent, no-way-back suppression, this can't silently stay off for months on
+        a box someone else later points at live equipment."""
+        if self._write_confirm_suppressed:
+            return True
+
+        max_listed = 8
+        lines = [
+            f"  {tag['name']} @ {tag['address']} ({tag['type']}) = {tag['write_value']}"
+            for tag in tags_to_write[:max_listed]
+        ]
+        if len(tags_to_write) > max_listed:
+            lines.append(f"  ...and {len(tags_to_write) - max_listed} more")
+
+        plural = "s" if len(tags_to_write) != 1 else ""
+        message = (
+            f"About to write {len(tags_to_write)} value{plural} to the connected device:\n\n"
+            + "\n".join(lines)
+            + "\n\nContinue?"
+        )
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Confirm Write")
+        box.setText(message)
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        suppress_checkbox = QCheckBox("Don't ask again for this connection")
+        box.setCheckBox(suppress_checkbox)
+        reply = box.exec()
+
+        confirmed = reply == QMessageBox.Yes
+        if confirmed and suppress_checkbox.isChecked():
+            self._write_confirm_suppressed = True
+        return confirmed
 
     def _write_tag(self, tag):
         if tag["type"] in ("Discrete Input", "Input Register"):
