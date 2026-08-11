@@ -1265,9 +1265,9 @@ class ModbusGUI(QMainWindow):
         self.tags_log_btn.setText("Stop Logging")
         self._log(f"Logging Tags data to {file_path}")
 
-    def _show_connection_settings(self):
+    def _show_connection_settings(self, serial_overrides=None):
         """Show the connection settings dialog."""
-        dialog = ConnectionSettingsDialog(self, self.connection_history, self)
+        dialog = ConnectionSettingsDialog(self, self.connection_history, self, serial_overrides=serial_overrides)
         if dialog.exec() == QDialog.Accepted:
             vals = dialog.get_values()
             self.connection_mode = vals['mode']
@@ -2967,7 +2967,7 @@ class ConnectionSettingsDialog(QDialog):
     STOP_BITS = [1, 2]
     BYTE_SIZES = [7, 8]
 
-    def __init__(self, parent, history, current):
+    def __init__(self, parent, history, current, serial_overrides=None):
         super().__init__(parent)
         self.setWindowTitle("Connection Settings")
         self.setMinimumWidth(450)
@@ -3137,6 +3137,23 @@ class ConnectionSettingsDialog(QDialog):
         cancel_btn.clicked.connect(self.reject)
         btns.addWidget(cancel_btn)
         layout.addLayout(btns)
+
+        # Pre-fill from a Serial Discovery match (see SerialDiscoveryDialog._apply_selected_match)
+        # -- applied after every field above already exists, but Save Settings is still the
+        # action that actually commits it, same as picking a Recent Connections entry.
+        if serial_overrides:
+            self.serial_radio.setChecked(True)
+            self.serial_port_combo.setCurrentText(serial_overrides["serial_port"])
+            self.baud_combo.setCurrentText(str(serial_overrides["baudrate"]))
+            parity_index = next(
+                (i for i, (_, code) in enumerate(self.PARITIES) if code == serial_overrides["parity"]), 0
+            )
+            self.parity_combo.setCurrentIndex(parity_index)
+            self.bytesize_combo.setCurrentIndex(self.BYTE_SIZES.index(8))
+            if serial_overrides["stopbits"] in self.STOP_BITS:
+                self.stopbits_combo.setCurrentIndex(self.STOP_BITS.index(serial_overrides["stopbits"]))
+            self.unit_input.setValue(serial_overrides["unit_id"])
+            self.framer_combo.setCurrentIndex(1 if serial_overrides.get("framer") == "ascii" else 0)
 
         self._update_mode_visibility()
 
