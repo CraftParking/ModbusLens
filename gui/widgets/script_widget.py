@@ -467,13 +467,25 @@ def _parse_if(rest):
 class ScriptRunner:
     """Drives a compiled script one instruction at a time; WAIT hands control back instead of blocking."""
 
-    def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None, tags_getter=None):
+    def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None,
+                 tags_getter=None, reserve_range=None, release_range=None):
         self.modbus_getter = modbus_getter
         self.server_getter = server_getter
         self.target_mode = target_mode  # "client" or "server"
         self.tags_getter = tags_getter or (lambda: [])
         self.log = log_callback
         self.raw_data_callback = raw_data_callback
+        # Join the same busy/overlap interlock Tags-table writes and reads use
+        # (main_window._reserve_range/_release_range) -- a script's step_timer lets
+        # the Qt event loop run other timers (Tags Monitoring, Trend) between steps,
+        # so without this a script WRITE can genuinely land mid-poll of the same
+        # register range. Only relevant for target_mode == "client" (the shared live
+        # ModbusClient); a Server-target script writes to its own local simulator
+        # datastore, a separate object nothing else polls, so no reservation is
+        # needed there. Default to permissive no-ops so ScriptRunner stays usable
+        # standalone (e.g. in tests) without a real main window behind it.
+        self.reserve_range = reserve_range or (lambda request_range: True)
+        self.release_range = release_range or (lambda request_range: None)
         self.instructions = []
         self.pc = 0
         self.repeat_counters = {}
@@ -693,12 +705,26 @@ class ScriptRunner:
         if data_type not in WRITABLE_TYPES:
             raise ScriptError(f"{data_type} cannot be written to a client connection")
         modbus = self._require_modbus()
-        start_time = time.perf_counter()
-        if data_type == "Coil":
-            ok = modbus.write_coil(address, bool(value))
-        else:
-            ok = modbus.write_register(address, value)
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+        # data_type is already one of the exact space strings the Tags table and
+        # Address Table use ("Coil"/"Holding Register"/etc, see TYPE_ALIASES), and
+        # `address` is already the raw 0-based protocol offset (scripts have no
+        # separate one/zero-based addressing mode) -- both match the interlock's
+        # range-dict shape with no conversion needed.
+        request_range = {"operation": "write", "space": data_type, "start": address, "end": address, "tag": "Script"}
+        if not self.reserve_range(request_range):
+            self.log(f"WRITE {data_type} {address} = {value} SKIPPED -- safety interlock: range busy")
+            return
+        try:
+            start_time = time.perf_counter()
+            if data_type == "Coil":
+                ok = modbus.write_coil(address, bool(value))
+            else:
+                ok = modbus.write_register(address, value)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+        finally:
+            self.release_range(request_range)
+
         self.log(f"WRITE {data_type} {address} = {value} {'OK' if ok else 'FAILED'}")
         if self.raw_data_callback:
             self.raw_data_callback(
@@ -1075,6 +1101,8 @@ class ScriptWidget(QWidget):
             self._log_console,
             getattr(self.parent_window, "_display_raw_data", None),
             getattr(self.parent_window, "_get_monitoring_tags", None),
+            getattr(self.parent_window, "_reserve_range", None),
+            getattr(self.parent_window, "_release_range", None),
         )
         self.runner.load(instructions)
         self._reset_variables_panel(collect_variable_names(instructions))
