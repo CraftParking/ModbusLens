@@ -246,7 +246,10 @@ class RegisterScannerWidget(QWidget):
         Monitoring and Tags monitoring already stop one another for the same reason. The
         reconnect watchdog is the same hazard from the other direction: if it fires mid-scan
         it can call connect() and swap out self.parent_window.modbus.client out from under
-        the worker thread that's mid-read on it."""
+        the worker thread that's mid-read on it. Trend's poll_timer is the same GUI-thread
+        timer shape as Tags/Address Table monitoring, just easy to miss since it lives on a
+        separate tab -- stopped directly rather than via its own Stop Trend button so the
+        Start/Stop button states don't flip and confuse the user mid-scan."""
         if getattr(self.parent_window, "monitoring_active", False):
             self.parent_window._stop_monitoring()
             self.output_text.append("Paused Tags monitoring for the scan.")
@@ -254,6 +257,11 @@ class RegisterScannerWidget(QWidget):
         if address_table is not None and getattr(address_table, "monitoring_active", False):
             address_table.monitoring_checkbox.setChecked(False)
             self.output_text.append("Paused Address Table live monitoring for the scan.")
+        trend_widget = getattr(self.parent_window, "trend_widget", None)
+        self._trend_was_running = bool(trend_widget and trend_widget.poll_timer.isActive())
+        if self._trend_was_running:
+            trend_widget.poll_timer.stop()
+            self.output_text.append("Paused Trend polling for the scan.")
         watchdog = getattr(self.parent_window, "_reconnect_watchdog_timer", None)
         self._watchdog_was_active = bool(watchdog and watchdog.isActive())
         if watchdog is not None:
@@ -265,6 +273,14 @@ class RegisterScannerWidget(QWidget):
             return
         if self._scan_in_progress():
             self.output_text.append("A scan is already running -- wait for it to finish first.")
+            return
+        script_widget = getattr(self.parent_window, "script_widget", None)
+        if script_widget is not None and getattr(script_widget, "running", False):
+            # Unlike Tags/Address Table monitoring or Trend, a Script run is a
+            # user-directed sequence, not a background poll -- silently pausing its
+            # step_timer would leave no clean, timing-safe way to resume mid-WAIT, so
+            # this refuses the scan instead of pausing the script out from under it.
+            self.output_text.append("A script is currently running -- stop it before starting a scan.")
             return
 
         start = self.addr_start_input.value()
@@ -321,6 +337,16 @@ class RegisterScannerWidget(QWidget):
             watchdog = getattr(self.parent_window, "_reconnect_watchdog_timer", None)
             if watchdog is not None and self.parent_window.modbus and self.parent_window.modbus.is_connected():
                 watchdog.start(self.parent_window.WATCHDOG_HEALTHY_INTERVAL_MS)
+
+        # Resume Trend polling we paused before the scan, same live-connection guard as
+        # the watchdog above -- if the connection dropped during the scan there's nothing
+        # to resume polling against.
+        if getattr(self, "_trend_was_running", False):
+            self._trend_was_running = False
+            trend_widget = getattr(self.parent_window, "trend_widget", None)
+            if trend_widget is not None and self.parent_window.modbus and self.parent_window.modbus.is_connected():
+                trend_widget.poll_timer.start(trend_widget.interval_input.value())
+                self.output_text.append("Resumed Trend polling.")
 
     def _scan_in_progress(self):
         return bool(self.address_worker and self.address_worker.isRunning())
