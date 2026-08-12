@@ -221,29 +221,15 @@ class MonitoringManager:
         self._monitoring_read_value_cache.clear()
         self._monitoring_write_value_cache.clear()
 
-    def read_tag_for_monitoring(self, tag, modbus):
-        """Read data for a specific tag during monitoring. Takes `modbus` explicitly
-        (rather than reading self.parent.modbus itself) so a poll cycle keeps talking to
-        the exact client it started with, even if the caller runs on a background thread
-        -- self.parent.modbus can be replaced by a disconnect/reconnect that happens on the
-        GUI thread while this is still in flight. Raises ValueError straight through on a
-        bad address/offset instead of logging it here -- logging touches a Qt widget, and
-        the caller (TagPollWorker, on its own thread) is what has to handle that."""
-        protocol_offset = self.parent._tag_user_address_to_offset(tag)
-        if tag["type"] == "Coil":
-            return modbus.read_coils(protocol_offset, tag["count"])
-        if tag["type"] == "Discrete Input":
-            return modbus.read_discrete_inputs(protocol_offset, tag["count"])
-        if tag["type"] == "Holding Register":
-            return modbus.read_registers(protocol_offset, tag["count"])
-        return modbus.read_input_registers(protocol_offset, tag["count"])
-
     def _device_reachable(self, modbus, timeout=0.2):
         """Bare TCP connect check against the current target -- used in Fast LAN Mode to
         tell 'device unplugged' from 'this one register errored' after a poll failure,
         without paying pymodbus's own connect+read cost a second time. Serial links have
         no equivalent cheap check, so they're always treated as reachable. Takes `modbus`
-        explicitly for the same snapshot-not-live-attribute reason as read_tag_for_monitoring."""
+        explicitly (rather than reading self.parent.modbus) so it checks the exact client
+        TagPollWorker started its cycle with, even though this runs on that worker's
+        thread -- self.parent.modbus can be replaced by a disconnect/reconnect on the GUI
+        thread while a cycle is still in flight."""
         if modbus is None or getattr(modbus, "mode", "tcp") != "tcp":
             return True
         try:
@@ -355,8 +341,8 @@ class MonitoringManager:
         self._current_poll_log_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
         worker = TagPollWorker(
-            tags, self.parent.modbus, self.read_tag_for_monitoring, self.parent._validate_tag_request,
-            self.parent._reserve_range, self.parent._release_range, self.parent._operation_range,
+            tags, self.parent.modbus, self.parent._tag_user_address_to_offset, self.parent._validate_tag_request,
+            self.parent._reserve_range, self.parent._release_range,
             self._device_reachable, getattr(self.parent, "fast_lan_mode", False),
         )
         worker.tag_result.connect(self._on_tag_poll_result)
