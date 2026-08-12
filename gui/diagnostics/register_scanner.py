@@ -253,6 +253,16 @@ class RegisterScannerWidget(QWidget):
         if getattr(self.parent_window, "monitoring_active", False):
             self.parent_window._stop_monitoring()
             self.output_text.append("Paused Tags monitoring for the scan.")
+        monitoring_manager = getattr(self.parent_window, "monitoring_manager", None)
+        if monitoring_manager is not None:
+            # Tags monitoring's own poll worker now runs its reads on a background
+            # thread and doesn't finish the instant _stop_monitoring() returns -- this
+            # worker bypasses the range interlock entirely (see class docstring), so it
+            # needs every other reader/writer of self.modbus to be truly, provably done,
+            # not just told to stop. Also covers a worker still retiring from an earlier,
+            # unrelated Stop Monitoring click, which monitoring_active alone wouldn't
+            # catch since that flag is already False by then.
+            monitoring_manager.wait_for_idle()
         address_table = getattr(self.parent_window, "address_table_widget", None)
         if address_table is not None and getattr(address_table, "monitoring_active", False):
             address_table.monitoring_checkbox.setChecked(False)
