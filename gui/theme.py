@@ -49,6 +49,7 @@ LIGHT = {
     "log_error": "#C62828",
     "log_write": "#1565C0",
     "log_connect": "#2E7D32",
+    "log_warning": "#EF6C00",
 }
 
 DARK = {
@@ -85,6 +86,7 @@ DARK = {
     "log_error": "#EF5350",
     "log_write": "#64B5F6",
     "log_connect": "#81C784",
+    "log_warning": "#FFB74D",
 }
 
 

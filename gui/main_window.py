@@ -2616,7 +2616,17 @@ Unit ID: {unit_id}<br><br>
             error_text = getattr(self.modbus, 'last_error', None) if data is None else None
             tx_bytes = getattr(self.modbus, 'last_tx_bytes', None)
             rx_bytes = getattr(self.modbus, 'last_rx_bytes', None)
-            self.diagnostics_dialogs.add_raw_data_row(timestamp, title, data, elapsed_ms, error_text, tx_bytes, rx_bytes)
+            # Blank for a plain communications failure (timeout, no response) -- only a
+            # device that actually replied with a Modbus exception code gets one, so the
+            # Raw Data tab's Exception column distinguishes "the device refused this" from
+            # "nothing answered at all" instead of lumping both under the same Failed status.
+            exception_text = (
+                self.advanced_diagnostics.get_exception_code_description(exception_code)
+                if exception_code is not None else ""
+            )
+            self.diagnostics_dialogs.add_raw_data_row(
+                timestamp, title, data, elapsed_ms, error_text, tx_bytes, rx_bytes, exception_text
+            )
     
     def _get_function_code_from_title(self, title):
         """Extract function code from title for statistics."""
