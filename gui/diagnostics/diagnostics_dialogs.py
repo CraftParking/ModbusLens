@@ -1,13 +1,17 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit, QComboBox,
+    QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit, QComboBox, QMenu, QApplication,
 )
 from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt
 
 MAX_RAW_DATA_ROWS = 1000  # oldest rows are dropped past this so the table can't grow unbounded
 
-RAW_DATA_COLUMNS = ["Time", "Operation", "Value", "Raw (Hex)", "TX Bytes", "RX Bytes", "Status", "Latency (ms)"]
+RAW_DATA_COLUMNS = [
+    "Time", "Operation", "Value", "Raw (Hex)", "TX Bytes", "RX Bytes", "Status", "Exception", "Latency (ms)",
+]
 STATUS_COLUMN = 6
+EXCEPTION_COLUMN = 7
 
 
 def _format_wire_bytes(data):
@@ -97,13 +101,15 @@ class DiagnosticsDialogs:
             # Interactive (not Stretch) since TX/RX Bytes need room to vary with frame size --
             # forcing every column to share the width equally would crush the hex dumps.
             table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-            column_widths = [70, 170, 130, 130, 190, 190, 70, 90]
+            column_widths = [70, 170, 130, 130, 190, 190, 70, 220, 90]
             for col, width in enumerate(column_widths):
                 table.setColumnWidth(col, width)
             table.setEditTriggers(QTableWidget.NoEditTriggers)
             table.setSelectionBehavior(QTableWidget.SelectRows)
             table.setAlternatingRowColors(True)
             table.setStyleSheet(self._raw_table_style())
+            table.setContextMenuPolicy(Qt.CustomContextMenu)
+            table.customContextMenuRequested.connect(self._show_raw_data_context_menu)
             self.parent.raw_data_table = table
 
     def show_diagnostics_logs(self):
@@ -219,9 +225,12 @@ class DiagnosticsDialogs:
         if self.filter_status != "All" and table.item(row, STATUS_COLUMN).text() != self.filter_status:
             return False
         if self.filter_text:
-            # Search Operation (tag name/address) and Value, since either is a reasonable
-            # thing to search for -- "did this tag show up" or "did this value show up".
-            haystack = (table.item(row, 1).text() + " " + table.item(row, 2).text()).lower()
+            # Search Operation (tag name/address), Value, and Exception -- "did this tag
+            # show up", "did this value show up", or "did this exception show up" are all
+            # reasonable things to filter for.
+            haystack = " ".join((
+                table.item(row, 1).text(), table.item(row, 2).text(), table.item(row, EXCEPTION_COLUMN).text(),
+            )).lower()
             if self.filter_text not in haystack:
                 return False
         return True
@@ -233,8 +242,14 @@ class DiagnosticsDialogs:
         for row in range(table.rowCount()):
             table.setRowHidden(row, not self._row_matches_filter(table, row))
 
-    def add_raw_data_row(self, timestamp, title, data, elapsed_ms, error_text, tx_bytes=None, rx_bytes=None):
-        """Append one transaction row to the Raw Data table."""
+    def add_raw_data_row(self, timestamp, title, data, elapsed_ms, error_text, tx_bytes=None, rx_bytes=None,
+                          exception_text=""):
+        """Append one transaction row to the Raw Data table. exception_text is the decoded
+        Modbus exception description (e.g. "Illegal Data Address - ...") when the device
+        itself replied with an exception response -- left blank for a plain communications
+        failure (timeout, no response), so the Exception column distinguishes "the device
+        refused this" from "nothing answered at all" at a glance, not just a shared red
+        Failed status for both."""
         table = getattr(self.parent, 'raw_data_table', None)
         if table is None:
             return
@@ -248,6 +263,7 @@ class DiagnosticsDialogs:
         latency_text = f"{elapsed_ms:.1f}" if elapsed_ms is not None else ""
         c = self.parent._colors()
         status_color = QColor(c["log_connect"]) if success else QColor(c["log_error"])
+        warning_color = QColor(c["log_warning"])
 
         scrollbar = table.verticalScrollBar()
         # Only follow new rows if already scrolled to the bottom -- otherwise a scroll-up
@@ -256,11 +272,15 @@ class DiagnosticsDialogs:
 
         row = table.rowCount()
         table.insertRow(row)
-        columns = (timestamp, title, value_text, hex_text, tx_text, rx_text, status_text, latency_text)
+        columns = (
+            timestamp, title, value_text, hex_text, tx_text, rx_text, status_text, exception_text, latency_text,
+        )
         for col, text in enumerate(columns):
             item = QTableWidgetItem(text)
             if col == STATUS_COLUMN:
                 item.setForeground(status_color)
+            elif col == EXCEPTION_COLUMN and exception_text:
+                item.setForeground(warning_color)
             table.setItem(row, col, item)
 
         table.setRowHidden(row, not self._row_matches_filter(table, row))
@@ -271,6 +291,47 @@ class DiagnosticsDialogs:
 
         if was_at_bottom:
             table.scrollToBottom()
+
+    def _show_raw_data_context_menu(self, pos):
+        table = getattr(self.parent, 'raw_data_table', None)
+        if table is None:
+            return
+
+        rows = sorted({index.row() for index in table.selectedIndexes()})
+        clicked_row = table.rowAt(pos.y())
+        if clicked_row >= 0 and clicked_row not in rows:
+            # Right-clicking a row that isn't already selected should act on that row,
+            # not whatever was selected before -- same convention as most desktop tables.
+            table.selectRow(clicked_row)
+            rows = [clicked_row]
+        if not rows:
+            return
+
+        menu = QMenu(table)
+        copy_text_action = menu.addAction("Copy Row(s) as Text")
+        copy_bytes_action = menu.addAction("Copy Row(s) as Hex Bytes (TX/RX)")
+        chosen = menu.exec(table.viewport().mapToGlobal(pos))
+        if chosen == copy_text_action:
+            self._copy_raw_data_rows(table, rows, as_bytes=False)
+        elif chosen == copy_bytes_action:
+            self._copy_raw_data_rows(table, rows, as_bytes=True)
+
+    @staticmethod
+    def _copy_raw_data_rows(table, rows, as_bytes):
+        """as_bytes=False copies every column, tab-separated -- a full record of the
+        transaction, pasteable straight into a spreadsheet. as_bytes=True copies just the
+        literal TX/RX wire bytes each row already carries (see _trace_packet in
+        core/modbus_client.py) -- the actual frame bytes, for pasting into a hex viewer or
+        a bug report, without the decoded columns in the way."""
+        lines = []
+        for row in rows:
+            if as_bytes:
+                tx = table.item(row, 4).text()
+                rx = table.item(row, 5).text()
+                lines.append(f"TX: {tx}\nRX: {rx}")
+            else:
+                lines.append("\t".join(table.item(row, col).text() for col in range(table.columnCount())))
+        QApplication.clipboard().setText("\n".join(lines))
 
     def clear_diagnostics_logs(self):
         """Clear all diagnostics logs."""
