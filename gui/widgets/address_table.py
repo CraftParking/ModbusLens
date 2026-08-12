@@ -459,21 +459,41 @@ class AddressTableWidget(QWidget):
                 self.parent_window._log(f"Address error: {e}")
                 return
 
-            start_time = time.perf_counter()
-            if "Coils" in self.current_function:
+            if "Coils" in self.current_function and "Read Coils" not in self.current_function:
+                return  # write functions don't poll
+
+            # Join the same busy/overlap interlock the write path already uses (see
+            # write_value_to_device) -- Tag Monitoring's poll worker now runs its reads on
+            # a real background thread, so this GUI-thread read and a worker-thread read
+            # of the same register space can genuinely land on the wire at the same
+            # instant without this.
+            request_range = {
+                "operation": "read",
+                "space": self._SPACE_LABELS.get(self.get_operation_type(self.current_function)),
+                "start": protocol_offset,
+                "end": protocol_offset + self.current_count - 1,
+                "tag": f"AddressTable[{self.current_function}]",
+            }
+            has_interlock = hasattr(self.parent_window, "_reserve_range")
+            if has_interlock and not self.parent_window._reserve_range(request_range):
+                return  # busy -- silently skip this tick, same as any other poll contention
+
+            try:
+                start_time = time.perf_counter()
                 if "Read Coils" in self.current_function:
                     data = self.parent_window.modbus.read_coils(protocol_offset, self.current_count)
+                elif "Discrete Inputs" in self.current_function:
+                    data = self.parent_window.modbus.read_discrete_inputs(protocol_offset, self.current_count)
+                elif "Holding Registers" in self.current_function:
+                    data = self.parent_window.modbus.read_registers(protocol_offset, self.current_count)
+                elif "Input Registers" in self.current_function:
+                    data = self.parent_window.modbus.read_input_registers(protocol_offset, self.current_count)
                 else:
-                    return  # write functions don't poll
-            elif "Discrete Inputs" in self.current_function:
-                data = self.parent_window.modbus.read_discrete_inputs(protocol_offset, self.current_count)
-            elif "Holding Registers" in self.current_function:
-                data = self.parent_window.modbus.read_registers(protocol_offset, self.current_count)
-            elif "Input Registers" in self.current_function:
-                data = self.parent_window.modbus.read_input_registers(protocol_offset, self.current_count)
-            else:
-                return
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    return
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+            finally:
+                if has_interlock:
+                    self.parent_window._release_range(request_range)
 
             if hasattr(self.parent_window, '_display_raw_data'):
                 self.parent_window._display_raw_data(
