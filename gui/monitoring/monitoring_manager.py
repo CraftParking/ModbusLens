@@ -5,6 +5,8 @@ import time
 
 from modbus_meta import function_code_for
 
+from .poll_worker import TagPollWorker
+
 
 class MonitoringManager:
     """Manages Tags monitoring functionality including data caching and synchronization."""
@@ -21,6 +23,13 @@ class MonitoringManager:
         self.tag_scaling = {}  # row index -> engineering-unit scaling config dict
         self._log_file = None
         self._log_writer = None
+        self._poll_worker = None  # the in-flight TagPollWorker, if a poll cycle is running
+        # Workers told to stop (Stop Monitoring, disconnect) but not yet actually finished
+        # -- held here so nothing drops the last Python reference to a still-running
+        # QThread, which crashes. Each one removes itself via its own `finished` signal.
+        self._retiring_poll_workers = set()
+        self._current_poll_timestamp = None
+        self._current_poll_log_timestamp = None
 
     def start_csv_logging(self, file_path):
         """Start appending one row per poll tick to file_path."""
@@ -212,28 +221,29 @@ class MonitoringManager:
         self._monitoring_read_value_cache.clear()
         self._monitoring_write_value_cache.clear()
 
-    def read_tag_for_monitoring(self, tag, is_one_based=None):
-        """Read data for a specific tag during monitoring."""
-        try:
-            protocol_offset = self.parent._tag_user_address_to_offset(tag)
-        except ValueError as e:
-            self.parent._log(f"Address error for tag {tag['name']}: {e}")
-            return None
-        
+    def read_tag_for_monitoring(self, tag, modbus):
+        """Read data for a specific tag during monitoring. Takes `modbus` explicitly
+        (rather than reading self.parent.modbus itself) so a poll cycle keeps talking to
+        the exact client it started with, even if the caller runs on a background thread
+        -- self.parent.modbus can be replaced by a disconnect/reconnect that happens on the
+        GUI thread while this is still in flight. Raises ValueError straight through on a
+        bad address/offset instead of logging it here -- logging touches a Qt widget, and
+        the caller (TagPollWorker, on its own thread) is what has to handle that."""
+        protocol_offset = self.parent._tag_user_address_to_offset(tag)
         if tag["type"] == "Coil":
-            return self.parent.modbus.read_coils(protocol_offset, tag["count"])
+            return modbus.read_coils(protocol_offset, tag["count"])
         if tag["type"] == "Discrete Input":
-            return self.parent.modbus.read_discrete_inputs(protocol_offset, tag["count"])
+            return modbus.read_discrete_inputs(protocol_offset, tag["count"])
         if tag["type"] == "Holding Register":
-            return self.parent.modbus.read_registers(protocol_offset, tag["count"])
-        return self.parent.modbus.read_input_registers(protocol_offset, tag["count"])
+            return modbus.read_registers(protocol_offset, tag["count"])
+        return modbus.read_input_registers(protocol_offset, tag["count"])
 
-    def _device_reachable(self, timeout=0.2):
+    def _device_reachable(self, modbus, timeout=0.2):
         """Bare TCP connect check against the current target -- used in Fast LAN Mode to
         tell 'device unplugged' from 'this one register errored' after a poll failure,
         without paying pymodbus's own connect+read cost a second time. Serial links have
-        no equivalent cheap check, so they're always treated as reachable."""
-        modbus = self.parent.modbus
+        no equivalent cheap check, so they're always treated as reachable. Takes `modbus`
+        explicitly for the same snapshot-not-live-attribute reason as read_tag_for_monitoring."""
         if modbus is None or getattr(modbus, "mode", "tcp") != "tcp":
             return True
         try:
@@ -322,7 +332,13 @@ class MonitoringManager:
         return ", ".join(f"0x{int(v) & 0xFFFF:04X}" for v in values)
 
     def update_monitored_data(self):
-        """Update monitored data in the table."""
+        """Launch one Tag Monitoring poll cycle on a background TagPollWorker instead of
+        reading every tag right here on the GUI thread -- a single unreachable device used
+        to freeze the whole window for timeout*retries seconds, every cycle, since this
+        ran as a plain blocking loop on a QTimer tick. The actual per-tag results and the
+        cycle-level wrap-up arrive later via _on_tag_poll_result/_on_poll_cycle_complete,
+        reproducing exactly what this loop used to do inline, just off the GUI thread for
+        the parts that block (validation, the interlock, and the wire call itself)."""
         if not self.parent.modbus or not self.parent.monitoring_active:
             return
         if self._monitoring_poll_in_progress:
@@ -335,96 +351,132 @@ class MonitoringManager:
 
         self._monitoring_poll_in_progress = True
         self.parent.monitoring_timer.stop()
-        failed_count = 0
-        # Fast LAN Mode: once a probe confirms the device itself is gone, skip straight to
-        # ERROR for the rest of this cycle's tags instead of paying a timeout for each one.
-        device_unreachable = False
-        timestamp = time.strftime("%H:%M:%S")
-        log_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        try:
-            for tag in tags:
-                if device_unreachable:
-                    failed_count += 1
-                    self.add_monitoring_row(
-                        tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "",
-                        tag["comment"], timestamp
-                    )
-                    self._log_row(tag, log_timestamp, "ERROR", "")
-                    continue
-                try:
-                    self.parent._validate_tag_request(tag, "read")
-                    if not self.parent._begin_modbus_operation(tag, "read"):
-                        self.parent._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
-                        continue
+        self._current_poll_timestamp = time.strftime("%H:%M:%S")
+        self._current_poll_log_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
-                    start_time = time.perf_counter()
-                    try:
-                        value = self.read_tag_for_monitoring(tag)
-                    finally:
-                        self.parent._end_modbus_operation(tag, "read")
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
+        worker = TagPollWorker(
+            tags, self.parent.modbus, self.read_tag_for_monitoring, self.parent._validate_tag_request,
+            self.parent._reserve_range, self.parent._release_range, self.parent._operation_range,
+            self._device_reachable, getattr(self.parent, "fast_lan_mode", False),
+        )
+        worker.tag_result.connect(self._on_tag_poll_result)
+        worker.cycle_complete.connect(self._on_poll_cycle_complete)
+        worker.device_unreachable.connect(self._on_poll_device_unreachable)
+        self._poll_worker = worker
+        worker.start()
 
-                    if value is None:
-                        failed_count += 1
-                        self.add_monitoring_row(
-                            tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "",
-                            tag["comment"], timestamp
-                        )
-                        self._log_row(tag, log_timestamp, "ERROR", "")
-                        extra = ""
-                        if self.parent.modbus is not None and getattr(self.parent.modbus, "last_error", None):
-                            extra = f" ({self.parent.modbus.last_error})"
-                        self.parent._log(f"Monitoring read failed for {tag['name']} at {tag['address']}{extra}")
-                        self.parent._display_raw_data(
-                            f"Tag[{tag['name']}]", None, elapsed_ms, function_code_for(tag["type"], is_write=False)
-                        )
-                        if getattr(self.parent, "fast_lan_mode", False) and not self._device_reachable():
-                            device_unreachable = True
-                            self.parent._log(
-                                "Fast LAN Mode: device unreachable, skipping remaining tags this cycle"
-                            )
-                        continue
+    def _on_tag_poll_result(self, tag, value, elapsed_ms, status, detail):
+        """GUI-thread handler for one tag's result from the poll worker -- does exactly
+        what the old inline loop body did after getting a value back, since all of this
+        touches Qt widgets (the Tags table, the System Log, the Raw Data tab) and must
+        stay off the worker thread."""
+        timestamp = self._current_poll_timestamp
+        log_timestamp = self._current_poll_log_timestamp
 
-                    display_value = self.format_monitoring_value(tag, value)
-                    raw_hex = self.format_raw_hex(tag, value)
-                    in_alarm = self.check_alarm(tag, value)
-                    engineering_value = self.compute_engineering_value(tag, value)
+        if status == "ok":
+            display_value = self.format_monitoring_value(tag, value)
+            raw_hex = self.format_raw_hex(tag, value)
+            in_alarm = self.check_alarm(tag, value)
+            engineering_value = self.compute_engineering_value(tag, value)
+            self.parent._display_raw_data(
+                f"Tag[{tag['name']}]", value, elapsed_ms, function_code_for(tag["type"], is_write=False)
+            )
+            self.add_monitoring_row(
+                tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
+                tag["comment"], timestamp, raw_hex, in_alarm, engineering_value
+            )
+            self._log_row(tag, log_timestamp, display_value, raw_hex)
+            return
 
-                    # Display raw data in diagnostics for Tags monitoring
-                    self.parent._display_raw_data(
-                        f"Tag[{tag['name']}]", value, elapsed_ms, function_code_for(tag["type"], is_write=False)
-                    )
+        self.add_monitoring_row(
+            tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "", tag["comment"], timestamp
+        )
+        self._log_row(tag, log_timestamp, "ERROR", "")
 
-                    self.add_monitoring_row(
-                        tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                        tag["comment"], timestamp, raw_hex, in_alarm, engineering_value
-                    )
-                    self._log_row(tag, log_timestamp, display_value, raw_hex)
-                except Exception as e:
-                    failed_count += 1
-                    self.add_monitoring_row(
-                        tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "",
-                        tag["comment"], timestamp
-                    )
-                    self._log_row(tag, log_timestamp, "ERROR", "")
-                    self.parent._log(f"Monitoring error for {tag['name']}: {e}")
-                    continue
+        if status == "read_failed":
+            extra = f" ({detail})" if detail else ""
+            self.parent._log(f"Monitoring read failed for {tag['name']} at {tag['address']}{extra}")
+            self.parent._display_raw_data(
+                f"Tag[{tag['name']}]", None, elapsed_ms, function_code_for(tag["type"], is_write=False)
+            )
+        elif status == "busy":
+            self.parent._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
+        elif status == "exception":
+            self.parent._log(f"Monitoring error for {tag['name']}: {detail}")
+        # status == "unreachable": the one-time transition message already went out via
+        # _on_poll_device_unreachable -- nothing more to log for each tag skipped after it.
 
-            # Only treat this as a lost-connection-style failure (and count
-            # toward auto-stop) when every tag failed -- a single bad tag
-            # (e.g. a newly added one with a bad address/format) shouldn't
-            # halt polling for the rest, nor trip the auto-stop interlock.
-            if tags and failed_count == len(tags):
-                self._monitoring_failure_count += 1
-                if self._monitoring_failure_count >= self._monitoring_max_failures:
-                    self.parent._log(f"Stopping monitoring after {self._monitoring_failure_count} consecutive failures")
-                    self.parent._monitoring_paused_by_disconnect = True
-                    self.parent._stop_monitoring()
-                    return
-            else:
-                self._monitoring_failure_count = 0
-        finally:
-            self._monitoring_poll_in_progress = False
-            if self.parent.monitoring_active:
-                self.parent.monitoring_timer.start()
+    def _on_poll_device_unreachable(self):
+        self.parent._log("Fast LAN Mode: device unreachable, skipping remaining tags this cycle")
+
+    def _on_poll_cycle_complete(self, failed_count, total_count):
+        """GUI-thread handler for the end of a poll cycle -- the auto-stop-after-N-failures
+        logic and restarting monitoring_timer, exactly as the old inline loop's finally
+        block did, just triggered by the worker finishing instead of falling out of a loop."""
+        self._poll_worker = None
+        self._monitoring_poll_in_progress = False
+
+        # Only treat this as a lost-connection-style failure (and count toward auto-stop)
+        # when every tag failed -- a single bad tag (e.g. a newly added one with a bad
+        # address/format) shouldn't halt polling for the rest, nor trip the auto-stop
+        # interlock.
+        if total_count and failed_count == total_count:
+            self._monitoring_failure_count += 1
+            if self._monitoring_failure_count >= self._monitoring_max_failures:
+                self.parent._log(f"Stopping monitoring after {self._monitoring_failure_count} consecutive failures")
+                self.parent._monitoring_paused_by_disconnect = True
+                self.parent._stop_monitoring()
+                return
+        else:
+            self._monitoring_failure_count = 0
+
+        if self.parent.monitoring_active:
+            self.parent.monitoring_timer.start()
+
+    def stop_poll_worker(self, wait=False):
+        """Stop the in-flight poll worker, if any. Non-blocking by default (Stop
+        Monitoring button click): self.modbus stays alive either way, so there's nothing
+        unsafe about letting a worker finish its current tag in the background --
+        disconnecting its signals here is what actually matters, so a late-arriving result
+        from a stopped cycle can't resurrect the Tags table or restart monitoring_timer
+        after the user asked for it to stop. wait=True additionally blocks until this
+        specific worker (not any earlier one still retiring -- see wait_for_idle) has
+        actually finished; callers that need a hard guarantee nothing is still touching
+        self.modbus (disconnect, Register Scanner's pause) should call wait_for_idle()
+        instead, since a *previous* Stop Monitoring click's worker could still be retiring
+        in the background when this one starts."""
+        worker = self._poll_worker
+        self._poll_worker = None
+        if worker is None:
+            return
+
+        worker.stop()
+        for signal, slot in (
+            (worker.tag_result, self._on_tag_poll_result),
+            (worker.cycle_complete, self._on_poll_cycle_complete),
+            (worker.device_unreachable, self._on_poll_device_unreachable),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+
+        if wait:
+            worker.wait(10000)
+        elif worker.isRunning():
+            # Keep a strong reference until it actually finishes -- dropping the last
+            # Python reference to a still-running QThread is undefined behavior.
+            self._retiring_poll_workers.add(worker)
+            worker.finished.connect(lambda w=worker: self._retiring_poll_workers.discard(w))
+
+    def wait_for_idle(self, timeout_ms=10000):
+        """Block until every poll worker this manager knows about -- the current one, if
+        any, plus any still-retiring ones from an earlier non-blocking stop_poll_worker
+        call -- has actually finished touching self.modbus. Needed before anything that
+        tears down or replaces the shared client (disconnect) or starts a second thread
+        against it with no interlock of its own (Register Scanner, which relies entirely
+        on everything else being truly stopped first, not on the range interlock)."""
+        self.stop_poll_worker(wait=False)
+        for worker in list(self._retiring_poll_workers):
+            worker.wait(timeout_ms)
 
