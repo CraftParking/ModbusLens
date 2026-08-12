@@ -7,6 +7,7 @@ import struct
 import csv
 import math
 import socket
+import threading
 from pathlib import Path
 
 try:
@@ -179,6 +180,19 @@ class ModbusGUI(QMainWindow):
         self._updating_tag_table = False
         self._modbus_busy = False
         self._active_ranges = []
+        # Guards _active_ranges/_modbus_busy's check-then-mutate sequence in
+        # _reserve_range/_release_range. _modbus_busy is a single global flag -- any
+        # reservation attempt is rejected outright while it's set, regardless of whether
+        # the requested range actually overlaps anything active -- so despite the
+        # "range" framing this already acts as a de facto mutex around the one wire call
+        # each reservation brackets. That was safe with a plain bool as long as every
+        # caller ran on the GUI thread (Register Scanner/Serial Discovery are the only
+        # prior background-thread callers, and both fully pause every other poller before
+        # running, so they never actually raced this flag). Tag Monitoring's poll worker
+        # breaks that assumption -- it runs continuously alongside Address Table/Trend's
+        # GUI-thread polls, so the check-then-set here needs a real lock now, not just
+        # GIL-assisted luck.
+        self._active_ranges_lock = threading.Lock()
         # Opt-out of the per-write confirm dialog, scoped to the current connection --
         # reset on every new connect() so it can't silently stay suppressed for months
         # the way SafetyWarningDialog's permanent "don't show again" can (see notes.md).
@@ -1414,11 +1428,12 @@ class ModbusGUI(QMainWindow):
         self._reconnect_attempt = 0
         self._monitoring_paused_by_disconnect = False
 
-        # A Scanner worker thread may still be mid-read on self.modbus -- stop and wait
-        # for it before tearing the connection down, otherwise it can hit a closed/
-        # replaced client from another thread.
+        # A Scanner worker thread, or Tag Monitoring's poll worker, may still be mid-read
+        # on self.modbus -- stop and wait for each before tearing the connection down,
+        # otherwise it can hit a closed/replaced client from another thread.
         if hasattr(self, 'register_scanner_widget'):
             self.register_scanner_widget.stop_all_scans()
+        self.monitoring_manager.wait_for_idle()
 
         if self.modbus:
             self.modbus.disconnect()
@@ -2225,24 +2240,28 @@ Unit ID: {unit_id}<br><br>
     def _reserve_range(self, request_range):
         """Shared busy/overlap interlock, keyed on a plain range dict (space/start/end)
         rather than a Tags-table tag -- lets other features (Address Table, Register
-        Scanner) participate in the same interlock without going through
-        _operation_range's Tags-specific addressing-mode assumption."""
-        if self._modbus_busy:
-            return False
-        for active_range in self._active_ranges:
-            if self._ranges_overlap(request_range, active_range):
+        Scanner, Trend, Script, Tag Monitoring's poll worker) participate in the same
+        interlock without going through _operation_range's Tags-specific addressing-mode
+        assumption. Locked because _modbus_busy is now checked and set from more than one
+        thread (see _active_ranges_lock's comment in __init__)."""
+        with self._active_ranges_lock:
+            if self._modbus_busy:
                 return False
+            for active_range in self._active_ranges:
+                if self._ranges_overlap(request_range, active_range):
+                    return False
 
-        self._modbus_busy = True
-        self._active_ranges.append(request_range)
-        return True
+            self._modbus_busy = True
+            self._active_ranges.append(request_range)
+            return True
 
     def _release_range(self, request_range):
-        self._active_ranges = [
-            active_range for active_range in self._active_ranges
-            if active_range != request_range
-        ]
-        self._modbus_busy = False
+        with self._active_ranges_lock:
+            self._active_ranges = [
+                active_range for active_range in self._active_ranges
+                if active_range != request_range
+            ]
+            self._modbus_busy = False
 
     def _ranges_overlap(self, left, right):
         if left["space"] != right["space"]:
@@ -2353,7 +2372,10 @@ Unit ID: {unit_id}<br><br>
         self.monitoring_timer.stop()
         self.write_poll_timer.stop()
         
-        # Reset monitoring manager state
+        # Reset monitoring manager state -- non-blocking: self.modbus stays alive across a
+        # Stop Monitoring click, so an in-flight poll worker can just finish its current
+        # tag in the background rather than needing to be waited on here.
+        self.monitoring_manager.stop_poll_worker(wait=False)
         self.monitoring_manager._monitoring_poll_in_progress = False
         self.monitoring_manager._write_poll_in_progress = False
 
