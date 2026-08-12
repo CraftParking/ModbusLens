@@ -1,8 +1,12 @@
+import csv
+import time
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit, QComboBox, QMenu, QApplication,
+    QFileDialog, QMessageBox,
 )
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QShortcut, QKeySequence
 from PySide6.QtCore import Qt
 
 MAX_RAW_DATA_ROWS = 1000  # oldest rows are dropped past this so the table can't grow unbounded
@@ -110,6 +114,12 @@ class DiagnosticsDialogs:
             table.setStyleSheet(self._raw_table_style())
             table.setContextMenuPolicy(Qt.CustomContextMenu)
             table.customContextMenuRequested.connect(self._show_raw_data_context_menu)
+            # Ctrl+C copies the current selection as text, same as the context menu's
+            # "Copy Row(s) as Text" -- WidgetWithChildrenShortcut since the table itself
+            # (not a child editor) normally holds focus here, unlike the Tags table.
+            self._raw_data_copy_shortcut = QShortcut(QKeySequence.Copy, table)
+            self._raw_data_copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            self._raw_data_copy_shortcut.activated.connect(lambda: self._copy_selected_raw_data_rows(table))
             self.parent.raw_data_table = table
 
     def show_diagnostics_logs(self):
@@ -210,6 +220,11 @@ class DiagnosticsDialogs:
         clear_btn.setStyleSheet(self.parent._get_button_style())
         clear_btn.clicked.connect(self.clear_diagnostics_raw_data)
         button_layout.addWidget(clear_btn)
+
+        export_btn = QPushButton("Export CSV")
+        export_btn.setStyleSheet(self.parent._get_button_style())
+        export_btn.clicked.connect(self._export_raw_data_csv)
+        button_layout.addWidget(export_btn)
 
         button_layout.addStretch()
         layout.addLayout(button_layout)
@@ -316,6 +331,12 @@ class DiagnosticsDialogs:
         elif chosen == copy_bytes_action:
             self._copy_raw_data_rows(table, rows, as_bytes=True)
 
+    def _copy_selected_raw_data_rows(self, table):
+        rows = sorted({index.row() for index in table.selectedIndexes()})
+        if not rows:
+            return
+        self._copy_raw_data_rows(table, rows, as_bytes=False)
+
     @staticmethod
     def _copy_raw_data_rows(table, rows, as_bytes):
         """as_bytes=False copies every column, tab-separated -- a full record of the
@@ -332,6 +353,37 @@ class DiagnosticsDialogs:
             else:
                 lines.append("\t".join(table.item(row, col).text() for col in range(table.columnCount())))
         QApplication.clipboard().setText("\n".join(lines))
+
+    def _export_raw_data_csv(self):
+        """Export the currently visible Raw Data rows (respects the text/status filter) to
+        CSV -- mirrors the Tags tab's existing Export CSV, which this table never had."""
+        table = getattr(self.parent, 'raw_data_table', None)
+        if table is None:
+            return
+        rows = [row for row in range(table.rowCount()) if not table.isRowHidden(row)]
+        if not rows:
+            QMessageBox.warning(self.parent, "No Data", "No raw data rows to export.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.parent, "Export Raw Data CSV", f"raw_data_{time.strftime('%Y%m%d_%H%M%S')}.csv", "CSV Files (*.csv)"
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(RAW_DATA_COLUMNS)
+                for row in rows:
+                    writer.writerow([table.item(row, col).text() for col in range(table.columnCount())])
+        except OSError as e:
+            self.parent._log(f"Error exporting raw data CSV: {e}")
+            QMessageBox.critical(self.parent, "Error", f"Failed to export raw data: {e}")
+            return
+
+        self.parent._log(f"Exported {len(rows)} raw data rows to {file_path}")
+        QMessageBox.information(self.parent, "Export Complete", f"Successfully exported {len(rows)} rows to CSV file!")
 
     def clear_diagnostics_logs(self):
         """Clear all diagnostics logs."""

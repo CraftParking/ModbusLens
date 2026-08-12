@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton
 )
 from PySide6.QtCore import Qt, QTimer, QEvent
-from PySide6.QtGui import QColor, QIcon, QActionGroup
+from PySide6.QtGui import QColor, QIcon, QActionGroup, QShortcut, QKeySequence
 
 # Add the gui directory to the path for relative imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -86,6 +86,26 @@ class TagTableWidget(QTableWidget):
         self._drop_indicator.setFixedHeight(2)
         self._drop_indicator.hide()
         self.verticalHeader().installEventFilter(self)
+
+        # Delete key removes the selected row(s), mirroring "Remove Selected Tag". Every
+        # cell here is a live QLineEdit/QComboBox/QSpinBox/QCheckBox (see class docstring), so
+        # this needs WidgetWithChildrenShortcut to fire no matter which cell widget currently
+        # holds focus -- QLineEdit/QSpinBox already claim a plain Delete for their own
+        # in-place editing (via ShortcutOverride), so this only actually fires when focus is on
+        # a combo/checkbox cell or the table itself, never mid-edit of a name/comment field.
+        self._delete_shortcut = QShortcut(QKeySequence(Qt.Key_Delete), self)
+        self._delete_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self._delete_shortcut.activated.connect(main_window._remove_monitoring_tag)
+
+        # Ctrl+C copies the selected row(s) the same way the context menu's "Copy Row(s)"
+        # does. QLineEdit already claims Ctrl+C for its own text selection via
+        # ShortcutOverride, so like Delete above, this only fires from a combo/checkbox/
+        # spinbox cell or the table itself -- never steals a mid-edit text copy.
+        self._copy_shortcut = QShortcut(QKeySequence.Copy, self)
+        self._copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self._copy_shortcut.activated.connect(
+            lambda: main_window._copy_tag_rows(main_window._get_selected_tag_rows())
+        )
 
     def eventFilter(self, watched, event):
         if watched is self.verticalHeader():
@@ -1190,14 +1210,51 @@ class ModbusGUI(QMainWindow):
         self._update_tag_buttons_state()
 
     def _show_tag_context_menu(self, pos):
-        row = self.monitoring_tag_table.rowAt(pos.y())
+        table = self.monitoring_tag_table
+        row = table.rowAt(pos.y())
         if row < 0:
             return
+        selected_rows = sorted(self._get_selected_tag_rows())
+        if row not in selected_rows:
+            # Right-clicking a row that isn't already selected should act on that row,
+            # not whatever was selected before -- same convention as the Raw Data table.
+            table.selectRow(row)
+            selected_rows = [row]
+
         menu = QMenu(self)
         alarm_action = menu.addAction("Configure Alarm...")
-        action = menu.exec(self.monitoring_tag_table.viewport().mapToGlobal(pos))
+        menu.addSeparator()
+        copy_action = menu.addAction("Copy Row(s)")
+        action = menu.exec(table.viewport().mapToGlobal(pos))
         if action == alarm_action:
             self._configure_tag_alarm(row)
+        elif action == copy_action:
+            self._copy_tag_rows(selected_rows)
+
+    def _copy_tag_rows(self, rows):
+        """Copy every column of the given Tags-table rows, tab-separated, one line per row --
+        reads the live cell widgets directly (not the underlying tag data) so it reflects
+        exactly what's on screen, including read-only Read Value/Raw Hex/Engineering Value."""
+        if not rows:
+            return
+        table = self.monitoring_tag_table
+        lines = []
+        for row in sorted(rows):
+            cells = [self._tag_cell_text(table.cellWidget(row, col)) for col in range(table.columnCount())]
+            lines.append("\t".join(cells))
+        QApplication.clipboard().setText("\n".join(lines))
+
+    @staticmethod
+    def _tag_cell_text(widget):
+        if isinstance(widget, QComboBox):
+            return widget.currentText()
+        if isinstance(widget, QCheckBox):
+            return "Yes" if widget.isChecked() else "No"
+        if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            return str(widget.value())
+        if isinstance(widget, QLineEdit):
+            return widget.text()
+        return ""
 
     def _configure_tag_alarm(self, row):
         tags_by_row = {tag["row"]: tag for tag in self._get_monitoring_tags()}
