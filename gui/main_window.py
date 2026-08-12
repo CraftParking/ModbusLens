@@ -2201,7 +2201,32 @@ Unit ID: {unit_id}<br><br>
                 raise ValueError(f"{value_format} requires an even count")
 
     def _begin_modbus_operation(self, tag, operation):
-        request_range = self._operation_range(tag, operation)
+        return self._reserve_range(self._operation_range(tag, operation))
+
+    def _end_modbus_operation(self, tag, operation):
+        self._release_range(self._operation_range(tag, operation))
+
+    def _operation_range(self, tag, operation):
+        """Build a range dict for the Tags table's own interlock bookkeeping. Uses
+        self.tag_address_one_based -- the Tags table's addressing-mode toggle -- so
+        this must NOT be reused for another feature with its own independent
+        addressing mode (e.g. the Address Table has its own one/zero-based
+        checkbox); such callers should build their range dict directly with their
+        own already-computed protocol offset and call _reserve_range/_release_range."""
+        start_offset = self._tag_user_address_to_offset(tag)
+        return {
+            "operation": operation,
+            "space": tag["type"],
+            "start": start_offset,
+            "end": start_offset + tag["count"] - 1,
+            "tag": tag["name"],
+        }
+
+    def _reserve_range(self, request_range):
+        """Shared busy/overlap interlock, keyed on a plain range dict (space/start/end)
+        rather than a Tags-table tag -- lets other features (Address Table, Register
+        Scanner) participate in the same interlock without going through
+        _operation_range's Tags-specific addressing-mode assumption."""
         if self._modbus_busy:
             return False
         for active_range in self._active_ranges:
@@ -2212,23 +2237,12 @@ Unit ID: {unit_id}<br><br>
         self._active_ranges.append(request_range)
         return True
 
-    def _end_modbus_operation(self, tag, operation):
-        request_range = self._operation_range(tag, operation)
+    def _release_range(self, request_range):
         self._active_ranges = [
             active_range for active_range in self._active_ranges
             if active_range != request_range
         ]
         self._modbus_busy = False
-
-    def _operation_range(self, tag, operation):
-        start_offset = self._tag_user_address_to_offset(tag)
-        return {
-            "operation": operation,
-            "space": tag["type"],
-            "start": start_offset,
-            "end": start_offset + tag["count"] - 1,
-            "tag": tag["name"],
-        }
 
     def _ranges_overlap(self, left, right):
         if left["space"] != right["space"]:
