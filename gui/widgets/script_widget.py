@@ -738,16 +738,28 @@ class ScriptRunner:
             return server.read_value(data_type, address)
 
         modbus = self._require_modbus()
-        start_time = time.perf_counter()
-        if data_type == "Coil":
-            data = modbus.read_coils(address, 1)
-        elif data_type == "Discrete Input":
-            data = modbus.read_discrete_inputs(address, 1)
-        elif data_type == "Input Register":
-            data = modbus.read_input_registers(address, 1)
-        else:
-            data = modbus.read_registers(address, 1)
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+        # Same interlock join as _do_write, and for the same reason: Tag Monitoring's
+        # poll worker now runs its reads on a real background thread, so a script READ
+        # can genuinely land on the wire at the same instant as a Tags-table poll of the
+        # same register range without this.
+        request_range = {"operation": "read", "space": data_type, "start": address, "end": address, "tag": "Script"}
+        if not self.reserve_range(request_range):
+            self.log(f"READ {data_type} {address} SKIPPED -- safety interlock: range busy")
+            return None
+        try:
+            start_time = time.perf_counter()
+            if data_type == "Coil":
+                data = modbus.read_coils(address, 1)
+            elif data_type == "Discrete Input":
+                data = modbus.read_discrete_inputs(address, 1)
+            elif data_type == "Input Register":
+                data = modbus.read_input_registers(address, 1)
+            else:
+                data = modbus.read_registers(address, 1)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+        finally:
+            self.release_range(request_range)
         if self.raw_data_callback:
             self.raw_data_callback(
                 f"Script READ {data_type} {address}", data, elapsed_ms,
