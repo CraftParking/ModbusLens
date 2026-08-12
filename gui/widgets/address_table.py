@@ -494,6 +494,29 @@ class AddressTableWidget(QWidget):
     def _format_hex(value):
         return f"0x{int(value) & 0xFFFF:04X}"
 
+    # Maps get_operation_type()'s internal names to the exact "space" strings the
+    # Tags table uses (its type_combo items) -- must match so the shared
+    # busy/overlap interlock (main_window._reserve_range) actually detects overlap
+    # between an Address Table write and a Tags-table read/write on the same
+    # register space, instead of silently comparing unequal strings forever.
+    _SPACE_LABELS = {
+        "coils": "Coil",
+        "discrete_inputs": "Discrete Input",
+        "input_registers": "Input Register",
+        "holding_registers": "Holding Register",
+    }
+
+    @staticmethod
+    def _validate_register_value(value):
+        """A raw Holding Register cell accepts either an unsigned (0..65535) or a
+        signed (-32768..-1) 16-bit value -- there's no Format/type concept here
+        like the Tags table's S16/U16 columns, so this is the only range check
+        standing between a typed value and the wire. Two's-complement-masks a
+        negative value the same way _parse_register_values does for S16."""
+        if value < -32768 or value > 65535:
+            raise ValueError("register value out of range (-32768..65535)")
+        return value & 0xFFFF
+
     def update_table_values(self, data):
         for i in range(min(len(data), self.current_count)):
             value = data[i] if isinstance(data, list) else data
@@ -536,7 +559,12 @@ class AddressTableWidget(QWidget):
             if "Coils" in self.current_function:
                 value = bool(int(value_text)) if value_text else False
             else:
+                # Only Holding Register writes reach this branch -- every coil write
+                # function (single or multiple) uses the checkbox widget instead (see
+                # the "Coil" in function check above create_address_table's cell
+                # setup), so this is always a 16-bit register value.
                 value = int(value_text) if value_text else 0
+                value = self._validate_register_value(value)
 
             self.current_data[address] = value
 
@@ -609,21 +637,41 @@ class AddressTableWidget(QWidget):
                 self.log(f"Address error: {e}")
                 return False
 
-            start_time = time.perf_counter()
-            if "Write Single Coil" in self.current_function:
-                success = self.parent_window.modbus.write_coil(protocol_offset, value)
-            elif "Write Single Register" in self.current_function:
-                success = self.parent_window.modbus.write_register(protocol_offset, value)
-            elif "Write Multiple Coils" in self.current_function:
-                # Each row is edited independently, so this only ever writes one coil at a time
-                success = self.parent_window.modbus.write_coils(protocol_offset, [value])
-            elif "Write Multiple Registers" in self.current_function:
-                # Each row is edited independently, so this only ever writes one register at a time
-                success = self.parent_window.modbus.write_registers(protocol_offset, [value])
-            else:
-                self.log(f"Error: Write operation not supported for function: {self.current_function}")
+            # Join the same busy/overlap interlock the Tags table's writes use
+            # (main_window._reserve_range/_release_range) -- without this, an
+            # Address Table write could land on the wire mid-poll of the same
+            # register range from Tags Monitoring/Trend/Register Scanner.
+            request_range = {
+                "operation": "write",
+                "space": self._SPACE_LABELS.get(self.get_operation_type(self.current_function)),
+                "start": protocol_offset,
+                "end": protocol_offset,
+                "tag": f"AddressTable[{self.current_function}]",
+            }
+            has_interlock = hasattr(self.parent_window, "_reserve_range")
+            if has_interlock and not self.parent_window._reserve_range(request_range):
+                self.log(f"Safety interlock: skipped write at address {address} because the range is busy")
                 return False
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+            try:
+                start_time = time.perf_counter()
+                if "Write Single Coil" in self.current_function:
+                    success = self.parent_window.modbus.write_coil(protocol_offset, value)
+                elif "Write Single Register" in self.current_function:
+                    success = self.parent_window.modbus.write_register(protocol_offset, value)
+                elif "Write Multiple Coils" in self.current_function:
+                    # Each row is edited independently, so this only ever writes one coil at a time
+                    success = self.parent_window.modbus.write_coils(protocol_offset, [value])
+                elif "Write Multiple Registers" in self.current_function:
+                    # Each row is edited independently, so this only ever writes one register at a time
+                    success = self.parent_window.modbus.write_registers(protocol_offset, [value])
+                else:
+                    self.log(f"Error: Write operation not supported for function: {self.current_function}")
+                    return False
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+            finally:
+                if has_interlock:
+                    self.parent_window._release_range(request_range)
 
             if hasattr(self.parent_window, '_display_raw_data'):
                 self.parent_window._display_raw_data(
