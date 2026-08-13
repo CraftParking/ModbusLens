@@ -11,6 +11,18 @@ from core.modbus_client import ModbusClient
 # Network Scanner's 50ms IP-probe delay: a fast timeout shouldn't turn into flooding.
 PROBE_DELAY_MS = 20
 
+
+def modbus_rtu_t35_ms(baud):
+    """Modbus RTU's own minimum inter-frame silent interval (3.5 character times).
+    Fixed at 1.75ms above 19200 baud per spec; below that it scales with the baud rate,
+    using the spec's own fixed 11-bit character time (start + 8 data + parity/stop)
+    regardless of the parity/stopbits actually in use -- the spec makes that same
+    simplification. At low baud (e.g. 1200) this is well past the flat PROBE_DELAY_MS
+    floor above (~32ms vs. 20ms); at anything above ~2400 baud the floor already covers it."""
+    if baud > 19200:
+        return 1.75
+    return (3.5 * 11 / baud) * 1000
+
 # Common serial settings to sweep -- byte size is deliberately not swept, since 8 data
 # bits is the near-universal default and a fourth dimension would multiply the already
 # large combination count for little benefit.
@@ -106,7 +118,7 @@ class SerialParamScanWorker(QThread):
                 self.output.emit(f"  MATCH: {label}")
 
             self.progress.emit(int((i + 1) / total * 100))
-            self.msleep(PROBE_DELAY_MS)
+            self.msleep(int(round(max(PROBE_DELAY_MS, modbus_rtu_t35_ms(baud)))))
 
         self.output.emit("Scan stopped." if self.should_stop else "Scan complete.")
         self.scan_complete.emit(matches)

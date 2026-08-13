@@ -70,6 +70,31 @@ def compute_scan_network(host_ip, subnet_info):
     return network
 
 
+def parse_custom_scan_range(range_text):
+    """Parse a 'START_IP-END_IP' custom scan range (e.g. '192.168.1.10-192.168.1.50') into
+    (base_ip, host_count) for NetworkScanner, which only ever varies the last octet of a
+    fixed three-octet prefix. This is how a VPN user targets the actual routed remote
+    subnet directly, bypassing compute_scan_network's local-NIC netmask lookup entirely --
+    that lookup reflects the local interface, which on a VPN has nothing to do with the
+    remote subnet actually being routed to."""
+    parts = range_text.split("-")
+    if len(parts) != 2:
+        raise ValueError("Custom range must be START_IP-END_IP, e.g. 192.168.1.10-192.168.1.50")
+    start_text, end_text = (p.strip() for p in parts)
+    try:
+        start = ipaddress.IPv4Address(start_text)
+        end = ipaddress.IPv4Address(end_text)
+    except ValueError:
+        raise ValueError(f"Invalid IP address in custom range: {range_text}")
+
+    if start_text.rsplit(".", 1)[0] != end_text.rsplit(".", 1)[0]:
+        raise ValueError("Custom range start and end must share the same first three octets (only the last octet is scanned)")
+    if end < start:
+        raise ValueError("Custom range end must not be before its start")
+
+    return str(start), int(end) - int(start) + 1
+
+
 def is_ip_in_subnet(ip, subnet_info):
     """Check if an IP is in the local subnet."""
     if not subnet_info:
@@ -1293,9 +1318,29 @@ class NetworkDiagnosticsDialog:
                 }
             """)
             input_layout.addWidget(self.port_input)
-            
+
             layout.addLayout(input_layout)
-            
+
+            # Custom scan range (optional) -- overrides the auto-detected local subnet for
+            # Discover Devices, e.g. when scanning a VPN-routed remote subnet the local NIC's
+            # own netmask has nothing to do with.
+            range_layout = QHBoxLayout()
+            range_layout.addWidget(QLabel("Custom Range:"))
+            self.range_input = QLineEdit()
+            self.range_input.setPlaceholderText(
+                "Optional, e.g. 192.168.1.10-192.168.1.50 -- leave blank to auto-detect subnet"
+            )
+            self.range_input.setStyleSheet("""
+                QLineEdit {
+                    padding: 5px;
+                    border: 1px solid #ccc;
+                    border-radius: 4px;
+                    font-size: 12px;
+                }
+            """)
+            range_layout.addWidget(self.range_input)
+            layout.addLayout(range_layout)
+
             # Progress bar for device discovery
             self.progress_bar = QProgressBar()
             self.progress_bar.setVisible(False)
@@ -1758,15 +1803,26 @@ class NetworkDiagnosticsDialog:
         self.discovered_devices.clear()
         self.modbus_devices.clear()  # Clear previous Modbus probe results
 
-        # Get local subnet info for Modbus probing
-        self.subnet_info = get_local_subnet_info(
-            self.selected_interface["ip"] if self.selected_interface else None
-        )
+        range_text = self.range_input.text().strip() if hasattr(self, "range_input") else ""
+        if range_text:
+            # Custom range bypasses the local-subnet lookup entirely -- this is the VPN case:
+            # the local NIC's own netmask has nothing to do with the remote routed subnet.
+            try:
+                base_ip, host_count = parse_custom_scan_range(range_text)
+            except ValueError as e:
+                self.output_text.setText(f"Error: {e}")
+                return
+            self.subnet_info = None
+        else:
+            # Get local subnet info for Modbus probing
+            self.subnet_info = get_local_subnet_info(
+                self.selected_interface["ip"] if self.selected_interface else None
+            )
 
-        # Size the scan to the interface's real subnet mask instead of a hardcoded /24
-        scan_network = compute_scan_network(host, self.subnet_info)
-        base_ip = str(scan_network.network_address)
-        host_count = scan_network.num_addresses
+            # Size the scan to the interface's real subnet mask instead of a hardcoded /24
+            scan_network = compute_scan_network(host, self.subnet_info)
+            base_ip = str(scan_network.network_address)
+            host_count = scan_network.num_addresses
 
         # Show progress bar and disable buttons
         self.progress_bar.setVisible(True)

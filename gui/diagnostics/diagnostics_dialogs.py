@@ -275,7 +275,7 @@ class DiagnosticsDialogs:
         tx_text = _format_wire_bytes(tx_bytes)
         rx_text = _format_wire_bytes(rx_bytes)
         status_text = "Success" if success else "Failed"
-        latency_text = f"{elapsed_ms:.1f}" if elapsed_ms is not None else ""
+        latency_text = f"{elapsed_ms:.2f}" if elapsed_ms is not None else ""
         c = self.parent._colors()
         status_color = QColor(c["log_connect"]) if success else QColor(c["log_error"])
         warning_color = QColor(c["log_warning"])
