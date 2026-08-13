@@ -2,6 +2,7 @@ import logging
 from typing import Optional, Union
 from pymodbus import FramerType
 from pymodbus.client import ModbusTcpClient, ModbusSerialClient
+from pymodbus.exceptions import ConnectionException, ModbusIOException
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,10 @@ class ModbusClient:
         # Numeric Modbus exception code (1=Illegal Function, 2=Illegal Data Address, ...)
         # from the device's own exception response, when last_error came from one.
         self.last_exception_code: Optional[int] = None
+        # Coarse bucket for the per-tag/device error counters (MonitoringManager.
+        # tag_error_counts): "connection", "timeout", "device_exception", "rejected", or
+        # "other" -- see _set_error/_categorize_exception below.
+        self.last_error_category: Optional[str] = None
         # Optional per-register (holding register) write bounds: address -> (min, max).
         # Enforced here so every write path -- Address Table, Tags, Script -- is
         # covered the same way, regardless of which one originated the write.
@@ -80,6 +85,35 @@ class ModbusClient:
                     f"write bound [{minimum}, {maximum}]"
                 )
         return None
+
+    def _set_error(self, message, exception_code=None, category="other"):
+        """Central place to record a failed operation. last_error/last_exception_code
+        behave exactly as before; last_error_category is the new coarse bucket the
+        per-tag/device error counters group by:
+        - "connection": not connected at all, or a socket-level failure (OSError/
+          ConnectionException).
+        - "timeout": pymodbus's ModbusIOException -- covers both a true timeout and an
+          unparseable/garbled (e.g. CRC-failed) frame that never resolved to a valid
+          response. pymodbus doesn't distinguish those two at the exception level, so
+          this deliberately does NOT invent a separate "CRC" bucket it can't actually
+          tell apart from a timeout.
+        - "device_exception": the device replied, but with a real Modbus exception code
+          (Illegal Data Address, etc.) -- not a communications failure at all.
+        - "rejected": a write bound violation caught locally, before anything reached
+          the wire.
+        - "other": anything else."""
+        self.last_error = message
+        self.last_exception_code = exception_code
+        self.last_error_category = category
+        logger.error(message)
+
+    @staticmethod
+    def _categorize_exception(exc):
+        if isinstance(exc, (ConnectionException, OSError)):
+            return "connection"
+        if isinstance(exc, ModbusIOException):
+            return "timeout"
+        return "other"
 
     def target_description(self):
         if self.mode == "serial":
@@ -161,196 +195,192 @@ class ModbusClient:
 
     def read_coils(self, address, count):
         if not self.is_connected():
-            self.last_error = "Not connected to Modbus server"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error("Not connected to Modbus server", category="connection")
             return None
         self._reset_trace()
         try:
             result = self.client.read_coils(address, count=count, device_id=self.unit_id)
             if result.isError():
-                self.last_error = f"Error reading coils at address {address}: {result}"
-                self.last_exception_code = getattr(result, "exception_code", None)
-                logger.error(self.last_error)
+                exception_code = getattr(result, "exception_code", None)
+                self._set_error(
+                    f"Error reading coils at address {address}: {result}",
+                    exception_code=exception_code,
+                    category="device_exception" if exception_code is not None else "other",
+                )
                 return None
             self.last_error = None
             self.last_exception_code = None
+            self.last_error_category = None
             return result.bits[:count]
         except Exception as e:
-            self.last_error = f"Exception reading coils: {e}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Exception reading coils: {e}", category=self._categorize_exception(e))
             return None
 
     def read_discrete_inputs(self, address, count):
         if not self.is_connected():
-            self.last_error = "Not connected to Modbus server"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error("Not connected to Modbus server", category="connection")
             return None
         self._reset_trace()
         try:
             result = self.client.read_discrete_inputs(address, count=count, device_id=self.unit_id)
             if result.isError():
-                self.last_error = f"Error reading discrete inputs at address {address}: {result}"
-                self.last_exception_code = getattr(result, "exception_code", None)
-                logger.error(self.last_error)
+                exception_code = getattr(result, "exception_code", None)
+                self._set_error(
+                    f"Error reading discrete inputs at address {address}: {result}",
+                    exception_code=exception_code,
+                    category="device_exception" if exception_code is not None else "other",
+                )
                 return None
             self.last_error = None
             self.last_exception_code = None
+            self.last_error_category = None
             return result.bits[:count]
         except Exception as e:
-            self.last_error = f"Exception reading discrete inputs: {e}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Exception reading discrete inputs: {e}", category=self._categorize_exception(e))
             return None
 
     def read_registers(self, address, count):
         if not self.is_connected():
-            self.last_error = "Not connected to Modbus server"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error("Not connected to Modbus server", category="connection")
             return None
         self._reset_trace()
         try:
             result = self.client.read_holding_registers(address, count=count, device_id=self.unit_id)
             if result.isError():
-                self.last_error = f"Error reading registers at address {address}: {result}"
-                self.last_exception_code = getattr(result, "exception_code", None)
-                logger.error(self.last_error)
+                exception_code = getattr(result, "exception_code", None)
+                self._set_error(
+                    f"Error reading registers at address {address}: {result}",
+                    exception_code=exception_code,
+                    category="device_exception" if exception_code is not None else "other",
+                )
                 return None
             self.last_error = None
             self.last_exception_code = None
+            self.last_error_category = None
             return result.registers
         except Exception as e:
-            self.last_error = f"Exception reading registers: {e}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Exception reading registers: {e}", category=self._categorize_exception(e))
             return None
 
     def read_input_registers(self, address, count):
         if not self.is_connected():
-            self.last_error = "Not connected to Modbus server"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error("Not connected to Modbus server", category="connection")
             return None
         self._reset_trace()
         try:
             result = self.client.read_input_registers(address, count=count, device_id=self.unit_id)
             if result.isError():
-                self.last_error = f"Error reading input registers at address {address}: {result}"
-                self.last_exception_code = getattr(result, "exception_code", None)
-                logger.error(self.last_error)
+                exception_code = getattr(result, "exception_code", None)
+                self._set_error(
+                    f"Error reading input registers at address {address}: {result}",
+                    exception_code=exception_code,
+                    category="device_exception" if exception_code is not None else "other",
+                )
                 return None
             self.last_error = None
             self.last_exception_code = None
+            self.last_error_category = None
             return result.registers
         except Exception as e:
-            self.last_error = f"Exception reading input registers: {e}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Exception reading input registers: {e}", category=self._categorize_exception(e))
             return None
 
     def write_coil(self, address, value):
         if not self.is_connected():
-            self.last_error = "Not connected to Modbus server"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error("Not connected to Modbus server", category="connection")
             return False
         self._reset_trace()
         try:
             result = self.client.write_coil(address, value, device_id=self.unit_id)
             if result.isError():
-                self.last_error = f"Error writing coil at address {address}: {result}"
-                self.last_exception_code = getattr(result, "exception_code", None)
-                logger.error(self.last_error)
+                exception_code = getattr(result, "exception_code", None)
+                self._set_error(
+                    f"Error writing coil at address {address}: {result}",
+                    exception_code=exception_code,
+                    category="device_exception" if exception_code is not None else "other",
+                )
                 return False
             self.last_error = None
             self.last_exception_code = None
+            self.last_error_category = None
             return True
         except Exception as e:
-            self.last_error = f"Exception writing coil: {e}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Exception writing coil: {e}", category=self._categorize_exception(e))
             return False
 
     def write_register(self, address, value):
         if not self.is_connected():
-            self.last_error = "Not connected to Modbus server"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error("Not connected to Modbus server", category="connection")
             return False
         bounds_error = self._check_write_bounds(address, [value])
         if bounds_error:
-            self.last_error = f"Write rejected: {bounds_error}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Write rejected: {bounds_error}", category="rejected")
             return False
         self._reset_trace()
         try:
             result = self.client.write_register(address, value, device_id=self.unit_id)
             if result.isError():
-                self.last_error = f"Error writing register at address {address}: {result}"
-                self.last_exception_code = getattr(result, "exception_code", None)
-                logger.error(self.last_error)
+                exception_code = getattr(result, "exception_code", None)
+                self._set_error(
+                    f"Error writing register at address {address}: {result}",
+                    exception_code=exception_code,
+                    category="device_exception" if exception_code is not None else "other",
+                )
                 return False
             self.last_error = None
             self.last_exception_code = None
+            self.last_error_category = None
             return True
         except Exception as e:
-            self.last_error = f"Exception writing register: {e}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Exception writing register: {e}", category=self._categorize_exception(e))
             return False
 
     def write_coils(self, address, values):
         if not self.is_connected():
-            self.last_error = "Not connected to Modbus server"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error("Not connected to Modbus server", category="connection")
             return False
         self._reset_trace()
         try:
             result = self.client.write_coils(address, values, device_id=self.unit_id)
             if result.isError():
-                self.last_error = f"Error writing coils at address {address}: {result}"
-                self.last_exception_code = getattr(result, "exception_code", None)
-                logger.error(self.last_error)
+                exception_code = getattr(result, "exception_code", None)
+                self._set_error(
+                    f"Error writing coils at address {address}: {result}",
+                    exception_code=exception_code,
+                    category="device_exception" if exception_code is not None else "other",
+                )
                 return False
             self.last_error = None
             self.last_exception_code = None
+            self.last_error_category = None
             return True
         except Exception as e:
-            self.last_error = f"Exception writing coils: {e}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Exception writing coils: {e}", category=self._categorize_exception(e))
             return False
 
     def write_registers(self, address, values):
         if not self.is_connected():
-            self.last_error = "Not connected to Modbus server"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error("Not connected to Modbus server", category="connection")
             return False
         bounds_error = self._check_write_bounds(address, values)
         if bounds_error:
-            self.last_error = f"Write rejected: {bounds_error}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Write rejected: {bounds_error}", category="rejected")
             return False
         self._reset_trace()
         try:
             result = self.client.write_registers(address, values, device_id=self.unit_id)
             if result.isError():
-                self.last_error = f"Error writing registers at address {address}: {result}"
-                self.last_exception_code = getattr(result, "exception_code", None)
-                logger.error(self.last_error)
+                exception_code = getattr(result, "exception_code", None)
+                self._set_error(
+                    f"Error writing registers at address {address}: {result}",
+                    exception_code=exception_code,
+                    category="device_exception" if exception_code is not None else "other",
+                )
                 return False
             self.last_error = None
             self.last_exception_code = None
+            self.last_error_category = None
             return True
         except Exception as e:
-            self.last_error = f"Exception writing registers: {e}"
-            self.last_exception_code = None
-            logger.error(self.last_error)
+            self._set_error(f"Exception writing registers: {e}", category=self._categorize_exception(e))
             return False

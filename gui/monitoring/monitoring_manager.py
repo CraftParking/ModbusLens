@@ -354,7 +354,7 @@ class MonitoringManager:
         self._poll_worker = worker
         worker.start()
 
-    def _on_tag_poll_result(self, tag, value, elapsed_ms, status, detail):
+    def _on_tag_poll_result(self, tag, value, elapsed_ms, status, detail, category):
         """GUI-thread handler for one tag's result from the poll worker -- does exactly
         what the old inline loop body did after getting a value back, since all of this
         touches Qt widgets (the Tags table, the System Log, the Raw Data tab) and must
@@ -386,7 +386,8 @@ class MonitoringManager:
             extra = f" ({detail})" if detail else ""
             self.parent._log(f"Monitoring read failed for {tag['name']} at {tag['address']}{extra}")
             self.parent._display_raw_data(
-                f"Tag[{tag['name']}]", None, elapsed_ms, function_code_for(tag["type"], is_write=False)
+                f"Tag[{tag['name']}]", None, elapsed_ms, function_code_for(tag["type"], is_write=False),
+                error_category=category,
             )
         elif status == "busy":
             self.parent._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
