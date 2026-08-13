@@ -42,7 +42,7 @@ class TagPollWorker(QThread):
     cycle_complete = Signal(int, int)  # failed_count, total_count
 
     def __init__(self, tags, modbus, offset_of, validate_tag, reserve_range, release_range,
-                 device_reachable, fast_lan_mode):
+                 device_reachable, fast_lan_mode, shared_cache=None):
         super().__init__()
         self.tags = tags
         self.modbus = modbus
@@ -52,6 +52,7 @@ class TagPollWorker(QThread):
         self.release_range = release_range
         self.device_reachable = device_reachable
         self.fast_lan_mode = fast_lan_mode
+        self.shared_cache = shared_cache
         self.should_stop = False
 
     def stop(self):
@@ -86,37 +87,52 @@ class TagPollWorker(QThread):
                     self.tag_result.emit(tag, None, 0.0, "unreachable", "")
                 continue
 
-            request_range = {
-                "operation": "read", "space": plan["type"], "start": plan["start"],
-                "end": plan["start"] + plan["count"] - 1,
-                "tag": f"Merged[{plan['type']}] x{len(plan['members'])}",
-            }
-            if not self.reserve_range(request_range):
-                failed_count += len(plan["members"])
-                for tag, _local_offset in plan["members"]:
-                    self.tag_result.emit(tag, None, 0.0, "busy", "")
-                continue
+            block_start = plan["start"]
+            block_end = plan["start"] + plan["count"] - 1
+            cached_values = (
+                self.shared_cache.get(plan["type"], block_start, block_end) if self.shared_cache else None
+            )
 
-            start_time = time.perf_counter()
-            try:
-                block_values = _read_block(self.modbus, plan)
-            finally:
-                self.release_range(request_range)
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            if cached_values is not None:
+                # Trend already read this exact range moments ago -- reuse it instead of
+                # a second wire round-trip. No interlock reservation needed: nothing here
+                # touches the wire.
+                block_values = cached_values
+                elapsed_ms = 0.0
+            else:
+                request_range = {
+                    "operation": "read", "space": plan["type"], "start": block_start, "end": block_end,
+                    "tag": f"Merged[{plan['type']}] x{len(plan['members'])}",
+                }
+                if not self.reserve_range(request_range):
+                    failed_count += len(plan["members"])
+                    for tag, _local_offset in plan["members"]:
+                        self.tag_result.emit(tag, None, 0.0, "busy", "")
+                    continue
 
-            if block_values is None:
-                failed_count += len(plan["members"])
-                # Captured now, in this thread, right after the call that produced it --
-                # last_error lives on the shared modbus client, and by the time the GUI
-                # thread gets around to handling this signal a later block's read (already
-                # underway in this same loop) may have overwritten it.
-                last_error = getattr(self.modbus, "last_error", None) or ""
-                for tag, _local_offset in plan["members"]:
-                    self.tag_result.emit(tag, None, elapsed_ms, "read_failed", last_error)
-                if self.fast_lan_mode and not self.device_reachable(self.modbus):
-                    device_unreachable = True
-                    self.device_unreachable.emit()
-                continue
+                start_time = time.perf_counter()
+                try:
+                    block_values = _read_block(self.modbus, plan)
+                finally:
+                    self.release_range(request_range)
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+
+                if block_values is None:
+                    failed_count += len(plan["members"])
+                    # Captured now, in this thread, right after the call that produced it --
+                    # last_error lives on the shared modbus client, and by the time the GUI
+                    # thread gets around to handling this signal a later block's read (already
+                    # underway in this same loop) may have overwritten it.
+                    last_error = getattr(self.modbus, "last_error", None) or ""
+                    for tag, _local_offset in plan["members"]:
+                        self.tag_result.emit(tag, None, elapsed_ms, "read_failed", last_error)
+                    if self.fast_lan_mode and not self.device_reachable(self.modbus):
+                        device_unreachable = True
+                        self.device_unreachable.emit()
+                    continue
+
+                if self.shared_cache:
+                    self.shared_cache.put(plan["type"], block_start, block_end, block_values)
 
             for tag, local_offset in plan["members"]:
                 value = block_values[local_offset: local_offset + tag["count"]]

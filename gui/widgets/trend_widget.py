@@ -899,35 +899,46 @@ class TrendWidget(QWidget):
             offset_converter = getattr(self.parent_window, "_tag_user_address_to_offset", None)
             address = offset_converter({"address": pen.address}) if offset_converter else pen.address
 
-            # Join the same busy/overlap interlock Tags/Address Table reads and writes
-            # use -- Tag Monitoring's poll worker runs its reads on a real background
-            # thread now, so this GUI-thread poll and a worker-thread read of the same
-            # register space can genuinely land on the wire at the same instant without
-            # this. A busy tick is simply skipped, same as any other poll contention.
-            request_range = {
-                "operation": "read", "space": pen.type,
-                "start": address, "end": address + pen.count - 1, "tag": f"Trend[{pen.name}]",
-            }
-            reserve_range = getattr(self.parent_window, "_reserve_range", None)
-            release_range = getattr(self.parent_window, "_release_range", None)
-            if reserve_range and not reserve_range(request_range):
-                return None
-
-            try:
-                if pen.type == "Coil":
-                    data = modbus.read_coils(address, pen.count)
-                elif pen.type == "Discrete Input":
-                    data = modbus.read_discrete_inputs(address, pen.count)
-                elif pen.type == "Input Register":
-                    data = modbus.read_input_registers(address, pen.count)
-                else:
-                    data = modbus.read_registers(address, pen.count)
-            finally:
-                if release_range:
-                    release_range(request_range)
+            # Tag Monitoring's poll worker may have already read this exact range within
+            # the last moment (see SharedReadCache) -- reuse it instead of a second wire
+            # round-trip for the same registers. Skips the interlock entirely on a hit,
+            # same reasoning as the poll worker's own cache check: nothing touches the wire.
+            block_end = address + pen.count - 1
+            shared_cache = getattr(self.parent_window, "_shared_read_cache", None)
+            data = shared_cache.get(pen.type, address, block_end) if shared_cache else None
 
             if data is None:
-                return None
+                # Join the same busy/overlap interlock Tags/Address Table reads and writes
+                # use -- Tag Monitoring's poll worker runs its reads on a real background
+                # thread now, so this GUI-thread poll and a worker-thread read of the same
+                # register space can genuinely land on the wire at the same instant without
+                # this. A busy tick is simply skipped, same as any other poll contention.
+                request_range = {
+                    "operation": "read", "space": pen.type,
+                    "start": address, "end": block_end, "tag": f"Trend[{pen.name}]",
+                }
+                reserve_range = getattr(self.parent_window, "_reserve_range", None)
+                release_range = getattr(self.parent_window, "_release_range", None)
+                if reserve_range and not reserve_range(request_range):
+                    return None
+
+                try:
+                    if pen.type == "Coil":
+                        data = modbus.read_coils(address, pen.count)
+                    elif pen.type == "Discrete Input":
+                        data = modbus.read_discrete_inputs(address, pen.count)
+                    elif pen.type == "Input Register":
+                        data = modbus.read_input_registers(address, pen.count)
+                    else:
+                        data = modbus.read_registers(address, pen.count)
+                finally:
+                    if release_range:
+                        release_range(request_range)
+
+                if data is None:
+                    return None
+                if shared_cache:
+                    shared_cache.put(pen.type, address, block_end, data)
 
             if pen.type in ("Coil", "Discrete Input"):
                 first = data[0] if isinstance(data, list) else data

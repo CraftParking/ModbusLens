@@ -346,6 +346,7 @@ class MonitoringManager:
             tags, self.parent.modbus, self.parent._tag_user_address_to_offset, self.parent._validate_tag_request,
             self.parent._reserve_range, self.parent._release_range,
             self._device_reachable, getattr(self.parent, "fast_lan_mode", False),
+            shared_cache=getattr(self.parent, "_shared_read_cache", None),
         )
         worker.tag_result.connect(self._on_tag_poll_result)
         worker.cycle_complete.connect(self._on_poll_cycle_complete)
