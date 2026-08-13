@@ -42,6 +42,7 @@ from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
 from diagnostics.register_scanner import RegisterScannerWidget
 from diagnostics.serial_discovery import SerialDiscoveryDialog
 from monitoring.monitoring_manager import MonitoringManager
+from monitoring.shared_read_cache import SharedReadCache
 from network.network_diagnostics import NetworkDiagnosticsDialog
 
 from core.modbus_client import ModbusClient
@@ -190,6 +191,11 @@ class ModbusGUI(QMainWindow):
         # the interface to bind the TCP socket to, e.g. so a VPN + Ethernet + Wi-Fi machine
         # actually goes out the NIC the user picked instead of whatever the OS defaults to.
         self.interface_ip = None
+
+        # Shared between Tag Monitoring's poll worker and Trend's own poll timer so the
+        # exact same register range configured in both doesn't cost two wire round-trips
+        # every cycle -- see shared_read_cache.SharedReadCache.
+        self._shared_read_cache = SharedReadCache()
 
         # Initialize extracted components
         self.advanced_diagnostics = AdvancedDiagnostics()
