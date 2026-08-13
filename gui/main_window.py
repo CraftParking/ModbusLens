@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import subprocess
 import logging
 import time
@@ -1091,7 +1092,12 @@ class ModbusGUI(QMainWindow):
         row = self._find_monitoring_tag_row(sender, 0)
         if row is None:
             return
-        error = validate_tag_name(sender.text())
+        name = sender.text()
+        if not self._tag_name_used_in_script(name):
+            # The strict identifier grammar only matters for a tag a Script actually
+            # references by bare name -- see _tag_name_used_in_script.
+            return
+        error = validate_tag_name(name)
         if error:
             QMessageBox.warning(self, "Invalid Tag Name", error)
             try:
@@ -1099,6 +1105,22 @@ class ModbusGUI(QMainWindow):
                 sender.clear()
             finally:
                 self._updating_tag_table = False
+
+    def _tag_name_used_in_script(self, name):
+        """validate_tag_name's strict [A-Za-z_][A-Za-z0-9_]* rule exists because tag names
+        are bare tokens in the WRITE/READ/LET script grammar -- the script parser
+        (_parse_write_args/_parse_read_args in script_widget.py) already enforces that same
+        grammar itself, independently, at parse time, whenever a script line actually
+        references a tag by name. So this only needs to gate the UI-level warning, not
+        correctness: a tag never mentioned in the current Script text is free to use any
+        name (spaces, punctuation, etc.), since nothing ever tokenizes it as an identifier.
+        A whole-word text search is a deliberately simple heuristic (vs. re-parsing the
+        script) -- good enough to catch the common case without a fragile dependency on the
+        rest of the script's text being currently valid."""
+        name = name.strip()
+        if not name or not hasattr(self, "script_widget"):
+            return False
+        return re.search(r"\b" + re.escape(name) + r"\b", self.script_widget.editor.toPlainText()) is not None
 
     def _on_monitoring_tag_address_edited(self, _value=None):
         # Bound to editingFinished (not valueChanged) so the duplicate-address
