@@ -122,6 +122,7 @@ class MonitoringManager:
             raw_hex_widget = self.parent.monitoring_tag_table.cellWidget(row, 7)
             write_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 8)
             comment_widget = self.parent.monitoring_tag_table.cellWidget(row, 9)
+            enabled_widget = self.parent.monitoring_tag_table.cellWidget(row, 13)
 
             if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, format_widget, read_value_widget, raw_hex_widget, write_value_widget, comment_widget)):
                 continue
@@ -151,6 +152,7 @@ class MonitoringManager:
                 "count": count,
                 "format": value_format,
                 "comment": comment,
+                "enabled": enabled_widget.isChecked() if enabled_widget else True,
             })
         return tags
 
@@ -331,7 +333,7 @@ class MonitoringManager:
             self.parent._log("Safety interlock: skipped monitor tick because previous poll is still running")
             return
 
-        tags = [tag for tag in self.get_monitoring_tags() if tag["mode"] == "Read"]
+        tags = [tag for tag in self.get_monitoring_tags() if tag["mode"] == "Read" and tag["enabled"]]
         if not tags:
             return
 
