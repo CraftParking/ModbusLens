@@ -581,6 +581,14 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.monitoring_tag_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.monitoring_tag_table.customContextMenuRequested.connect(self._show_tag_context_menu)
+        # Column drag-reorder is purely a display preference -- every cell lookup elsewhere
+        # addresses columns by their stable logical index (cellWidget(row, col)), which Qt
+        # keeps unchanged when a user drags a column to a new visual position, so this needs
+        # none of the snap-back-and-rebuild machinery the row reorder above does (there, row
+        # order is semantically meaningful).
+        self.monitoring_tag_table.horizontalHeader().setSectionsMovable(True)
+        self.monitoring_tag_table.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.monitoring_tag_table.horizontalHeader().customContextMenuRequested.connect(self._show_tag_column_picker)
         self.monitoring_tag_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.monitoring_tag_table.setMinimumHeight(200)  # Ensure minimum height
         self.monitoring_tag_table.setMaximumHeight(16777215)  # Remove maximum height constraint
@@ -1288,6 +1296,22 @@ class ModbusGUI(QMainWindow):
         if isinstance(widget, QLineEdit):
             return widget.text()
         return ""
+
+    def _show_tag_column_picker(self, pos):
+        """Right-click on the Tags table's column header: a checklist of every column,
+        toggling setColumnHidden -- lets a user hide columns they don't care about (e.g.
+        Comment, Timestamp) without touching the underlying data, same spirit as the
+        Enabled checkbox skipping a row without deleting it."""
+        header = self.monitoring_tag_table.horizontalHeader()
+        menu = QMenu(self)
+        for col in range(self.monitoring_tag_table.columnCount()):
+            header_item = self.monitoring_tag_table.horizontalHeaderItem(col)
+            label = header_item.text() if header_item else f"Column {col}"
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(not self.monitoring_tag_table.isColumnHidden(col))
+            action.toggled.connect(lambda checked, c=col: self.monitoring_tag_table.setColumnHidden(c, not checked))
+        menu.exec(header.mapToGlobal(pos))
 
     def _configure_tag_alarm(self, row):
         tags_by_row = {tag["row"]: tag for tag in self._get_monitoring_tags()}
