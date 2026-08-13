@@ -16,7 +16,12 @@ class AdvancedDiagnostics:
             'exception_responses': 0,
             'response_times': [],
             'function_codes': {},
-            'exception_codes': {}
+            'exception_codes': {},
+            # Coarse failure-cause breakdown (see ModbusClient._set_error): "connection",
+            # "timeout", "device_exception", "other". Device-wide, matching the granularity
+            # ModbusTools itself tracks at (mbClientDevice::Statistics is per-device, not
+            # per-tag) -- deliberately not broken out per-tag on top of this.
+            'error_categories': {},
         }
 
     def generate_statistics_report(self, modbus_client=None):
@@ -72,6 +77,13 @@ class AdvancedDiagnostics:
             for exc_code, count in sorted(self.modbus_stats['exception_codes'].items()):
                 exc_desc = self.get_exception_code_description(exc_code)
                 lines.append(f"Exception 0x{exc_code:02X} ({exc_desc}): {count} occurrences")
+
+        # Failure-cause breakdown (timeout vs. connection vs. device-returned exception, etc.)
+        if self.modbus_stats['error_categories']:
+            lines.append("\nFAILURE CAUSE BREAKDOWN")
+            lines.append("=" * 50)
+            for category, count in sorted(self.modbus_stats['error_categories'].items(), key=lambda kv: -kv[1]):
+                lines.append(f"{self.get_error_category_label(category)}: {count}")
         
         # Connection status
         lines.append("\nCONNECTION STATUS")
@@ -140,6 +152,18 @@ class AdvancedDiagnostics:
         }
         return exception_descriptions.get(code, f"Unknown Exception (0x{code:02X})")
 
+    def get_error_category_label(self, category):
+        """Human-readable label for a ModbusClient._set_error category."""
+        labels = {
+            'connection': "Connection (not connected / socket-level failure)",
+            'timeout': "Timeout / no valid response (includes unparseable/garbled frames -- "
+                       "pymodbus doesn't distinguish these from a plain timeout)",
+            'device_exception': "Device-returned exception (see Exception Code Analysis above)",
+            'rejected': "Rejected locally (e.g. a write bound violation, never reached the wire)",
+            'other': "Other",
+        }
+        return labels.get(category, category)
+
     def reset_statistics(self):
         """Reset all Modbus statistics."""
         self.modbus_stats = self._default_stats()
@@ -199,22 +223,27 @@ class AdvancedDiagnostics:
         layout.addLayout(button_layout)
         stats_dialog.exec()
 
-    def update_request_stats(self, success=True, response_time=None, function_code=None, exception_code=None):
+    def update_request_stats(self, success=True, response_time=None, function_code=None, exception_code=None,
+                              error_category=None):
         """Update statistics for a request."""
         self.modbus_stats['total_requests'] += 1
         if success:
             self.modbus_stats['successful_requests'] += 1
         else:
             self.modbus_stats['failed_requests'] += 1
-        
+
         if response_time is not None:
             self.modbus_stats['response_times'].append(response_time)
             if len(self.modbus_stats['response_times']) > MAX_TRACKED_RESPONSE_TIMES:
                 self.modbus_stats['response_times'] = self.modbus_stats['response_times'][-MAX_TRACKED_RESPONSE_TIMES:]
-        
+
         if function_code is not None:
             self.modbus_stats['function_codes'][function_code] = self.modbus_stats['function_codes'].get(function_code, 0) + 1
-        
+
         if exception_code is not None:
             self.modbus_stats['exception_responses'] += 1
             self.modbus_stats['exception_codes'][exception_code] = self.modbus_stats['exception_codes'].get(exception_code, 0) + 1
+
+        if not success and error_category:
+            categories = self.modbus_stats['error_categories']
+            categories[error_category] = categories.get(error_category, 0) + 1

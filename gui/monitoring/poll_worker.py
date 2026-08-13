@@ -36,8 +36,10 @@ class TagPollWorker(QThread):
     to. The caller is responsible for stopping and waiting on this thread before actually
     tearing down that same client object (see MonitoringManager.stop_poll_worker)."""
 
-    # tag, value (None on failure), elapsed_ms, status ("ok"/"read_failed"/"exception"/"busy"/"unreachable"), detail
-    tag_result = Signal(dict, object, float, str, str)
+    # tag, value (None on failure), elapsed_ms, status ("ok"/"read_failed"/"exception"/"busy"/"unreachable"), detail,
+    # category ("" on success, else "connection"/"timeout"/"device_exception"/"validation"/"busy"/"other" -- see
+    # ModbusClient._set_error and MonitoringManager.tag_error_counts)
+    tag_result = Signal(dict, object, float, str, str, str)
     device_unreachable = Signal()  # Fast LAN Mode: emitted once per cycle, at most
     cycle_complete = Signal(int, int)  # failed_count, total_count
 
@@ -72,7 +74,7 @@ class TagPollWorker(QThread):
                 valid_tags.append(tag)
             except Exception as e:
                 failed_count += 1
-                self.tag_result.emit(tag, None, 0.0, "exception", str(e))
+                self.tag_result.emit(tag, None, 0.0, "exception", str(e), "validation")
 
         plans = merge_tag_reads(valid_tags, self.offset_of)
 
@@ -84,7 +86,7 @@ class TagPollWorker(QThread):
             if device_unreachable:
                 failed_count += len(plan["members"])
                 for tag, _local_offset in plan["members"]:
-                    self.tag_result.emit(tag, None, 0.0, "unreachable", "")
+                    self.tag_result.emit(tag, None, 0.0, "unreachable", "", "connection")
                 continue
 
             block_start = plan["start"]
@@ -107,7 +109,7 @@ class TagPollWorker(QThread):
                 if not self.reserve_range(request_range):
                     failed_count += len(plan["members"])
                     for tag, _local_offset in plan["members"]:
-                        self.tag_result.emit(tag, None, 0.0, "busy", "")
+                        self.tag_result.emit(tag, None, 0.0, "busy", "", "busy")
                     continue
 
                 start_time = time.perf_counter()
@@ -120,12 +122,14 @@ class TagPollWorker(QThread):
                 if block_values is None:
                     failed_count += len(plan["members"])
                     # Captured now, in this thread, right after the call that produced it --
-                    # last_error lives on the shared modbus client, and by the time the GUI
-                    # thread gets around to handling this signal a later block's read (already
-                    # underway in this same loop) may have overwritten it.
+                    # last_error/last_error_category live on the shared modbus client, and by
+                    # the time the GUI thread gets around to handling this signal a later
+                    # block's read (already underway in this same loop) may have overwritten
+                    # them.
                     last_error = getattr(self.modbus, "last_error", None) or ""
+                    category = getattr(self.modbus, "last_error_category", None) or "other"
                     for tag, _local_offset in plan["members"]:
-                        self.tag_result.emit(tag, None, elapsed_ms, "read_failed", last_error)
+                        self.tag_result.emit(tag, None, elapsed_ms, "read_failed", last_error, category)
                     if self.fast_lan_mode and not self.device_reachable(self.modbus):
                         device_unreachable = True
                         self.device_unreachable.emit()
@@ -136,6 +140,6 @@ class TagPollWorker(QThread):
 
             for tag, local_offset in plan["members"]:
                 value = block_values[local_offset: local_offset + tag["count"]]
-                self.tag_result.emit(tag, value, elapsed_ms, "ok", "")
+                self.tag_result.emit(tag, value, elapsed_ms, "ok", "", "")
 
         self.cycle_complete.emit(failed_count, len(self.tags))
