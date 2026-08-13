@@ -21,6 +21,23 @@ _MAX_BLOCK = {
 }
 FUNCTION_TYPES = ["Coils", "Discrete Inputs", "Holding Registers", "Input Registers"]
 
+# Bridges this file's own plural function names to the exact singular strings the shared
+# busy/overlap interlock uses everywhere else (Tags' type_combo, Address Table's
+# _SPACE_LABELS) -- without this, the interlock's overlap check would always compare
+# unequal strings and never actually detect a real overlap against this scanner.
+_SPACE_LABELS = {
+    "Coils": "Coil",
+    "Discrete Inputs": "Discrete Input",
+    "Holding Registers": "Holding Register",
+    "Input Registers": "Input Register",
+}
+
+# Consecutive busy-skips (interlock contention) before giving up on the scan entirely,
+# rather than retrying forever -- _pause_shared_connection_monitoring already stops every
+# other reader/writer before a scan starts, so sustained contention past this many retries
+# (~1s at PROBE_DELAY_MS) means something is genuinely stuck, not a brief overlap.
+MAX_CONSECUTIVE_BUSY_RETRIES = 50
+
 # Illegal Function -- the one exception code that means the whole function isn't
 # supported by this device at all, not just this address range. Every address would
 # come back the same way, so there's no point bisecting down to find out.
@@ -50,7 +67,8 @@ class AddressScanWorker(QThread):
     output = Signal(str)
     scan_complete = Signal(int, int)  # responding_count, probes_issued
 
-    def __init__(self, modbus, function_name, start_address, end_address, probe_timeout):
+    def __init__(self, modbus, function_name, start_address, end_address, probe_timeout,
+                 reserve_range=None, release_range=None):
         super().__init__()
         self.modbus = modbus
         self.function_name = function_name
@@ -59,6 +77,10 @@ class AddressScanWorker(QThread):
         self.start_address = start_address
         self.end_address = end_address  # inclusive
         self.probe_timeout = probe_timeout
+        # Default to permissive no-ops so this stays usable standalone (e.g. in tests)
+        # without a real main window -- same pattern ScriptRunner already uses.
+        self.reserve_range = reserve_range or (lambda request_range: True)
+        self.release_range = release_range or (lambda request_range: None)
         self.should_stop = False
 
     def stop(self):
@@ -82,10 +104,38 @@ class AddressScanWorker(QThread):
                 pending.append((addr, block))
                 addr += block
 
+            consecutive_busy = 0
             while pending and not self.should_stop:
                 block_start, count = pending.popleft()
+
+                request_range = {
+                    "operation": "read", "space": _SPACE_LABELS[self.function_name],
+                    "start": block_start, "end": block_start + count - 1,
+                    "tag": f"RegisterScanner[{self.function_name}]",
+                }
+                if not self.reserve_range(request_range):
+                    # Busy -- something else briefly holds this exact range. Should be rare:
+                    # _pause_shared_connection_monitoring already stopped every other
+                    # reader/writer before this scan started. Re-queue at the back rather
+                    # than treating it as a device failure.
+                    consecutive_busy += 1
+                    if consecutive_busy > MAX_CONSECUTIVE_BUSY_RETRIES:
+                        self.output.emit(
+                            "Stopped: register range stayed busy too long -- another "
+                            "operation may be stuck holding it."
+                        )
+                        aborted = True
+                        break
+                    pending.append((block_start, count))
+                    self.msleep(PROBE_DELAY_MS)
+                    continue
+                consecutive_busy = 0
+
                 probes += 1
-                result = _read_block(self.modbus, self.function_name, block_start, count)
+                try:
+                    result = _read_block(self.modbus, self.function_name, block_start, count)
+                finally:
+                    self.release_range(request_range)
                 self.msleep(PROBE_DELAY_MS)
 
                 if result is not None:
@@ -312,6 +362,8 @@ class RegisterScannerWidget(QWidget):
         self.address_worker = AddressScanWorker(
             self.parent_window.modbus, self.addr_function_combo.currentText(), start, end,
             self.addr_timeout_input.value() / 1000.0,
+            reserve_range=getattr(self.parent_window, "_reserve_range", None),
+            release_range=getattr(self.parent_window, "_release_range", None),
         )
         self.address_worker.range_found.connect(self._on_address_range_found)
         self.address_worker.progress.connect(self.progress_bar.setValue)
