@@ -573,8 +573,8 @@ class ModbusGUI(QMainWindow):
         tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
 
         self.monitoring_tag_table = TagTableWidget(self)
-        self.monitoring_tag_table.setColumnCount(13)
-        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale"])
+        self.monitoring_tag_table.setColumnCount(14)
+        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale", "Enabled"])
         self._update_tag_address_header()
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
         self.monitoring_tag_table.setColumnWidth(11, 130)
@@ -878,7 +878,7 @@ class ModbusGUI(QMainWindow):
  
     def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None,
                              comment="", insert_row=None, read_value="", raw_hex="", write_value="", timestamp="",
-                             engineering_value=""):
+                             engineering_value="", enabled=True):
         # An explicit insert_row is used when rebuilding a row that's being dragged to a new
         # position (see _move_tag_row) -- otherwise fall back to the normal Add Tag behavior.
         if insert_row is None:
@@ -930,6 +930,15 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table.setCellWidget(insert_row, 12, scale_widget)  # Scale
         scale_widget.toggled.connect(self._on_scale_checkbox_toggled)
 
+        enabled_widget = QCheckBox()
+        enabled_widget.setChecked(enabled)
+        enabled_widget.setToolTip(
+            "When unchecked, this tag is skipped by continuous polling (Tag Monitoring's read "
+            "cycle and the write-mode value refresh) without deleting the row. Manual actions "
+            "(Write Selected, one-shot write via Enter) still work regardless of this."
+        )
+        self.monitoring_tag_table.setCellWidget(insert_row, 13, enabled_widget)  # Enabled
+
         # Keep "count" valid for 32-bit formats (U32/S32/F32 require even register count).
         if hasattr(format_widget, "currentTextChanged"):
             format_widget.currentTextChanged.connect(self._on_monitoring_tag_format_changed)
@@ -961,6 +970,7 @@ class ModbusGUI(QMainWindow):
         read_value_widget, raw_hex_widget = widget_at(6), widget_at(7)
         write_value_widget, comment_widget, timestamp_widget = widget_at(8), widget_at(9), widget_at(10)
         eng_value_widget = widget_at(11)
+        enabled_widget = widget_at(13)
 
         return {
             "tag_name": name_widget.text() if name_widget else "",
@@ -975,6 +985,7 @@ class ModbusGUI(QMainWindow):
             "comment": comment_widget.text() if comment_widget else "",
             "timestamp": timestamp_widget.text() if timestamp_widget else "",
             "engineering_value": eng_value_widget.text() if eng_value_widget else "",
+            "enabled": enabled_widget.isChecked() if enabled_widget else True,
         }
 
     def _move_tag_row(self, source_row, target_row):
@@ -1650,7 +1661,7 @@ Unit ID: {unit_id}<br><br>
             
             # Export to CSV
             with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment',
+                fieldnames = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment', 'Enabled',
                               'Scale Enabled', 'Scale Mode', 'Raw Min', 'Raw Max', 'Scaled Min',
                               'Scaled Max', 'Factor', 'Value Type']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -1666,6 +1677,7 @@ Unit ID: {unit_id}<br><br>
                         'Count': tag['count'],
                         'Format': tag['format'],
                         'Comment': tag['comment'],
+                        'Enabled': tag['enabled'],
                         'Scale Enabled': bool(scaling),
                         'Scale Mode': scaling.get('mode', 'linear') if scaling else '',
                         'Raw Min': scaling.get('raw_min', '') if scaling else '',
@@ -1716,6 +1728,9 @@ Unit ID: {unit_id}<br><br>
                 for row in reader:
                     try:
                         new_row = self.monitoring_tag_table.rowCount()
+                        # Older exports have no "Enabled" column -- absent means every tag
+                        # was implicitly enabled, since the concept didn't exist yet.
+                        enabled = str(row.get('Enabled', 'True')).strip().lower() in ('true', '1', 'yes')
                         self._add_monitoring_tag(
                             tag_name=row.get('Tag Name', '').strip(),
                             mode=row.get('Mode', 'Read').strip(),
@@ -1723,7 +1738,8 @@ Unit ID: {unit_id}<br><br>
                             address=int(row.get('Address', 0)),
                             count=int(row.get('Count', 1)),
                             value_format=row.get('Format', 'U16').strip(),
-                            comment=row.get('Comment', '').strip()
+                            comment=row.get('Comment', '').strip(),
+                            enabled=enabled,
                         )
                         imported_count += 1
                     except (ValueError, KeyError) as e:
@@ -2512,7 +2528,7 @@ Unit ID: {unit_id}<br><br>
         if self._modbus_busy:
             return
 
-        tags = [tag for tag in self._get_monitoring_tags() if tag["mode"] == "Write"]
+        tags = [tag for tag in self._get_monitoring_tags() if tag["mode"] == "Write" and tag["enabled"]]
         if not tags:
             return
 
