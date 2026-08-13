@@ -44,16 +44,22 @@ class TrendPen:
     def __init__(self, slot, color):
         self.slot = slot
         self.enabled = False
-        self.name = ""
+        self.name = ""  # the bound tag's exact name -- used to match Tags-tab scaling config, not for display
+        self.label = ""  # optional custom display name; falls back to `name` when blank (see display_name)
         self.type = "Holding Register"
         self.address = 0
         self.count = 1
         self.format = "U16"
+        self.index = 0  # which decoded element to plot out of a multi-register tag (0 = first)
+        self.scale_mode = "Auto"  # "Auto" (follow the tag's own scaling config), "Raw", or "Scaled"
         self.color = QColor(color)
         self.series = None  # QLineSeries, created once the pen is enabled with a name
 
     def is_active(self):
         return self.enabled and bool(self.name)
+
+    def display_name(self):
+        return self.label.strip() or self.name
 
 
 class ColorButton(QPushButton):
@@ -208,10 +214,11 @@ class AddPenDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        table = QTableWidget(MAX_PENS, 3)
-        table.setHorizontalHeaderLabels(["On", "Name", "Color"])
+        table = QTableWidget(MAX_PENS, 6)
+        table.setHorizontalHeaderLabels(["On", "Tag", "Label", "Index", "Scale", "Color"])
         table.verticalHeader().setVisible(False)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.NoSelection)
 
@@ -230,12 +237,40 @@ class AddPenDialog(QDialog):
             name_cell = TagPickerCell(tags, pen.name or None, main_window)
             table.setCellWidget(row, 1, name_cell)
 
+            label_edit = QLineEdit(pen.label)
+            label_edit.setPlaceholderText("optional, defaults to tag name")
+            label_edit.setToolTip("Custom chart/legend label, independent of the bound tag's own name.")
+            table.setCellWidget(row, 2, label_edit)
+
+            index_spin = QSpinBox()
+            index_spin.setRange(0, 124)
+            index_spin.setValue(pen.index)
+            index_spin.setToolTip(
+                "Which decoded element to plot out of a multi-register tag (0 = first). Out-of-range "
+                "for the bound tag's actual register count falls back to the last valid element."
+            )
+            table.setCellWidget(row, 3, index_spin)
+
+            scale_combo = QComboBox()
+            scale_combo.addItems(["Auto", "Raw", "Scaled"])
+            scale_combo.setCurrentText(pen.scale_mode)
+            scale_combo.setToolTip(
+                "Auto: scaled if the bound tag has Tags-tab scaling enabled (index 0 only), else raw.\n"
+                "Raw: always plot the raw decoded value.\n"
+                "Scaled: always use the tag's scaling (only meaningful at index 0); if unavailable, "
+                "nothing is plotted for that tick rather than silently showing a raw number instead."
+            )
+            table.setCellWidget(row, 4, scale_combo)
+
             color_btn = ColorButton(pen.color)
-            table.setCellWidget(row, 2, color_btn)
+            table.setCellWidget(row, 5, color_btn)
 
             self._rows.append({
                 "enabled": enabled_box,
                 "name": name_cell,
+                "label": label_edit,
+                "index": index_spin,
+                "scale": scale_combo,
                 "color": color_btn,
             })
 
@@ -264,6 +299,9 @@ class AddPenDialog(QDialog):
                 pen.format = tag["format"]
             else:
                 pen.name = ""
+            pen.label = widgets["label"].text().strip()
+            pen.index = widgets["index"].value()
+            pen.scale_mode = widgets["scale"].currentText()
             pen.color = widgets["color"].color
 
 
@@ -692,14 +730,14 @@ class TrendWidget(QWidget):
             if pen.is_active():
                 if pen.series is None:
                     series = QLineSeries()
-                    series.setName(pen.name)
+                    series.setName(pen.display_name())
                     series.setPen(QPen(pen.color, 2))
                     self.chart.addSeries(series)
                     series.attachAxis(self.axis_x)
                     series.attachAxis(self.axis_y)
                     pen.series = series
                 else:
-                    pen.series.setName(pen.name)
+                    pen.series.setName(pen.display_name())
                     pen.series.setPen(QPen(pen.color, 2))
             elif pen.series is not None:
                 self.chart.removeSeries(pen.series)
@@ -895,18 +933,35 @@ class TrendWidget(QWidget):
                 first = data[0] if isinstance(data, list) else data
                 return 1.0 if bool(first) else 0.0
 
-            # If the tag this pen is bound to has engineering-unit scaling enabled on
-            # the Tags tab, plot that scaled value instead of the raw one -- Trend always
-            # follows whatever the Tags tab is currently configured to show for it.
-            scaled = self._scaled_pen_value(pen, data)
-            if scaled is not None:
-                return scaled
-
             registers = data if isinstance(data, list) else [data]
             decoder = getattr(self.parent_window, "_decode_register_values", None)
             decoded = decoder(registers, pen.format) if decoder else registers
-            value = decoded[0] if isinstance(decoded, list) else decoded
-            return float(value)
+            if not isinstance(decoded, list):
+                decoded = [decoded]
+            # Out-of-range (e.g. the bound tag shrank since this pen was configured)
+            # falls back to the last valid element rather than silently going blank.
+            index = min(max(pen.index, 0), len(decoded) - 1) if decoded else 0
+
+            # Tags-tab scaling is inherently single-value-per-tag (see
+            # MonitoringManager._decode_numeric_value, which always uses element 0) --
+            # so a "scaled" reading only ever means something at index 0. scale_mode is
+            # this pen's explicit override of the old implicit "use scaling if the tag
+            # happens to have it enabled" behavior, which Auto still reproduces exactly.
+            if pen.scale_mode != "Raw" and index == 0:
+                scaled = self._scaled_pen_value(pen, data)
+                if scaled is not None:
+                    return scaled
+                if pen.scale_mode == "Scaled":
+                    # Explicitly asked for scaled but none is configured/enabled right now --
+                    # skip this tick (a gap in the line) rather than silently plotting a raw
+                    # number under a "scaled" pen, which would look like a real reading in
+                    # the wrong unit.
+                    return None
+            elif pen.scale_mode == "Scaled":
+                return None  # Scaled only means anything at index 0 -- see above.
+
+            value = decoded[index] if decoded else None
+            return float(value) if value is not None else None
         except Exception:
             return None
 
@@ -1037,9 +1092,9 @@ class TrendWidget(QWidget):
                 continue
             if self._hover_x_ms is not None and pen.series.count() > 0:
                 value = self._nearest_value(pen.series, self._hover_x_ms)
-                label = f"{pen.name}: {value:g}" if value is not None else pen.name
+                label = f"{pen.display_name()}: {value:g}" if value is not None else pen.display_name()
             else:
-                label = pen.name
+                label = pen.display_name()
             markers[0].setLabel(label)
 
     @staticmethod
@@ -1067,7 +1122,7 @@ class TrendWidget(QWidget):
             else:
                 value = None
 
-            name_item = QTableWidgetItem(pen.name)
+            name_item = QTableWidgetItem(pen.display_name())
             name_item.setBackground(pen.color)
             luminance = 0.299 * pen.color.red() + 0.587 * pen.color.green() + 0.114 * pen.color.blue()
             name_item.setForeground(QColor("#000000" if luminance > 140 else "#FFFFFF"))
@@ -1109,7 +1164,7 @@ class TrendWidget(QWidget):
     def _log_pen_value(self, pen, timestamp, value):
         if not self._log_writer:
             return
-        self._log_writer.writerow([timestamp, pen.name, pen.type, pen.address, value])
+        self._log_writer.writerow([timestamp, pen.display_name(), pen.type, pen.address, value])
         self._log_file.flush()
 
     # --- Print ---
