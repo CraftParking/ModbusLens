@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
+import struct
 import time
 
 from log_format import format_log_html
@@ -71,6 +72,19 @@ class AddressTableWidget(QWidget):
         self.offset_checkbox.setToolTip("When enabled, use 0-based addressing (user address 0 is sent as protocol offset 0)")
         self.offset_checkbox.stateChanged.connect(self.on_offset_checkbox_changed)
         address_layout.addWidget(self.offset_checkbox)
+
+        display_label = QLabel("Display:")
+        display_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        address_layout.addWidget(display_label)
+        self.format_combo = QComboBox()
+        self.format_combo.addItems(["U16", "S16", "HEX", "U32", "S32", "F32"])
+        self.format_combo.setToolTip(
+            "How to decode the Value column for Holding/Input Registers (no effect on "
+            "Coils/Discrete Inputs, which are always plain 0/1). U32/S32/F32 combine each "
+            "pair of adjacent rows into one 32-bit value, shown on the first row of the pair."
+        )
+        self.format_combo.currentTextChanged.connect(self.on_display_format_changed)
+        address_layout.addWidget(self.format_combo)
 
         self.create_btn = QPushButton("Create Table")
         self.create_btn.clicked.connect(self.create_address_table)
@@ -537,13 +551,48 @@ class AddressTableWidget(QWidget):
             raise ValueError("register value out of range (-32768..65535)")
         return value & 0xFFFF
 
+    def _decoded_display_values(self, raw_values):
+        """Decode raw_values per the Display Format combo, reusing main_window's
+        _decode_register_values -- the same decoder the Tags table's own Format column
+        uses -- instead of a second implementation that could drift out of sync. Returns
+        one string (or None to fall back to the plain unsigned int) per input value.
+        Only Holding/Input Registers have a format concept here; Coils/Discrete Inputs
+        stay plain 0/1 regardless of the combo. U32/S32/F32 consume rows in pairs -- the
+        decoded value lands on the first row of each pair, the second is left blank."""
+        count = len(raw_values)
+        display = [None] * count
+        fmt = self.format_combo.currentText() if hasattr(self, "format_combo") else "U16"
+        operation_type = self.get_operation_type(getattr(self, "current_function", ""))
+        decoder = getattr(self.parent_window, "_decode_register_values", None)
+        if fmt == "U16" or operation_type not in ("holding_registers", "input_registers") or decoder is None:
+            return display
+
+        try:
+            if fmt in ("U32", "S32", "F32"):
+                paired_count = count - (count % 2)  # an odd trailing register falls back to plain U16
+                if paired_count:
+                    decoded = decoder(raw_values[:paired_count], fmt)
+                    for j, dv in enumerate(decoded):
+                        display[j * 2] = str(dv)
+                        display[j * 2 + 1] = ""
+            else:
+                display = [str(dv) for dv in decoder(raw_values, fmt)]
+        except (ValueError, struct.error):
+            return [None] * count
+        return display
+
     def update_table_values(self, data):
-        for i in range(min(len(data), self.current_count)):
-            value = data[i] if isinstance(data, list) else data
+        count = min(len(data), self.current_count)
+        raw_values = [data[i] if isinstance(data, list) else data for i in range(count)]
+        display = self._decoded_display_values(raw_values)
+
+        for i in range(count):
+            value = raw_values[i]
 
             value_item = self.table.item(i, 1)
             if value_item and not value_item.flags() & Qt.ItemIsEditable:
-                value_item.setText(str(int(value)))
+                text = display[i] if display[i] is not None else str(int(value))
+                value_item.setText(text)
                 value_item.setBackground(QColor(self.parent_window._colors()["success_flash"]))
 
             hex_item = self.table.item(i, 2)
@@ -553,6 +602,14 @@ class AddressTableWidget(QWidget):
 
             original_address = self.current_start_address + i
             self.current_data[original_address] = value
+
+    def on_display_format_changed(self, _text=None):
+        """Re-render already-fetched values immediately on a format change, instead of
+        waiting for the next poll tick."""
+        if not self.current_data or not hasattr(self, "current_count"):
+            return
+        data = [self.current_data.get(self.current_start_address + i, 0) for i in range(self.current_count)]
+        self.update_table_values(data)
 
     def on_cell_changed(self, row, column):
         """Handle manual value edits for write operations only."""
