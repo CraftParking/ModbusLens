@@ -307,6 +307,8 @@ class ModbusGUI(QMainWindow):
         tools_menu.addAction("Data Templates", self._manage_templates)
         tools_menu.addSeparator()
         tools_menu.addAction("IP Configuration", self._show_ip_config)
+        tools_menu.addSeparator()
+        tools_menu.addAction("Show Safety Warning Again", self._show_safety_warning_again)
 
         # Diagnostics menu
         diagnostics_menu = menubar.addMenu("&Diagnostics")
@@ -2926,6 +2928,22 @@ Unit ID: {unit_id}<br><br>
         dialog = AboutDialog(version, self)
         dialog.exec()
 
+    def _show_safety_warning_again(self):
+        """The startup safety warning's "don't show again" had no in-app way back --
+        someone testing against a simulator who checked it gets no warning months later
+        against the live VFD. This is that way back: re-shows the actual dialog right now
+        (a live re-confirmation, not just a settings toggle) and persists whatever the
+        checkbox ends up at for future launches. Unlike the startup gate, clicking "Exit"
+        here just closes the reminder -- it must not quit the whole running app, since the
+        user is already using it and didn't ask to leave."""
+        dialog = SafetyWarningDialog(self, colors=self._colors())
+        dialog.exec()
+        dialog.save_preference()
+        if dialog.dont_show_again.isChecked():
+            self._log("Safety warning: will stay hidden on next launch")
+        else:
+            self._log("Safety warning: will show again on next launch")
+
     def closeEvent(self, event):
         """Handle application close event."""
         # Stop any in-progress scan before touching the connection it's using --
@@ -2996,6 +3014,10 @@ class SafetyWarningDialog(QDialog):
         exit_btn = QPushButton("Exit")
         exit_btn.setStyleSheet(self._button_style(danger=True))
         exit_btn.clicked.connect(self.reject)
+        # Explicit safe default: a reflexive Enter at dialog-open should back out, not
+        # proceed into a live-write tool's warning -- not left to Qt's implicit focus order.
+        exit_btn.setDefault(True)
+        exit_btn.setFocus()
         buttons.addWidget(exit_btn)
 
         understand_btn = QPushButton("I Understand")
@@ -3015,11 +3037,15 @@ class SafetyWarningDialog(QDialog):
         return not settings.value("hide_safety_warning", False, type=bool)
 
     def save_preference(self):
-        """Save the user's preference to not show the warning again."""
-        if self.dont_show_again.isChecked():
-            from PySide6.QtCore import QSettings
-            settings = QSettings("ModbusLens", "ModbusLens")
-            settings.setValue("hide_safety_warning", True)
+        """Save the user's checkbox choice either way. Previously this only ever wrote
+        True when checked, with no code path that ever wrote it back to False -- so once
+        "don't show again" was checked once, there was no way back short of editing
+        QSettings by hand. Writing the checkbox's actual current state unconditionally
+        fixes that for every caller, including the "Show Safety Warning Again" menu
+        action below."""
+        from PySide6.QtCore import QSettings
+        settings = QSettings("ModbusLens", "ModbusLens")
+        settings.setValue("hide_safety_warning", self.dont_show_again.isChecked())
 
     @staticmethod
     def _button_style(primary: bool = False, danger: bool = False) -> str:
