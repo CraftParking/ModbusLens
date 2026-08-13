@@ -558,7 +558,10 @@ class ModbusGUI(QMainWindow):
 
         self.tag_offset_checkbox = QCheckBox("0-Based Addressing")
         self.tag_offset_checkbox.setToolTip("When enabled, use 0-based addressing (tag address 0 is sent as protocol offset 0)")
-        self.tag_offset_checkbox.setEnabled(False)
+        # Purely a local address-interpretation preference (see _on_tag_address_mode_changed --
+        # it only touches spinbox ranges/table cells, never self.modbus), so it doesn't need a
+        # live connection to be safe to use. Only monitoring being actively in progress disables
+        # it (via _set_tag_editor_enabled), same as Add/Remove Tag and the tag editor columns.
         self.tag_offset_checkbox.toggled.connect(self._on_tag_address_mode_changed)
         buttons_layout.addWidget(self.tag_offset_checkbox)
 
@@ -1864,9 +1867,10 @@ Unit ID: {unit_id}<br><br>
             if not connected:
                 self.tag_stop_monitoring_btn.setEnabled(False)
 
-        if hasattr(self, 'tag_offset_checkbox'):
-            # Only allow editing address mode if not currently monitoring
-            self.tag_offset_checkbox.setEnabled(connected and not self.monitoring_active)
+        # tag_offset_checkbox is deliberately left alone here -- it's a local address-
+        # interpretation preference, not a live-connection dependency (see its construction
+        # above); only actively monitoring should disable it, already enforced by
+        # _set_tag_editor_enabled.
 
         if hasattr(self, 'register_scanner_widget'):
             self.register_scanner_widget.refresh_connection_state()
