@@ -55,7 +55,7 @@ FEATURES_HTML = """
 
 <h4>Data Handling</h4>
 <ul>
-<li>BOOL, U16/S16, U32/S32, F32, HEX support</li>
+<li>BOOL, U16/S16, U32/S32/F32, U64/S64/F64, HEX support</li>
 <li>BOOL on a register shows the full 16-bit pattern, not just a single flag</li>
 <li>Word order handling (*_SWAP)</li>
 <li>0-based / 1-based addressing, selectable per Address Table range and per Tag</li>

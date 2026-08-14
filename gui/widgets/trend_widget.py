@@ -14,6 +14,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 from PySide6.QtPrintSupport import QPrinter
 
+from modbus_meta import MULTI_WORD_FORMATS
+
 MAX_PENS = 20
 MAX_POINTS_PER_PEN = 20000  # rolling cap so a long-running trend doesn't grow memory forever
 
@@ -35,7 +37,7 @@ DEFAULT_PEN_COLORS = [
 # sense here -- Coil/Discrete Input and the Bool format are digital/on-off and are
 # intentionally left out (unlike the Tags tab, which supports both).
 TAG_TYPES = ["Holding Register", "Input Register"]
-VALUE_FORMATS = ["U16", "S16", "U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP", "Hex"]
+VALUE_FORMATS = ["U16", "S16", *MULTI_WORD_FORMATS, "Hex"]
 
 
 class TrendPen:
