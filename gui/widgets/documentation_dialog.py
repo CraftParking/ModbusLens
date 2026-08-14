@@ -259,11 +259,13 @@ rather than letting it stick, since a tag's name is also how it's referenced by 
 (see the Scripting topic) and in Trend's Add Pen picker.</p>
 
 <h3>Data formats</h3>
-<p><b>Bool</b>, <b>U16/S16</b>, <b>U32/S32/F32</b> (plus <code>_SWAP</code> variants for the
-opposite word order), and <b>Hex</b>. BOOL on a Coil/Discrete Input is a simple flag; BOOL on a
-Holding/Input Register instead shows the full 16-bit pattern (e.g. <code>0000000000000101</code>)
-so you can read individual status/alarm bits out of a status word. 32-bit formats (U32/S32/F32)
-need an even <b>Count</b> (2, 4, ...) since they span two registers per value.</p>
+<p><b>Bool</b>, <b>U16/S16</b>, <b>U32/S32/F32</b>, <b>U64/S64/F64</b> (plus <code>_SWAP</code>
+variants of the 32/64-bit formats for the opposite word order), and <b>Hex</b>. BOOL on a
+Coil/Discrete Input is a simple flag; BOOL on a Holding/Input Register instead shows the full
+16-bit pattern (e.g. <code>0000000000000101</code>) so you can read individual status/alarm bits
+out of a status word. 32-bit formats (U32/S32/F32) need a <b>Count</b> that's a multiple of 2;
+64-bit formats (U64/S64/F64) need a multiple of 4 -- since they span 2 or 4 registers per value,
+respectively.</p>
 
 <h3>Engineering-unit scaling</h3>
 <p>Check the <b>Scale</b> box on a row to open a small popup asking for <b>Raw Min/Max</b> and
@@ -715,9 +717,9 @@ Manager) and the device itself is powered.</li>
 Addressing</b> checkbox on the Address Table or Tags tab and compare - see the Connecting topic
 for the full explanation.</p>
 
-<h3>A 32-bit value (U32/S32/F32) looks like nonsense</h3>
-<p>Try the <code>_SWAP</code> variant of the same format. Different vendors order the high and low
-register of a 32-bit value differently, and there's no reliable way to detect which one a device
+<h3>A 32-bit or 64-bit value (U32/S32/F32, U64/S64/F64) looks like nonsense</h3>
+<p>Try the <code>_SWAP</code> variant of the same format. Different vendors order the registers of
+a multi-register value differently, and there's no reliable way to detect which one a device
 uses - it's trial and error. The Tags table's <b>Raw (Hex)</b> column shows the untouched register
 bits regardless of format, which is the fastest way to confirm your mapping once you find the
 right combination.</p>
@@ -737,7 +739,8 @@ configuration in ModbusLens will make them writable, because the device won't ac
 <h3>A tag shows ERROR in Tags Monitoring</h3>
 <ul>
 <li>Check the tag's <b>Count</b> matches its <b>Format</b> - 32-bit formats (U32/S32/F32, and
-their <code>_SWAP</code> variants) need an even count.</li>
+their <code>_SWAP</code> variants) need a count that's a multiple of 2; 64-bit formats
+(U64/S64/F64, and their <code>_SWAP</code> variants) need a multiple of 4.</li>
 <li>Check the address is actually valid on the device - some devices have gaps in their register
 map that return an exception rather than a value.</li>
 <li>One failing tag no longer stops the rest of the list from updating, so if only one row shows

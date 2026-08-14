@@ -48,7 +48,7 @@ from network.network_diagnostics import NetworkDiagnosticsDialog
 from core.modbus_client import ModbusClient
 from app_paths import resource_path, app_data_dir
 from log_format import format_log_html
-from modbus_meta import function_code_for
+from modbus_meta import function_code_for, MULTI_WORD_FORMATS, format_word_width
 import theme
 
 __version__ = "2.1.0"
@@ -878,7 +878,12 @@ class ModbusGUI(QMainWindow):
                 w.setCurrentText(value)
         elif widget_type == "format_combo":
             w = QComboBox()
-            w.addItems(["Bool", "U16", "S16", "U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP", "Hex"])
+            w.addItems([
+                "Bool", "U16", "S16",
+                "U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP",
+                "U64", "S64", "F64", "U64_SWAP", "S64_SWAP", "F64_SWAP",
+                "Hex",
+            ])
             w.setCurrentText(value or "U16")
         elif widget_type == "spinbox":
             w = QSpinBox()
@@ -1187,19 +1192,16 @@ class ModbusGUI(QMainWindow):
         tag_type = type_widget.currentText() if hasattr(type_widget, "currentText") else ""
         value_format = (format_widget.currentText() if hasattr(format_widget, "currentText") else "U16").strip().upper()
 
-        wants_32 = tag_type in ("Holding Register", "Input Register") and value_format in (
-            "U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP"
-        )
+        width = format_word_width(value_format) if tag_type in ("Holding Register", "Input Register") else 1
         try:
             self._updating_tag_table = True
-            if wants_32:
-                # 32-bit values use 2 registers each.
-                count_widget.setSingleStep(2)
-                count_widget.setMaximum(124)
-                if count_widget.value() < 2:
-                    count_widget.setValue(2)
-                elif count_widget.value() % 2 != 0:
-                    count_widget.setValue(count_widget.value() + 1)
+            if width > 1:
+                count_widget.setSingleStep(width)
+                count_widget.setMaximum(124)  # a multiple of both 2 and 4, the widths in play
+                if count_widget.value() < width:
+                    count_widget.setValue(width)
+                elif count_widget.value() % width != 0:
+                    count_widget.setValue(count_widget.value() + (width - count_widget.value() % width))
             else:
                 count_widget.setSingleStep(1)
                 count_widget.setMaximum(125)
@@ -2212,7 +2214,7 @@ Unit ID: {unit_id}<br><br>
         swap_words = value_format.endswith("_SWAP")
         base_format = value_format.replace("_SWAP", "")
 
-        word_width = 2 if base_format in ("U32", "S32", "F32") else 1
+        word_width = format_word_width(base_format)
         if register_count % word_width != 0:
             raise ValueError(f"{value_format} requires count to be a multiple of {word_width}")
 
@@ -2256,31 +2258,37 @@ Unit ID: {unit_id}<br><br>
                     raise ValueError("BOOL values must be 0/1, true/false, on/off, or a bit pattern like 0000000000000101")
                 continue
 
-            if base_format in ("U32", "S32", "F32"):
-                if base_format == "F32":
+            if base_format in ("U32", "S32", "F32", "U64", "S64", "F64"):
+                bit_width = word_width * 16
+                if base_format in ("F32", "F64"):
                     num = float(token)
                     if not math.isfinite(num):
-                        raise ValueError("F32 must be a finite number")
-                    u32 = int.from_bytes(struct.pack(">f", num), "big", signed=False)
+                        raise ValueError(f"{base_format} must be a finite number")
+                    byte_len = word_width * 2
+                    struct_fmt = ">f" if base_format == "F32" else ">d"
+                    raw_int = int.from_bytes(struct.pack(struct_fmt, num), "big", signed=False)
                 else:
                     num = int(token, 10)
-                    if base_format == "U32":
-                        if num < 0 or num > 0xFFFFFFFF:
-                            raise ValueError("U32 out of range (0..4294967295)")
-                        u32 = num
+                    if base_format.startswith("U"):
+                        max_val = (1 << bit_width) - 1
+                        if num < 0 or num > max_val:
+                            raise ValueError(f"{base_format} out of range (0..{max_val})")
+                        raw_int = num
                     else:
-                        if num < -2147483648 or num > 2147483647:
-                            raise ValueError("S32 out of range (-2147483648..2147483647)")
-                        u32 = num & 0xFFFFFFFF
+                        min_val = -(1 << (bit_width - 1))
+                        max_val = (1 << (bit_width - 1)) - 1
+                        if num < min_val or num > max_val:
+                            raise ValueError(f"{base_format} out of range ({min_val}..{max_val})")
+                        raw_int = num & ((1 << bit_width) - 1)
 
-                hi = (u32 >> 16) & 0xFFFF
-                lo = u32 & 0xFFFF
+                # Split into `word_width` 16-bit registers, most-significant first (the same
+                # word order the U32/S32/F32 case always used) -- swap_words reverses that,
+                # same convention _decode_register_values uses so a value written here reads
+                # back identically.
+                words = [(raw_int >> shift) & 0xFFFF for shift in range(bit_width - 16, -1, -16)]
                 if swap_words:
-                    registers.append(lo)
-                    registers.append(hi)
-                else:
-                    registers.append(hi)
-                    registers.append(lo)
+                    words.reverse()
+                registers.extend(words)
                 continue
 
             raise ValueError(f"unsupported data format: {value_format}")
@@ -2331,8 +2339,9 @@ Unit ID: {unit_id}<br><br>
                 raise ValueError("coil/input reads are limited to 2000 values")
             if tag["type"] in ("Holding Register", "Input Register"):
                 value_format = (tag.get("format") or "U16").strip().upper()
-                if value_format in ("U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP") and (tag["count"] % 2 != 0):
-                    raise ValueError(f"{value_format} requires an even count")
+                width = format_word_width(value_format)
+                if width > 1 and (tag["count"] % width != 0):
+                    raise ValueError(f"{value_format} requires count to be a multiple of {width}")
             return
 
         if tag["type"] in ("Discrete Input", "Input Register"):
@@ -2343,8 +2352,9 @@ Unit ID: {unit_id}<br><br>
             raise ValueError("multiple-register writes are limited to 123 values")
         if tag["type"] == "Holding Register":
             value_format = (tag.get("format") or "U16").strip().upper()
-            if value_format in ("U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP") and (tag["count"] % 2 != 0):
-                raise ValueError(f"{value_format} requires an even count")
+            width = format_word_width(value_format)
+            if width > 1 and (tag["count"] % width != 0):
+                raise ValueError(f"{value_format} requires count to be a multiple of {width}")
 
     def _begin_modbus_operation(self, tag, operation):
         return self._reserve_range(self._operation_range(tag, operation))
@@ -2671,26 +2681,29 @@ Unit ID: {unit_id}<br><br>
                 return [format(int(r) & 0xFFFF, "016b") for r in registers]
             return [int(r) & 0xFFFF for r in registers]
 
-        if value_format in ("U32", "S32", "F32", "U32_SWAP", "S32_SWAP", "F32_SWAP"):
-            if len(registers) % 2 != 0:
-                raise ValueError("32-bit format requires even register count")
-            values = []
+        if value_format in MULTI_WORD_FORMATS:
             swap_words = value_format.endswith("_SWAP")
             base_format = value_format.replace("_SWAP", "")
-            for i in range(0, len(registers), 2):
-                first = int(registers[i]) & 0xFFFF
-                second = int(registers[i + 1]) & 0xFFFF
+            word_width = format_word_width(base_format)
+            bit_width = word_width * 16
+            if len(registers) % word_width != 0:
+                raise ValueError(f"{value_format} requires register count to be a multiple of {word_width}")
+            values = []
+            for i in range(0, len(registers), word_width):
+                words = [int(registers[i + j]) & 0xFFFF for j in range(word_width)]
                 if swap_words:
-                    lo, hi = first, second
+                    words.reverse()
+                raw_int = 0
+                for w in words:
+                    raw_int = (raw_int << 16) | w
+                if base_format.startswith("U"):
+                    values.append(raw_int)
+                elif base_format.startswith("S"):
+                    sign_bit = 1 << (bit_width - 1)
+                    values.append(raw_int - (1 << bit_width) if raw_int & sign_bit else raw_int)
                 else:
-                    hi, lo = first, second
-                u32 = (hi << 16) | lo
-                if base_format == "U32":
-                    values.append(u32)
-                elif base_format == "S32":
-                    values.append(u32 - 0x100000000 if u32 & 0x80000000 else u32)
-                else:
-                    values.append(struct.unpack(">f", u32.to_bytes(4, "big"))[0])
+                    struct_fmt = ">f" if base_format == "F32" else ">d"
+                    values.append(struct.unpack(struct_fmt, raw_int.to_bytes(word_width * 2, "big"))[0])
             return values
 
         return [int(r) & 0xFFFF for r in registers]
