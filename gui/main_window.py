@@ -6,6 +6,7 @@ import logging
 import time
 import struct
 import csv
+import json
 import math
 import socket
 import threading
@@ -171,7 +172,13 @@ class ModbusGUI(QMainWindow):
 
         self.modbus = None
         self.connection_history = []
-                
+        # Write bounds loaded from a Session file, waiting for a live ModbusClient to apply
+        # them to -- write bounds only ever exist on the current connection's own instance
+        # (ModbusClient.write_bounds), so a Session loaded before connecting (or while a
+        # previous connection is still up) can't set them immediately. Applied by
+        # _apply_pending_write_bounds(), called again right after every successful _connect().
+        self._pending_write_bounds = []
+
         # Connection parameters
         self.connection_mode = "tcp"  # "tcp" or "serial"
         self.target_ip = "127.0.0.1"
@@ -1469,23 +1476,29 @@ class ModbusGUI(QMainWindow):
         self.tags_log_btn.setText("Stop Logging")
         self._log(f"Logging Tags data to {file_path}")
 
+    def _apply_connection_settings(self, vals):
+        """Copy a dict of connection fields onto the live attributes _connect() reads --
+        the shape ConnectionSettingsDialog.get_values() produces, and also what a loaded
+        Session file's "connection" section uses, so both go through the same one place."""
+        self.connection_mode = vals['mode']
+        self.target_ip = vals['ip']
+        self.target_port = vals['port']
+        self.target_unit_id = vals['unit']
+        self.serial_port = vals['serial_port']
+        self.baudrate = vals['baudrate']
+        self.parity = vals['parity']
+        self.stopbits = vals['stopbits']
+        self.bytesize = vals['bytesize']
+        self.serial_framer = vals['serial_framer']
+        self.fast_lan_mode = vals['fast_lan_mode']
+        self.interface_ip = vals['interface_ip']
+
     def _show_connection_settings(self, serial_overrides=None):
         """Show the connection settings dialog."""
         dialog = ConnectionSettingsDialog(self, self.connection_history, self, serial_overrides=serial_overrides)
         if dialog.exec() == QDialog.Accepted:
             vals = dialog.get_values()
-            self.connection_mode = vals['mode']
-            self.target_ip = vals['ip']
-            self.target_port = vals['port']
-            self.target_unit_id = vals['unit']
-            self.serial_port = vals['serial_port']
-            self.baudrate = vals['baudrate']
-            self.parity = vals['parity']
-            self.stopbits = vals['stopbits']
-            self.bytesize = vals['bytesize']
-            self.serial_framer = vals['serial_framer']
-            self.fast_lan_mode = vals['fast_lan_mode']
-            self.interface_ip = vals['interface_ip']
+            self._apply_connection_settings(vals)
             self.connection_history = vals['history']
             self._record_connection_history()
             self._update_connection_info()
@@ -1523,6 +1536,7 @@ class ModbusGUI(QMainWindow):
                 self.connection_status.setText(f"Connected: {conn_info}")
                 self._set_connection_controls(connected=True)
                 self._write_confirm_suppressed = False
+                self._apply_pending_write_bounds()
 
                 self._record_connection_history()
                 self._save_settings()
@@ -1673,61 +1687,139 @@ Unit ID: {unit_id}<br><br>
         """Get all monitoring tags from the table."""
         return self.monitoring_manager.get_monitoring_tags()
 
+    TAG_ROW_FIELDS = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment', 'Enabled',
+                      'Scale Enabled', 'Scale Mode', 'Raw Min', 'Raw Max', 'Scaled Min',
+                      'Scaled Max', 'Factor', 'Value Type']
+
+    def _build_tag_export_rows(self):
+        """The Tags table as a list of plain dicts, one per tag, in the exact shape both
+        CSV export and a saved Session file use -- a single source of truth so the two
+        can never drift out of sync with each other."""
+        rows = []
+        for tag in self._get_monitoring_tags():
+            scaling = self.monitoring_manager.tag_scaling.get(tag['row'])
+            rows.append({
+                'Tag Name': tag['name'],
+                'Mode': tag['mode'],
+                'Type': tag['type'],
+                'Address': tag['address'],
+                'Count': tag['count'],
+                'Format': tag['format'],
+                'Comment': tag['comment'],
+                'Enabled': tag['enabled'],
+                'Scale Enabled': bool(scaling),
+                'Scale Mode': scaling.get('mode', 'linear') if scaling else '',
+                'Raw Min': scaling.get('raw_min', '') if scaling else '',
+                'Raw Max': scaling.get('raw_max', '') if scaling else '',
+                'Scaled Min': scaling.get('scaled_min', '') if scaling else '',
+                'Scaled Max': scaling.get('scaled_max', '') if scaling else '',
+                'Factor': scaling.get('factor', '') if scaling else '',
+                'Value Type': scaling.get('value_type', '') if scaling else '',
+            })
+        return rows
+
+    def _apply_imported_tag_rows(self, rows):
+        """Clears the Tags table and repopulates it from `rows` (the same per-tag dict
+        shape _build_tag_export_rows produces) -- shared by CSV import and Load Session,
+        so a row from either source is handled by the exact same tolerant, older-export
+        -friendly logic. Returns the number of tags actually imported."""
+        self.monitoring_tag_table.setRowCount(0)
+        self.monitoring_manager.tag_scaling.clear()
+
+        imported_count = 0
+        for row in rows:
+            try:
+                new_row = self.monitoring_tag_table.rowCount()
+                # Older exports have no "Enabled" column -- absent means every tag
+                # was implicitly enabled, since the concept didn't exist yet.
+                enabled = str(row.get('Enabled', 'True')).strip().lower() in ('true', '1', 'yes')
+                self._add_monitoring_tag(
+                    tag_name=row.get('Tag Name', '').strip(),
+                    mode=row.get('Mode', 'Read').strip(),
+                    tag_type=row.get('Type', 'Coil').strip(),
+                    address=int(row.get('Address', 0)),
+                    count=int(row.get('Count', 1)),
+                    value_format=row.get('Format', 'U16').strip(),
+                    comment=row.get('Comment', '').strip(),
+                    enabled=enabled,
+                )
+                imported_count += 1
+            except (ValueError, KeyError) as e:
+                self._log(f"Skipping invalid row: {e}")
+                continue
+
+            # Older exports have no scaling columns -- absent means "not scaled",
+            # not an error.
+            scale_enabled = str(row.get('Scale Enabled', '')).strip().lower() in ('true', '1', 'yes')
+            if not scale_enabled:
+                continue
+            # Older exports have no "Scale Mode" column -- linear was the only
+            # mode that existed when they were written.
+            scale_mode = (row.get('Scale Mode', '') or 'linear').strip().lower()
+            try:
+                if scale_mode == 'multiply':
+                    scaling = {
+                        'enabled': True,
+                        'mode': 'multiply',
+                        'factor': float(row.get('Factor', 1) or 1),
+                        'value_type': row.get('Value Type', '').strip() or 'Real',
+                    }
+                else:
+                    scaling = {
+                        'enabled': True,
+                        'mode': 'linear',
+                        'raw_min': float(row.get('Raw Min', 0) or 0),
+                        'raw_max': float(row.get('Raw Max', 0) or 0),
+                        'scaled_min': float(row.get('Scaled Min', 0) or 0),
+                        'scaled_max': float(row.get('Scaled Max', 0) or 0),
+                        'value_type': row.get('Value Type', '').strip() or 'Real',
+                    }
+            except (ValueError, TypeError) as e:
+                self._log(f"Skipping invalid scaling config on imported row: {e}")
+                continue
+            self.monitoring_manager.tag_scaling[new_row] = scaling
+            scale_widget = self.monitoring_tag_table.cellWidget(new_row, 12)
+            if scale_widget:
+                try:
+                    self._updating_tag_table = True
+                    scale_widget.setChecked(True)
+                finally:
+                    self._updating_tag_table = False
+
+        return imported_count
+
     def _export_tags_csv(self):
         """Export tags to CSV file."""
         try:
             from PySide6.QtWidgets import QFileDialog
-            
+
             row_count = self.monitoring_tag_table.rowCount()
             if row_count == 0:
                 QMessageBox.warning(self, "No Tags", "No tags to export. Please add tags first.")
                 return
-            
-            tags = self._get_monitoring_tags()
-            if not tags:
+
+            rows = self._build_tag_export_rows()
+            if not rows:
                 QMessageBox.warning(self, "No Tags", f"No tags to export. Table has {row_count} rows but no valid tags found. Please add tags with valid addresses or names.")
                 return
-            
+
             # Get save file path
             file_path, _ = QFileDialog.getSaveFileName(
                 self, "Export Tags CSV", f"tags_{time.strftime('%Y%m%d_%H%M%S')}.csv", "CSV Files (*.csv)"
             )
-            
+
             if not file_path:
                 return
-            
+
             # Export to CSV
             with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment', 'Enabled',
-                              'Scale Enabled', 'Scale Mode', 'Raw Min', 'Raw Max', 'Scaled Min',
-                              'Scaled Max', 'Factor', 'Value Type']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
+                writer = csv.DictWriter(csvfile, fieldnames=self.TAG_ROW_FIELDS)
                 writer.writeheader()
-                for tag in tags:
-                    scaling = self.monitoring_manager.tag_scaling.get(tag['row'])
-                    writer.writerow({
-                        'Tag Name': tag['name'],
-                        'Mode': tag['mode'],
-                        'Type': tag['type'],
-                        'Address': tag['address'],
-                        'Count': tag['count'],
-                        'Format': tag['format'],
-                        'Comment': tag['comment'],
-                        'Enabled': tag['enabled'],
-                        'Scale Enabled': bool(scaling),
-                        'Scale Mode': scaling.get('mode', 'linear') if scaling else '',
-                        'Raw Min': scaling.get('raw_min', '') if scaling else '',
-                        'Raw Max': scaling.get('raw_max', '') if scaling else '',
-                        'Scaled Min': scaling.get('scaled_min', '') if scaling else '',
-                        'Scaled Max': scaling.get('scaled_max', '') if scaling else '',
-                        'Factor': scaling.get('factor', '') if scaling else '',
-                        'Value Type': scaling.get('value_type', '') if scaling else '',
-                    })
-            
-            self._log(f"Exported {len(tags)} tags to {file_path}")
-            QMessageBox.information(self, "Export Complete", f"Successfully exported {len(tags)} tags to CSV file!")
-            
+                writer.writerows(rows)
+
+            self._log(f"Exported {len(rows)} tags to {file_path}")
+            QMessageBox.information(self, "Export Complete", f"Successfully exported {len(rows)} tags to CSV file!")
+
         except Exception as e:
             self._log(f"Error exporting CSV: {e}")
             QMessageBox.critical(self, "Error", f"Failed to export tags: {e}")
@@ -1736,95 +1828,32 @@ Unit ID: {unit_id}<br><br>
         """Import tags from CSV file."""
         try:
             from PySide6.QtWidgets import QFileDialog
-            
+
             # Get file path
             file_path, _ = QFileDialog.getOpenFileName(
                 self, "Import Tags CSV", "", "CSV Files (*.csv)"
             )
-            
+
             if not file_path:
                 return
-            
+
             # Read CSV file
             with open(file_path, 'r', encoding='utf-8') as csvfile:
                 reader = csv.DictReader(csvfile)
-                
+
                 # Validate CSV structure
                 required_fields = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment']
                 if not reader.fieldnames or not all(field in reader.fieldnames for field in required_fields):
-                    QMessageBox.warning(self, "Invalid CSV", 
+                    QMessageBox.warning(self, "Invalid CSV",
                         "CSV file must contain columns: Tag Name, Mode, Type, Address, Count, Format, Comment")
                     return
-                
-                # Clear existing tags
-                self.monitoring_tag_table.setRowCount(0)
-                self.monitoring_manager.tag_scaling.clear()
 
-                # Import tags
-                imported_count = 0
-                for row in reader:
-                    try:
-                        new_row = self.monitoring_tag_table.rowCount()
-                        # Older exports have no "Enabled" column -- absent means every tag
-                        # was implicitly enabled, since the concept didn't exist yet.
-                        enabled = str(row.get('Enabled', 'True')).strip().lower() in ('true', '1', 'yes')
-                        self._add_monitoring_tag(
-                            tag_name=row.get('Tag Name', '').strip(),
-                            mode=row.get('Mode', 'Read').strip(),
-                            tag_type=row.get('Type', 'Coil').strip(),
-                            address=int(row.get('Address', 0)),
-                            count=int(row.get('Count', 1)),
-                            value_format=row.get('Format', 'U16').strip(),
-                            comment=row.get('Comment', '').strip(),
-                            enabled=enabled,
-                        )
-                        imported_count += 1
-                    except (ValueError, KeyError) as e:
-                        self._log(f"Skipping invalid row: {e}")
-                        continue
+                imported_count = self._apply_imported_tag_rows(list(reader))
 
-                    # Older exports have no scaling columns -- absent means "not scaled",
-                    # not an error.
-                    scale_enabled = str(row.get('Scale Enabled', '')).strip().lower() in ('true', '1', 'yes')
-                    if not scale_enabled:
-                        continue
-                    # Older exports have no "Scale Mode" column -- linear was the only
-                    # mode that existed when they were written.
-                    scale_mode = (row.get('Scale Mode', '') or 'linear').strip().lower()
-                    try:
-                        if scale_mode == 'multiply':
-                            scaling = {
-                                'enabled': True,
-                                'mode': 'multiply',
-                                'factor': float(row.get('Factor', 1) or 1),
-                                'value_type': row.get('Value Type', '').strip() or 'Real',
-                            }
-                        else:
-                            scaling = {
-                                'enabled': True,
-                                'mode': 'linear',
-                                'raw_min': float(row.get('Raw Min', 0) or 0),
-                                'raw_max': float(row.get('Raw Max', 0) or 0),
-                                'scaled_min': float(row.get('Scaled Min', 0) or 0),
-                                'scaled_max': float(row.get('Scaled Max', 0) or 0),
-                                'value_type': row.get('Value Type', '').strip() or 'Real',
-                            }
-                    except (ValueError, TypeError) as e:
-                        self._log(f"Skipping invalid scaling config on imported row: {e}")
-                        continue
-                    self.monitoring_manager.tag_scaling[new_row] = scaling
-                    scale_widget = self.monitoring_tag_table.cellWidget(new_row, 12)
-                    if scale_widget:
-                        try:
-                            self._updating_tag_table = True
-                            scale_widget.setChecked(True)
-                        finally:
-                            self._updating_tag_table = False
-                
-                self._log(f"Imported {imported_count} tags from {file_path}")
-                QMessageBox.information(self, "Import Complete", 
-                    f"Successfully imported {imported_count} tags from CSV file!")
-            
+            self._log(f"Imported {imported_count} tags from {file_path}")
+            QMessageBox.information(self, "Import Complete",
+                f"Successfully imported {imported_count} tags from CSV file!")
+
         except Exception as e:
             self._log(f"Error importing CSV: {e}")
             QMessageBox.critical(self, "Error", f"Failed to import tags: {e}")
@@ -2850,13 +2879,134 @@ Unit ID: {unit_id}<br><br>
         new_window.show()
         ModbusGUI._open_windows.append(new_window)
 
+    SESSION_FILE_VERSION = 1
+
+    def _build_session_data(self):
+        """Bundle everything needed to reproduce this session in a fresh window: connection
+        settings, the Tags list (+ scaling), Address Table's current range config, and any
+        write bounds set on the live connection. Previously only Tags round-tripped at all
+        (via their own separate CSV export/import) -- connection settings, Address Table
+        config, and write bounds never traveled together with them."""
+        at = self.address_table_widget
+        return {
+            "version": self.SESSION_FILE_VERSION,
+            "connection": {
+                "mode": self.connection_mode,
+                "ip": self.target_ip,
+                "port": self.target_port,
+                "unit": self.target_unit_id,
+                "serial_port": self.serial_port,
+                "baudrate": self.baudrate,
+                "parity": self.parity,
+                "stopbits": self.stopbits,
+                "bytesize": self.bytesize,
+                "serial_framer": self.serial_framer,
+                "fast_lan_mode": self.fast_lan_mode,
+                "interface_ip": self.interface_ip,
+            },
+            "tags": self._build_tag_export_rows(),
+            "address_table": {
+                "function": at.function_combo.currentText(),
+                "start_address": at.address_input.value(),
+                "count": at.count_input.value(),
+                "one_based": at.range_is_one_based,
+            },
+            # Write bounds only ever exist on the live ModbusClient instance (see
+            # ModbusClient.write_bounds) -- nothing to save if there's no connection.
+            "write_bounds": (
+                [[address, bounds[0], bounds[1]] for address, bounds in self.modbus.write_bounds.items()]
+                if self.modbus else []
+            ),
+        }
+
+    def _apply_session_data(self, data):
+        """Reverse of _build_session_data. Connection settings are only copied onto the
+        live attributes _connect() reads -- Load Session deliberately does not itself
+        connect, the same way applying a Recent Connections entry doesn't, so an
+        accidental load can't reach real equipment on its own."""
+        connection = data.get("connection")
+        if connection:
+            self._apply_connection_settings(connection)
+            self._update_connection_info()
+
+        tags = data.get("tags")
+        if tags is not None:
+            self._apply_imported_tag_rows(tags)
+
+        at_data = data.get("address_table")
+        if at_data:
+            at = self.address_table_widget
+            # Order matters: one-based toggles the Address spinbox's own min/max range,
+            # and function affects whether Count is editable at all -- both need to land
+            # before start_address/count are set, or they can get clamped/ignored.
+            if "one_based" in at_data:
+                at.offset_checkbox.setChecked(not at_data["one_based"])
+            if "function" in at_data:
+                at.function_combo.setCurrentText(at_data["function"])
+            if "start_address" in at_data:
+                at.address_input.setValue(at_data["start_address"])
+            if "count" in at_data:
+                at.count_input.setValue(at_data["count"])
+
+        self._pending_write_bounds = [tuple(entry) for entry in (data.get("write_bounds") or [])]
+        self._apply_pending_write_bounds()
+
+    def _apply_pending_write_bounds(self):
+        """Write bounds loaded from a Session file before a connection exists (or while a
+        previous one is still up) sit in _pending_write_bounds until there's an actual
+        ModbusClient to set them on. Called from Load Session and again right after every
+        successful _connect(), so whichever happens second is the one that applies them."""
+        if not self.modbus or not self._pending_write_bounds:
+            return
+        for address, minimum, maximum in self._pending_write_bounds:
+            self.modbus.set_write_bound(address, minimum, maximum)
+        self._log(f"Applied {len(self._pending_write_bounds)} write bound(s) from loaded session")
+        self._pending_write_bounds = []
+
     def _save_session(self):
-        """Save current session."""
-        QMessageBox.information(self, "Save Session", "Session saving will be implemented in the next update!")
+        """Save connection settings, Tags, Address Table range, and any live write bounds
+        together in one file."""
+        from PySide6.QtWidgets import QFileDialog
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Session", f"session_{time.strftime('%Y%m%d_%H%M%S')}.mlsession",
+            "ModbusLens Session (*.mlsession)",
+        )
+        if not file_path:
+            return
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(self._build_session_data(), f, indent=2)
+        except OSError as e:
+            QMessageBox.critical(self, "Save Session Failed", f"Could not write session file: {e}")
+            return
+        self._log(f"Saved session to {file_path}")
+        QMessageBox.information(self, "Save Session", "Session saved successfully!")
 
     def _load_session(self):
         """Load a saved session."""
-        QMessageBox.information(self, "Load Session", "Session loading will be implemented in the next update!")
+        from PySide6.QtWidgets import QFileDialog
+
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Session", "", "ModbusLens Session (*.mlsession)")
+        if not file_path:
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            QMessageBox.critical(self, "Load Session Failed", f"Could not read session file: {e}")
+            return
+        if not isinstance(data, dict) or "version" not in data:
+            QMessageBox.warning(self, "Invalid Session File", "This doesn't look like a ModbusLens session file.")
+            return
+
+        self._apply_session_data(data)
+        self._log(f"Loaded session from {file_path}")
+        QMessageBox.information(
+            self, "Load Session",
+            "Session loaded: connection settings, Tags, and Address Table range have been applied.\n\n"
+            "Connect using these settings to finish applying any saved write bounds."
+        )
 
     def _export_data(self):
         """Export monitoring data."""
