@@ -42,6 +42,8 @@
 - Simple scripting for repeatable write/wait/read test sequences, against either a live device or ModbusLens's own Server simulator
 - Serial Discovery: sweep common baud rate/parity/stop-bit/Unit ID combinations to find the settings a serial device actually uses
 - Scanner: auto-discover which addresses actually respond on a connected device (TCP or serial)
+- Modbus Diagnostic Functions: FC07/08/11/12/17/20/21/22/24/43 - exception status, diagnostics, comm event counter/log, report server ID, file record read/write, mask write register, FIFO queue, and device identification
+- Save/Load Session: connection settings, Tags, Address Table range, and write bounds together in one file
 
 ---
 
@@ -128,11 +130,12 @@
 - Multiple simultaneous connections via independent windows (File > New Connection Window)  
 - Optional interface binding in Connection Settings - "Auto" leaves routing to the OS (default); picking a NIC binds the outgoing TCP socket to it  
 - Fast LAN Mode (Connection Settings, TCP) - 200ms timeout, no retries; on a poll failure it probes reachability once instead of paying a timeout for every remaining tag  
+- Save/Load Session (File menu) - connection settings, Tags (with scaling), Address Table range, and any live write bounds together in one `.mlsession` file, not just Tags on their own (Export/Import CSV is still there for Tags-only round trips)  
 
 ### Data Handling
-- BOOL, U16/S16, U32/S32, F32, HEX support  
+- BOOL, U16/S16, U32/S32/F32, U64/S64/F64, HEX support  
 - BOOL on a register shows the full 16-bit pattern, not just a single flag  
-- Word order handling (*_SWAP)  
+- Word order handling (*_SWAP), for both 32-bit and 64-bit formats  
 - 0-based / 1-based addressing, selectable per Address Table range and per Tag  
 - Raw hex value shown alongside the decoded value, in both the Address Table and Tags  
 
@@ -140,10 +143,10 @@
 - Real-time tag monitoring, with Read Value/Write Value/Timestamp built into the same Tags table  
 - Insert new tags anywhere in the list (new tags drop in below the selected row), not just at the end  
 - Drag and drop to reorder rows, preserving live values, alarm, and scaling config  
-- Write to a tag while monitoring stays active  
+- Write to a tag while monitoring stays active, or press **Enter** in the Write Value cell to write just that row immediately - mirrors the type-and-Enter workflow classic tools like Modbus Poll use  
 - A single misconfigured or failing tag no longer stops the rest of the list from updating  
 - Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting  
-- Engineering-unit scaling per tag - check the **Scale** box to set Raw Min/Max and Scaled Min/Max (linear transform, e.g. raw 0-4095 -> 0-100 PSI), shown live in the **Engineering Value** column; choose whether the scaled result displays as Real or Integer  
+- Engineering-unit scaling per tag - check the **Scale** box for either a linear transform (Raw Min/Max -> Scaled Min/Max, e.g. raw 0-4095 -> 0-100 PSI) or a simple multiply-by-constant factor, shown live in the **Engineering Value** column; choose whether the scaled result displays as Real or Integer  
 - Tag names are validated as they're typed - letters/numbers/underscore only, no spaces, and script keywords/reserved words are rejected with a warning, since a tag's name also doubles as its reference in a Script and in Trend's pen picker  
 - Log live tag values to CSV  
 - CSV import/export  
@@ -198,6 +201,10 @@
 - Opens its own short-lived connection per combination (byte size fixed at 8), so it needs the port free - disconnect ModbusLens first if it's the one holding it open  
 - A **Scan for Connection Parameters...** button in Connection Settings' Serial section closes that dialog and opens Serial Discovery directly, with the COM port already filled in  
 
+### Diagnostic Functions
+- Diagnostics menu tool covering the Modbus function codes beyond basic read/write, in one function-picker dialog: FC07 Read Exception Status, FC08 Diagnostics (Loopback/Query Data, Restart Communications, Read Diagnostic Register, Clear Counters), FC11/12 Get Comm Event Counter/Log, FC17 Report Server ID, FC20/21 Read/Write File Record, FC22 Mask Write Register, FC24 Read FIFO Queue, and FC43 Read Device Information  
+- Niche next to everyday polling, but a real gap for compliance/interop testing - each function needs at most a few parameters, filled in right in the dialog  
+
 ### Scanner
 - Auto-discovers which addresses respond for a chosen function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range - works the same way whether the current connection is TCP or serial  
 - Probes the largest block the function allows first, and only narrows down address-by-address where a block doesn't fully respond - far fewer requests than checking one address at a time  
@@ -212,6 +219,7 @@
 - Light/Dark/Follow System theme, switchable from View > Theme (takes effect after restart)  
 - Help > About has an Updates tab that checks GitHub Releases for a newer version  
 - Color-coded logs (Address Table, System Logs, Script console) - writes in blue, connection events in green, errors in red  
+- Ctrl+scroll wheel zooms text size in the Status Log, System Logs, and Raw Data table  
 
 ---
 
@@ -249,11 +257,11 @@ ModbusLens.exe
 - Multiple Unit IDs over a single connection (useful for RTU/ASCII sharing one serial line, or a TCP-to-RTU gateway fanning out to several devices)  
 - Server tab simulating multiple devices/unit addresses at once, not just one  
 - Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
-- Broader Modbus function-code coverage beyond core read/write (diagnostics, file record access, device identification)  
 - Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
 - Gateway mode - relay real traffic between RTU/ASCII serial and TCP instead of only simulating a device  
-- 64-bit numeric formats and a string/text data type, beyond the current 32-bit cap  
-- Single-bit read/write within a register, plus Masked Bit Write (FC22) support for legacy devices  
+- A string/text data type, beyond the current numeric format set  
+- Single-bit read/write within a register, for legacy devices  
+- A user-configurable UI scale/zoom factor for very high-resolution displays run at 100% OS scaling (separate from the per-log Ctrl+scroll zoom, and from OS-level HiDPI scaling, which the app already follows automatically)  
 - RTU/ASCII framing encapsulated over TCP/UDP, for serial-to-Ethernet converters that tunnel raw framing instead of translating it  
 - Calculated tags combining multiple registers via an expression, as a persistent Tag/Trend source (Scripting can already do this ad hoc; this would make it a saved, always-on tag)  
 

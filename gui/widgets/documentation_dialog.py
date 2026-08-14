@@ -52,8 +52,15 @@ own connection, tabs, and Server tab. See <b>Multiple Windows</b> for details.</
 <li><b>New Session</b> - disconnects if connected, stops monitoring, and clears the current
 window's logs and monitoring results. Doesn't close the window or lose your Tags/script - just
 resets the live state.</li>
-<li><b>Save Session</b> / <b>Load Session</b> - not implemented yet; currently show a placeholder
-message. Use <b>Export/Import CSV</b> on the Tags tab to save/reload a tag list in the meantime.</li>
+<li><b>Save Session</b> / <b>Load Session</b> - saves or loads a single <code>.mlsession</code>
+file bundling connection settings (TCP or serial, Fast LAN Mode, interface binding), the Tags
+list (including scaling), the Address Table's current range config, and any write bounds set on
+the live connection - everything <b>Export/Import CSV</b> doesn't cover on its own (CSV is Tags
+only). Loading a session applies connection settings and the Address Table range immediately, but
+deliberately does not connect for you - the same reasoning as picking a Recent Connections entry,
+so loading a file can never be the thing that reaches real equipment. Write bounds only exist on
+the live connection, so a loaded session's bounds are applied the moment you actually connect
+(right away if already connected, or as soon as the next connection succeeds).</li>
 <li><b>Export Data</b> - not implemented yet; currently shows a placeholder message. Use
 <b>Log to CSV</b> on the Tags or Trend tab for live data logging in the meantime.</li>
 <li><b>Exit</b> - closes this window (saving its settings first).</li>
@@ -87,9 +94,14 @@ device discovery plus Modbus detection). See <b>Troubleshooting &gt; Network Dis
 <li><b>Serial Discovery</b> - opens a dialog that sweeps common baud rate/parity/stop-bit/Unit ID
 combinations against a COM port to find which one a serial device actually speaks. See the
 <b>Scanner</b> topic.</li>
+<li><b>Modbus Diagnostic Functions</b> - opens a dialog covering the function codes beyond basic
+read/write: Read Exception Status, Diagnostics (Loopback, Restart Communications, Read Diagnostic
+Register, Clear Counters), Get Comm Event Counter/Log, Report Server ID, Read/Write File Record,
+Mask Write Register, Read FIFO Queue, and Read Device Information. See the
+<b>Diagnostic Functions</b> topic.</li>
 <li><b>System Logs</b> - opens a dialog with the full, scrollable System Logs history (the same
 color-coded write/connect/error log shown live in the app). Handy when you need to scroll back
-further than fits on screen.</li>
+further than fits on screen. <b>Ctrl+scroll wheel</b> zooms its text size in and out.</li>
 <li><b>Clear All Logs</b> - clears the System Logs and the Raw Data tab's transaction history.
 This can't be undone.</li>
 </ol>
@@ -225,7 +237,7 @@ two don't compete for the connection.</p>
 each with a timestamp and color-coded so the right lines stand out: writes in blue, connection
 events in green, errors in red, everything else in the default color. This is the first place
 to look when a write doesn't seem to take effect. The same coloring applies to System Logs and
-the Script console.</p>
+the Script console. <b>Ctrl+scroll wheel</b> over the log zooms its text size in and out.</p>
 """),
 
     ("Tags Monitoring", """
@@ -247,7 +259,9 @@ Register/Input Register), <b>Address</b>, <b>Count</b>, <b>Format</b>.</li>
 <li><b>Read Value</b> - the decoded live value.</li>
 <li><b>Raw (Hex)</b> - the same value in hex, straight from the register(s), independent of format.</li>
 <li><b>Write Value</b> - type a value here and click <b>Write Selected</b> to send it (Write-mode
-tags only).</li>
+tags only), or just press <b>Enter</b> in the cell to write that one row immediately without
+selecting it or clicking anything - mirrors the type-and-Enter workflow classic tools like Modbus
+Poll use. Goes through the exact same confirmation and safety interlock as Write Selected.</li>
 <li><b>Comment</b> and <b>Timestamp</b>.</li>
 </ul>
 
@@ -268,12 +282,18 @@ out of a status word. 32-bit formats (U32/S32/F32) need a <b>Count</b> that's a 
 respectively.</p>
 
 <h3>Engineering-unit scaling</h3>
-<p>Check the <b>Scale</b> box on a row to open a small popup asking for <b>Raw Min/Max</b> and
-<b>Scaled Min/Max</b> - a linear transform from whatever the device actually sends to a
-meaningful engineering unit (e.g. raw ADC counts 0-4095 mapped to 0-100 PSI). The result appears
-in the <b>Engineering Value</b> column alongside the normal Read Value, live as the tag is
-polled. Choose <b>Real</b> or <b>Integer</b> for how the scaled result is displayed. Unchecking
-<b>Scale</b> (or Cancelling the popup) turns scaling back off for that row.</p>
+<p>Check the <b>Scale</b> box on a row to open a small popup with two modes:</p>
+<ul>
+<li><b>Linear (Min/Max)</b> - <b>Raw Min/Max</b> and <b>Scaled Min/Max</b> define a linear
+transform from whatever the device actually sends to a meaningful engineering unit (e.g. raw ADC
+counts 0-4095 mapped to 0-100 PSI).</li>
+<li><b>Multiply by Constant</b> - a single factor (e.g. raw 151 x 0.1 = 15.1), for the common case
+of a device sending a value scaled by a fixed power of ten.</li>
+</ul>
+<p>Either way, the result appears in the <b>Engineering Value</b> column alongside the normal Read
+Value, live as the tag is polled - and in Trend, if a pen's tag has scaling enabled. Choose
+<b>Real</b> or <b>Integer</b> for how the scaled result is displayed. Unchecking <b>Scale</b> (or
+Cancelling the popup) turns scaling back off for that row.</p>
 
 <h3>Alarms</h3>
 <p>Right-click a tag row and choose <b>Configure Alarm...</b>. Numeric tags get a High and/or
@@ -307,7 +327,8 @@ this stops a write and a read from overlapping on the same connection.</p>
 <p>One row per Modbus transaction - the untouched data behind every read and write, independent
 of how a Tag or Address Table row happens to decode it. Useful when a decoded value looks wrong
 and you want to see exactly what came back before ModbusLens interpreted it as U16, F32, or
-anything else, and for spotting a device that's responding but slow.</p>
+anything else, and for spotting a device that's responding but slow.
+<b>Ctrl+scroll wheel</b> over the table zooms its text size in and out.</p>
 
 <h3>Columns</h3>
 <ul>
@@ -655,7 +676,14 @@ range to also try, then <b>Start Scan</b>. It tries every combination of 8 commo
 8, the near-universal default - opening a short-lived connection for each combination and
 sending one Holding Register read. Any reply, including a Modbus exception response, counts as
 a match, since that still proves the framing decoded correctly; a garbled response from a
-mismatched baud rate or parity won't parse as a valid Modbus frame at all.</p>
+mismatched baud rate won't parse as a valid Modbus frame at all.</p>
+<p><b>A match isn't always unique.</b> Stop bits (and occasionally parity) are framing bits, not
+data - many UART/USB-serial adapters only check for <i>at least</i> one high bit-time before the
+next start bit, so a receiver set for 1 stop bit is easily satisfied by a sender actually using 2,
+and vice versa. It's normal to see the same baud/parity/Unit ID reported as a match at both stop-bit
+settings. When that happens, prefer whatever the device's own documentation or configuration
+screen actually says over guessing from the scan alone - the scan proves "a read got a response,"
+not "these are the device's exact settings."</p>
 <p>This doesn't reuse the app's shared connection - it opens its own for each combination,
 since testing a physical serial setting means actually reopening the port with it. That also
 means the port needs to be free: disconnect ModbusLens first if it's the one connected to this
@@ -664,6 +692,50 @@ might have it open. If the port can't be opened at all, the scan stops immediate
 message rather than repeating the same failure for every remaining combination.</p>
 <p>Keep the Unit ID range narrow (it defaults to just 1) unless you actually need it wider -
 each additional Unit ID multiplies the total combination count by 48.</p>
+"""),
+
+    ("Diagnostic Functions", """
+<h2>Diagnostic Functions</h2>
+<p><b>Diagnostics &gt; Modbus Diagnostic Functions</b> reaches the Modbus function codes beyond
+basic reads/writes - niche next to everyday polling, but a real gap for compliance and interop
+testing. Pick a function from the dropdown, fill in the couple of parameters it needs (most need
+none at all), and <b>Run</b>. The result - or the device's error - shows in the box below.</p>
+<ul>
+<li><b>Read Exception Status (FC07)</b> - an 8-bit vendor-specific status byte, a lightweight
+"is anything wrong" poll some devices support without a full register read.</li>
+<li><b>Diagnostics: Loopback / Query Data (FC08)</b> - sends bytes you type (as hex, e.g.
+<code>12 34</code>) and expects the device to echo them back unchanged - a pure comms sanity
+check that never touches a real register.</li>
+<li><b>Diagnostics: Restart Communications (FC08)</b> - asks the device to reinitialize its comm
+port; optionally also clears its event log/counters.</li>
+<li><b>Diagnostics: Read Diagnostic Register (FC08)</b> - device-specific status bits (e.g.
+listen-only mode); the meaning beyond the raw bits is vendor-defined.</li>
+<li><b>Diagnostics: Clear Counters (FC08)</b> - clears the device's own diagnostic counters and
+register.</li>
+<li><b>Get Comm Event Counter (FC11)</b> / <b>Get Comm Event Log (FC12)</b> - a free-running
+counter the device bumps on every completed transaction, plus (for the Log) a short history of
+recent bus events and a ready/busy status flag.</li>
+<li><b>Report Server ID (FC17)</b> - a vendor-defined identifier string plus a run/stop
+indicator, historically called "Report Slave ID."</li>
+<li><b>Read/Write File Record (FC20/21)</b> - reads or writes records in the device's file
+storage, a second address space separate from registers/coils, mostly seen on energy meters and
+similar data loggers. Specify the File Number, Record Number, and (for a read) how many registers
+to read, or (for a write) the raw data as hex bytes.</li>
+<li><b>Mask Write Register (FC22)</b> - sets a register to
+<code>(current_value AND and_mask) OR (or_mask AND NOT and_mask)</code> atomically on the device,
+so changing a few bits doesn't race against another master's write to the same register between a
+plain read and write.</li>
+<li><b>Read FIFO Queue (FC24)</b> - reads a FIFO queue's current contents (without removing them)
+from a pointer register, for devices that buffer captured values faster than a master polls
+them.</li>
+<li><b>Read Device Information (FC43)</b> - vendor name/product code/version and similar text
+objects, a standardized alternative to a vendor-specific register for "what device am I talking
+to." <b>Read Code</b> selects Basic, Regular, Extended, or a single specific object via
+<b>Object Id</b>.</li>
+</ul>
+<p>Every function here goes through the same connection as everything else in ModbusLens (Address
+Table, Tags, Scanner) - you need to already be connected, and a run briefly uses the connection
+like any other read/write.</p>
 """),
 
     ("Multiple Windows", """
