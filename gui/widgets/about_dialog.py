@@ -162,7 +162,37 @@ FEATURES_HTML = """
 # Newest first. Older releases are summarized at a higher level than the current one -
 # see the git history/README for exact commit-level detail on those.
 CHANGELOG_HTML = """
-<h3>v2.1.0 <span style='color:#888;font-size:small;'>(current)</span></h3>
+<h3>v2.2.0 <span style='color:#888;font-size:small;'>(current)</span></h3>
+<p><u>New</u></p>
+<ul>
+<li>Modbus Diagnostic Functions dialog: FC07 Read Exception Status, FC08 Diagnostics, FC11/12 Get Comm Event Counter/Log, FC17 Report Server ID, FC20/21 Read/Write File Record, FC22 Mask Write Register, FC24 Read FIFO Queue, and FC43 Read Device Information</li>
+<li>Save/Load Session: connection settings, Tags (with scaling), Address Table range, and live write bounds together in one file, not just Tags on their own</li>
+<li>U64/S64/F64 numeric formats (plus *_SWAP variants), alongside the existing U32/S32/F32</li>
+<li>Engineering-unit scaling gained a "multiply by constant" mode, alongside the existing linear (Raw/Scaled Min/Max) transform</li>
+<li>Write Value + Enter writes just that tag immediately, without selecting the row first</li>
+<li>Ctrl+scroll wheel zooms text size in the Status Log, System Logs, and Raw Data table</li>
+<li>Optional interface binding in Connection Settings ("Auto" or a specific NIC), plus a custom IP range and netmask-aware default range for Network Discovery</li>
+<li>Fast LAN Mode (Connection Settings, TCP) - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off</li>
+<li>Tags table: drag-to-reorder columns, a show/hide column picker, per-tag enable/disable, Delete key and Ctrl+C copy</li>
+<li>Raw Data: an Exception column distinguishing a device-returned error from a plain timeout, CSV export, and copy-as-text/hex-bytes</li>
+<li>Address Table: a register display format (U16/S16/U32/S32/F32) instead of only plain values</li>
+<li>Trend reworked around a tag picker: pen index, custom label, and a Raw/Scaled/Auto mode per pen, alongside the existing detach and engineering-scaling support</li>
+<li>Show Statistics gained a failure-cause breakdown (connection/timeout/device-exception/rejected)</li>
+<li>A "Show Safety Warning Again" option under Tools, so dismissing it once doesn't mean never seeing it again</li>
+<li>A shared read cache and coalesced adjacent tag reads cut duplicate traffic between Tags/Trend/Address Table on the same poll cycle</li>
+<li>Scapy now ships bundled in the packaged app - no separate <code>pip install scapy</code> needed for the optional ARP Mode</li>
+</ul>
+<p><u>Fixed</u></p>
+<ul>
+<li>Write-mode tags with a signed format (S16/S32) showed the raw unsigned register instead of the signed value in Read Value, but only when Count was 1</li>
+<li>Tags table selection was invisible (every cell is a custom widget, so Qt's normal row-selection highlight had nothing to paint on) - and a related write-safety gap where a row could stay logically "selected" for Write Selected/Remove after being visually deselected</li>
+<li>Connection Settings' network-interface dropdown overwrote a Target IP you'd already typed</li>
+<li>Start Monitoring button lost its "running" visual state after switching tabs away and back, even though monitoring was still active underneath</li>
+<li>Recent Connections dropdown bugs, and various connection/monitoring/CSV import edge cases</li>
+<li>Tag Monitoring's polling moved off the GUI thread, and Address Table/Trend/Script reads now share one interlock with it, closing several races where a scan, a script, and live polling could touch the connection at the same time</li>
+</ul>
+
+<h3>v2.1.0</h3>
 <p><u>New</u></p>
 <ul>
 <li>Light/dark theme, with a "follow system" option</li>

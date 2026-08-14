@@ -53,7 +53,7 @@ from log_format import format_log_html
 from modbus_meta import function_code_for, MULTI_WORD_FORMATS, format_word_width
 import theme
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
