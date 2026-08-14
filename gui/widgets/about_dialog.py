@@ -51,6 +51,9 @@ FEATURES_HTML = """
 <li>Optional Min/Max write bounds per register - a write outside the range is rejected before it reaches the device, whether it came from the Address Table, Tags, or a Script</li>
 <li>Auto-reconnect with backoff after an unexpected drop, and automatic resume of Tags monitoring once the connection recovers</li>
 <li>Multiple simultaneous connections via independent windows (File > New Connection Window)</li>
+<li>Optional interface binding in Connection Settings - "Auto" leaves routing to the OS (default); picking a NIC binds the outgoing TCP socket to it</li>
+<li>Fast LAN Mode (Connection Settings, TCP) - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off</li>
+<li>Save/Load Session - connection settings, Tags (with scaling), Address Table range, and any live write bounds together in one file, not just Tags on their own</li>
 </ul>
 
 <h4>Data Handling</h4>
@@ -67,9 +70,10 @@ FEATURES_HTML = """
 <li>Real-time tag monitoring, with Read Value/Write Value/Timestamp built into the same Tags table</li>
 <li>Insert new tags anywhere in the list (new tags drop in below the selected row), not just at the end</li>
 <li>Drag and drop to reorder rows, preserving live values and alarm config</li>
-<li>Write to a tag while monitoring stays active</li>
+<li>Write to a tag while monitoring stays active, or press Enter in the Write Value cell to write just that row immediately</li>
 <li>A single misconfigured or failing tag no longer stops the rest of the list from updating</li>
 <li>Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting</li>
+<li>Engineering-unit scaling per tag - linear (Raw/Scaled Min/Max) or multiply-by-constant, shown live in the Engineering Value column</li>
 <li>Log live tag values to CSV</li>
 <li>CSV import/export</li>
 </ul>
@@ -130,6 +134,12 @@ FEATURES_HTML = """
 <li>A "Scan for Connection Parameters..." button in Connection Settings' Serial section opens Serial Discovery directly, with the COM port already filled in</li>
 </ul>
 
+<h4>Diagnostic Functions</h4>
+<ul>
+<li>FC07 Read Exception Status, FC08 Diagnostics (Loopback, Restart Communications, Read Diagnostic Register, Clear Counters), FC11/12 Get Comm Event Counter/Log, FC17 Report Server ID, FC20/21 Read/Write File Record, FC22 Mask Write Register, FC24 Read FIFO Queue, and FC43 Read Device Information</li>
+<li>One dialog covering all of them under Diagnostics > Modbus Diagnostic Functions - pick a function, fill in the couple of parameters it needs, Run</li>
+</ul>
+
 <h4>Scanner</h4>
 <ul>
 <li>Auto-discovers which addresses respond for a chosen function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range</li>
@@ -144,6 +154,7 @@ FEATURES_HTML = """
 <li>Light/Dark/Follow System theme, switchable from View > Theme (takes effect after restart)</li>
 <li>Color-coded logs (Address Table, System Logs, Script console) - writes in blue, connection events in green, errors in red</li>
 <li>Compact connection bar with clear status indicators</li>
+<li>Ctrl+scroll wheel zooms text size in the Status Log, System Logs, and Raw Data table</li>
 <li>Help > About has an Updates tab that checks GitHub Releases for a newer version</li>
 </ul>
 """
