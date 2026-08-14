@@ -776,11 +776,18 @@ class ModbusGUI(QMainWindow):
     def _restart_application(self):
         """Relaunch the app (frozen exe or `python gui_main.py`) and quit this instance,
         closing every open connection window first so each one's normal cleanup
-        (stop monitoring, disconnect, stop the Server tab's listener) still runs."""
+        (stop monitoring, disconnect, stop the Server tab's listener) still runs.
+
+        Passes this process's own PID via --wait-for-pid so the new instance (see
+        gui_main.py's _wait_for_previous_instance) holds off touching Qt until this one
+        has actually exited -- a --onefile build extracts its Qt plugins to a temp folder
+        on launch and deletes it on exit, and starting the new copy immediately raced that
+        cleanup, intermittently producing "no Qt platform plugin" on relaunch."""
         cmd = [sys.executable]
         if not getattr(sys, "frozen", False):
             cmd.append(os.path.abspath(sys.argv[0]))
         cmd.extend(sys.argv[1:])
+        cmd.append(f"--wait-for-pid={os.getpid()}")
         subprocess.Popen(cmd)
 
         for window in list(ModbusGUI._open_windows) + [self]:

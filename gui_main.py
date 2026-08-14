@@ -20,6 +20,39 @@ sys.path.insert(0, application_path)
 logging.basicConfig(level=logging.ERROR, format='%(levelname)s: %(message)s')
 
 
+def _wait_for_previous_instance(argv):
+    """If launched via ModbusGUI._restart_application() (theme-change relaunch), wait for
+    the previous instance to fully exit before this process touches Qt at all.
+
+    A --onefile PyInstaller build extracts its Qt platform plugins to a temp _MEIxxxxxx
+    folder on every launch and deletes that folder again on exit. Relaunching immediately
+    (the old behavior -- spawn the new process, then close windows and quit) raced this
+    process's Qt DLL loading against the old process's temp-folder cleanup, intermittently
+    producing "no Qt platform plugin" together with "failed to remove temp directory" on
+    the same restart -- worse on a slower/more loaded machine than the one it was built on.
+    Waiting for the old PID to actually disappear first means its cleanup has already
+    finished (or failed on its own, without contention from this process) before this one
+    starts extracting/loading anything Qt-related."""
+    pid = None
+    for arg in list(argv):
+        if arg.startswith("--wait-for-pid="):
+            argv.remove(arg)
+            try:
+                pid = int(arg.split("=", 1)[1])
+            except ValueError:
+                pid = None
+    if pid is None:
+        return
+    try:
+        import psutil
+        psutil.Process(pid).wait(timeout=10)
+    except Exception:
+        pass  # already gone, psutil unavailable, or timed out -- proceed either way
+
+
+_wait_for_previous_instance(sys.argv)
+
+
 def _report_startup_failure(message):
     """A --windowed/--noconsole build has no stdin/stdout/stderr (they're None), so a
     startup failure's print()/input() calls raise their own exception instead of showing
