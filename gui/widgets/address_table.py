@@ -10,6 +10,9 @@ import time
 
 from log_format import format_log_html
 from modbus_meta import FUNCTION_NAMES
+from zoom import install_ctrl_wheel_zoom
+
+DEFAULT_STATUS_LOG_FONT_PX = 10
 
 
 class AddressTableWidget(QWidget):
@@ -25,6 +28,18 @@ class AddressTableWidget(QWidget):
         self.range_is_one_based = True
         self._building_table = False
         self.setup_ui()
+
+    def _status_log_style(self, font_px=DEFAULT_STATUS_LOG_FONT_PX):
+        c = self.parent_window._colors()
+        return f"""
+            QTextEdit {{
+                background-color: {c["surface_alt2"]};
+                color: {c["text_secondary"]};
+                border: 1px solid {c["border"]};
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: {font_px}px;
+            }}
+        """
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -111,22 +126,19 @@ class AddressTableWidget(QWidget):
 
         left_controls.addWidget(monitor_group)
 
+        c = self.parent_window._colors()
+
         log_group = QGroupBox("Status Log")
         log_layout = QVBoxLayout(log_group)
         self.log_output = QTextEdit()
         self.log_output.setMinimumHeight(200)
         self.log_output.setMaximumWidth(300)
         self.log_output.setReadOnly(True)
-        c = self.parent_window._colors()
-        self.log_output.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: {c["surface_alt2"]};
-                color: {c["text_secondary"]};
-                border: 1px solid {c["border"]};
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 10px;
-            }}
-        """)
+        self.log_output.setStyleSheet(self._status_log_style(DEFAULT_STATUS_LOG_FONT_PX))
+        install_ctrl_wheel_zoom(
+            self.log_output, DEFAULT_STATUS_LOG_FONT_PX,
+            lambda px: self.log_output.setStyleSheet(self._status_log_style(px)),
+        )
         log_layout.addWidget(self.log_output)
 
         control_layout.addLayout(left_controls, 3)

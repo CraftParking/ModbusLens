@@ -9,7 +9,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QShortcut, QKeySequence
 from PySide6.QtCore import Qt
 
+from zoom import install_ctrl_wheel_zoom
+
 MAX_RAW_DATA_ROWS = 1000  # oldest rows are dropped past this so the table can't grow unbounded
+
+DEFAULT_LOG_FONT_PX = 10
+DEFAULT_RAW_TABLE_FONT_PX = 11
 
 RAW_DATA_COLUMNS = [
     "Time", "Operation", "Value", "Raw (Hex)", "TX Bytes", "RX Bytes", "Status", "Exception", "Latency (ms)",
@@ -57,7 +62,7 @@ class DiagnosticsDialogs:
         self.filter_text = ""
         self.filter_status = "All"
 
-    def _log_text_style(self):
+    def _log_text_style(self, font_px=DEFAULT_LOG_FONT_PX):
         c = self.parent._colors()
         return f"""
             QTextEdit {{
@@ -65,11 +70,11 @@ class DiagnosticsDialogs:
                 color: {c["text"]};
                 border: 1px solid {c["border"]};
                 font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 10px;
+                font-size: {font_px}px;
             }}
         """
 
-    def _raw_table_style(self):
+    def _raw_table_style(self, font_px=DEFAULT_RAW_TABLE_FONT_PX):
         c = self.parent._colors()
         return f"""
             QTableWidget {{
@@ -78,7 +83,7 @@ class DiagnosticsDialogs:
                 gridline-color: {c["pressed"]};
                 border: 1px solid {c["border"]};
                 font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 11px;
+                font-size: {font_px}px;
             }}
             QHeaderView::section {{
                 background-color: {c["header_bg"]};
@@ -86,6 +91,7 @@ class DiagnosticsDialogs:
                 border: 1px solid {c["border"]};
                 padding: 4px;
                 font-weight: bold;
+                font-size: {font_px}px;
             }}
         """
 
@@ -96,6 +102,10 @@ class DiagnosticsDialogs:
             self.parent.diagnostics_log_output = QTextEdit()
             self.parent.diagnostics_log_output.setReadOnly(True)
             self.parent.diagnostics_log_output.setStyleSheet(self._log_text_style())
+            install_ctrl_wheel_zoom(
+                self.parent.diagnostics_log_output, DEFAULT_LOG_FONT_PX,
+                lambda px: self.parent.diagnostics_log_output.setStyleSheet(self._log_text_style(px)),
+            )
 
         # Initialize the Raw Data transaction table
         if not hasattr(self.parent, 'raw_data_table'):
@@ -121,6 +131,12 @@ class DiagnosticsDialogs:
             self._raw_data_copy_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
             self._raw_data_copy_shortcut.activated.connect(lambda: self._copy_selected_raw_data_rows(table))
             self.parent.raw_data_table = table
+
+            def _restyle_raw_table(px, table=table):
+                table.setStyleSheet(self._raw_table_style(px))
+                table.resizeRowsToContents()
+
+            install_ctrl_wheel_zoom(table, DEFAULT_RAW_TABLE_FONT_PX, _restyle_raw_table)
 
     def show_diagnostics_logs(self):
         """Show diagnostics dialog with system logs."""
