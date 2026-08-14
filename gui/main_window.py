@@ -42,6 +42,7 @@ from diagnostics.advanced_diagnostics import AdvancedDiagnostics
 from diagnostics.diagnostics_dialogs import DiagnosticsDialogs
 from diagnostics.register_scanner import RegisterScannerWidget
 from diagnostics.serial_discovery import SerialDiscoveryDialog
+from diagnostics.diagnostic_functions import DiagnosticFunctionsDialog
 from monitoring.monitoring_manager import MonitoringManager
 from monitoring.shared_read_cache import SharedReadCache
 from network.network_diagnostics import NetworkDiagnosticsDialog
@@ -321,6 +322,7 @@ class ModbusGUI(QMainWindow):
         diagnostics_menu = menubar.addMenu("&Diagnostics")
         diagnostics_menu.addAction("Network Discovery & Diagnostics", self._network_diagnostics)
         diagnostics_menu.addAction("Serial Discovery", self._serial_discovery)
+        diagnostics_menu.addAction("Modbus Diagnostic Functions", self._show_diagnostic_functions)
         diagnostics_menu.addSeparator()
         diagnostics_menu.addAction("System Logs", self._show_diagnostics_logs)
         diagnostics_menu.addSeparator()
@@ -3091,6 +3093,11 @@ Unit ID: {unit_id}<br><br>
     def _serial_discovery(self, initial_port=None):
         """Show the Serial Discovery dialog, optionally pre-filled with a COM port."""
         self.serial_discovery.show_discovery(initial_port or self.serial_port)
+
+    def _show_diagnostic_functions(self):
+        """Show the FC07/08/11/12/17/20/21/22/24/43 diagnostic functions dialog."""
+        dialog = DiagnosticFunctionsDialog(self)
+        dialog.exec()
 
     def _show_documentation(self):
         """Show the Help documentation."""
