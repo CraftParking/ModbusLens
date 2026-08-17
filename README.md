@@ -148,8 +148,10 @@
 - Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting  
 - Engineering-unit scaling per tag - check the **Scale** box for either a linear transform (Raw Min/Max -> Scaled Min/Max, e.g. raw 0-4095 -> 0-100 PSI) or a simple multiply-by-constant factor, shown live in the **Engineering Value** column; choose whether the scaled result displays as Real or Integer  
 - Tag names are validated as they're typed - letters/numbers/underscore only, no spaces, and script keywords/reserved words are rejected with a warning, since a tag's name also doubles as its reference in a Script and in Trend's pen picker  
+- Per-tag **Enabled** checkbox - unchecked, a tag is skipped by continuous polling (both the Read cycle and Write-mode refresh) without deleting the row; manual actions (Write Selected, one-shot write via Enter) still work regardless  
+- Column reorder (drag a header) and a show/hide picker (right-click a header) on the Tags table, so columns you don't need (e.g. Comment, Timestamp) can be hidden without touching the underlying data  
 - Log live tag values to CSV  
-- CSV import/export  
+- CSV import/export (Enabled included as a column; older exports without it import as enabled)  
 - Improved stability  
 
 ### Raw Data
@@ -157,7 +159,7 @@
 - TX/RX Bytes - the literal bytes sent and received on the wire for that transaction (captured via pymodbus's trace hook), one level more raw than the decoded register values  
 - Color-coded status (green success, red failure) at a glance, same coloring as the other logs  
 - Filter by tag name/address/value, and by Success/Failed status, live as new rows arrive  
-- Show Statistics - total requests, success/failure counts, and average/min/max response times across everything logged, not just what's currently visible  
+- Show Statistics - total requests, success/failure counts, average/min/max response times, and a failure-cause breakdown (Connection, Timeout, Device-returned Exception, Rejected locally, Other) across everything logged, not just what's currently visible  
 - Capped at 1000 rows so it can't grow unbounded; oldest rows fall off automatically  
 
 ### Trend
