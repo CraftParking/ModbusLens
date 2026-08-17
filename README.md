@@ -175,6 +175,7 @@
 - Graph Properties: axis titles, background/axis/grid colors, grid on/off, Y-axis auto or manual range  
 - Log plotted values to CSV  
 - Print to PNG or PDF  
+- **Record / Replay** - captures whatever pens are currently active to a `.mltrend` file (its own format, not the CSV log) and plays it back later with Play/Pause, speed (1x/2x/4x/8x), and a scrub bar, in a separate window with a large RECORDING/REPLAY heading so a loaded replay can never be mistaken for the live view - it renders into its own chart and never touches the live Trend tab's pens or data  
 
 ### Server Mode
 - Act as a Modbus TCP slave so another master can poll ModbusLens directly  

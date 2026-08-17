@@ -2,7 +2,7 @@ import csv
 import os
 import time
 
-from PySide6.QtCore import Qt, QTimer, QDateTime, QEvent, QPointF
+from PySide6.QtCore import Qt, QTimer, QDateTime, QEvent, QPointF, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
@@ -15,6 +15,7 @@ from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateT
 from PySide6.QtPrintSupport import QPrinter
 
 from modbus_meta import MULTI_WORD_FORMATS
+from widgets.trend_recording import TrendRecordingWindow
 
 MAX_PENS = 20
 MAX_POINTS_PER_PEN = 20000  # rolling cap so a long-running trend doesn't grow memory forever
@@ -429,6 +430,16 @@ class DetachedPlaceholder(QWidget):
 class TrendWidget(QWidget):
     """SCADA-style trend tab: up to 20 live-polled pens plotted over time, live or historical."""
 
+    # Emitted once per poll tick that actually produced at least one point, right after
+    # the live series get their own points appended -- (epoch_ms, {pen.slot: value, ...})
+    # for every active pen this tick. Purely additive/observational: nothing in this class
+    # reads it back. Recording capture and the Record/Replay window's live preview
+    # (gui/widgets/trend_recording.py) are the only subscribers.
+    # `object` (not `dict`) -- PySide6 signals need a registered Qt/C++ meta-type per
+    # argument, and a plain Python dict isn't one; `object` is the standard catch-all for
+    # passing arbitrary Python values through a signal.
+    sample_tick = Signal(int, object)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
@@ -460,6 +471,8 @@ class TrendWidget(QWidget):
         self._detach_window = None
         self._detach_placeholder = None
         self._detach_tab_index = None
+
+        self._recording_window = None
 
         self._setup_ui()
         self._apply_graph_settings()
@@ -515,6 +528,11 @@ class TrendWidget(QWidget):
         self.detach_btn.setStyleSheet(self._button_style())
         self.detach_btn.clicked.connect(self._detach)
         toolbar.addWidget(self.detach_btn)
+
+        self.record_replay_btn = QPushButton("Record / Replay")
+        self.record_replay_btn.setStyleSheet(self._button_style())
+        self.record_replay_btn.clicked.connect(self._open_recording_window)
+        toolbar.addWidget(self.record_replay_btn)
 
         toolbar.addStretch()
 
@@ -712,6 +730,19 @@ class TrendWidget(QWidget):
             window.close()
         window.deleteLater()
 
+    # --- Record / Replay ---
+
+    def _open_recording_window(self):
+        """Lazily create the Record/Replay window once, then just re-show/raise it on
+        every click -- same reuse pattern as NetworkDiagnosticsDialog, so repeated
+        clicks never spawn duplicate windows (and an in-progress recording keeps
+        running in the background if the window was merely hidden, not closed)."""
+        if self._recording_window is None:
+            self._recording_window = TrendRecordingWindow(self)
+        self._recording_window.show()
+        self._recording_window.raise_()
+        self._recording_window.activateWindow()
+
     # --- Pen configuration ---
 
     def _open_add_pen_dialog(self):
@@ -874,6 +905,7 @@ class TrendWidget(QWidget):
         tolerance_ms = max(self.interval_input.value(), 1000) * 1.5
         was_at_live_edge = (now_ms - self.axis_x.max().toMSecsSinceEpoch()) <= tolerance_ms
 
+        tick_values = {}
         for pen in self.pens:
             if not (pen.is_active() and pen.series is not None):
                 continue
@@ -883,6 +915,7 @@ class TrendWidget(QWidget):
             pen.series.append(now_ms, value)
             self._trim_series(pen.series)
             got_point = True
+            tick_values[pen.slot] = value
             self._log_pen_value(pen, log_timestamp, value)
 
         if got_point:
@@ -891,6 +924,7 @@ class TrendWidget(QWidget):
                 self.axis_x.setRange(now.addSecs(-self.window_seconds), now)
             self._update_scrollbar()
             self._update_stats_table()
+            self.sample_tick.emit(now_ms, tick_values)
 
     def _read_pen_value(self, modbus, pen):
         try:
