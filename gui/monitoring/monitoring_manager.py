@@ -152,7 +152,7 @@ class MonitoringManager:
                 "count": count,
                 "format": value_format,
                 "comment": comment,
-                "enabled": enabled_widget.isChecked() if enabled_widget else True,
+                "enabled": enabled_widget.checkbox.isChecked() if enabled_widget else True,
             })
         return tags
 

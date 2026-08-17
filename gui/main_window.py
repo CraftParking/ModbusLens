@@ -154,6 +154,26 @@ class TagTableWidget(QTableWidget):
         self.main_window._move_tag_row(old_visual_index, new_visual_index)
 
 
+class CheckboxCell(QWidget):
+    """setCellWidget()'d in place of a bare QCheckBox -- a bare checkbox is stretched to
+    fill the whole cell by Qt and paints its indicator flush against the left edge, which
+    reads oddly once nothing else is competing for space in the cell. Centers it instead.
+    Exposes the checkbox as `.checkbox` for every place that reads/sets/connects it, since
+    cellWidget() now returns this wrapper, not the checkbox itself."""
+
+    def __init__(self, checkbox, parent=None):
+        super().__init__(parent)
+        self.checkbox = checkbox
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(checkbox)
+        # The (widget, alignment) overload -- centers the checkbox *within* this layout.
+        # layout.setAlignment(Qt.AlignCenter), the single-arg overload, aligns this whole
+        # layout within its own parent layout instead, which does nothing here since
+        # CheckboxCell (a setCellWidget()) has no parent layout of its own.
+        layout.setAlignment(checkbox, Qt.AlignCenter)
+
+
 class ModbusGUI(QMainWindow):
     _open_windows = []  # keeps extra connection windows alive (see _new_connection_window)
 
@@ -739,7 +759,8 @@ class ModbusGUI(QMainWindow):
                 color: {c["selection_inactive_text"]};
             }}
             QLineEdit[tagRowSelected="true"], QComboBox[tagRowSelected="true"],
-            QSpinBox[tagRowSelected="true"], QCheckBox[tagRowSelected="true"] {{
+            QSpinBox[tagRowSelected="true"], QCheckBox[tagRowSelected="true"],
+            CheckboxCell[tagRowSelected="true"] {{
                 background-color: {c["selection_bg"]};
                 color: {c["selection_text"]};
             }}
@@ -978,7 +999,7 @@ class ModbusGUI(QMainWindow):
 
         scale_widget = QCheckBox()
         scale_widget.setToolTip("Enable engineering-unit scaling for this tag")
-        self.monitoring_tag_table.setCellWidget(insert_row, 12, scale_widget)  # Scale
+        self.monitoring_tag_table.setCellWidget(insert_row, 12, CheckboxCell(scale_widget))  # Scale
         scale_widget.toggled.connect(self._on_scale_checkbox_toggled)
 
         enabled_widget = QCheckBox()
@@ -988,7 +1009,7 @@ class ModbusGUI(QMainWindow):
             "cycle and the write-mode value refresh) without deleting the row. Manual actions "
             "(Write Selected, one-shot write via Enter) still work regardless of this."
         )
-        self.monitoring_tag_table.setCellWidget(insert_row, 13, enabled_widget)  # Enabled
+        self.monitoring_tag_table.setCellWidget(insert_row, 13, CheckboxCell(enabled_widget))  # Enabled
 
         # Keep "count" valid for 32-bit formats (U32/S32/F32 require even register count).
         if hasattr(format_widget, "currentTextChanged"):
@@ -1036,7 +1057,7 @@ class ModbusGUI(QMainWindow):
             "comment": comment_widget.text() if comment_widget else "",
             "timestamp": timestamp_widget.text() if timestamp_widget else "",
             "engineering_value": eng_value_widget.text() if eng_value_widget else "",
-            "enabled": enabled_widget.isChecked() if enabled_widget else True,
+            "enabled": enabled_widget.checkbox.isChecked() if enabled_widget else True,
         }
 
     def _move_tag_row(self, source_row, target_row):
@@ -1074,7 +1095,7 @@ class ModbusGUI(QMainWindow):
             if scale_widget:
                 try:
                     self._updating_tag_table = True
-                    scale_widget.setChecked(True)
+                    scale_widget.checkbox.setChecked(True)
                 finally:
                     self._updating_tag_table = False
 
@@ -1125,7 +1146,10 @@ class ModbusGUI(QMainWindow):
 
     def _find_monitoring_tag_row(self, widget, column):
         for row in range(self.monitoring_tag_table.rowCount()):
-            if self.monitoring_tag_table.cellWidget(row, column) is widget:
+            cell = self.monitoring_tag_table.cellWidget(row, column)
+            # Scale/Enabled cells are a CheckboxCell wrapper, not the checkbox itself
+            # (see CheckboxCell) -- compare against the checkbox it wraps instead.
+            if getattr(cell, "checkbox", cell) is widget:
                 return row
         return None
 
@@ -1327,6 +1351,7 @@ class ModbusGUI(QMainWindow):
 
     @staticmethod
     def _tag_cell_text(widget):
+        widget = getattr(widget, "checkbox", widget)
         if isinstance(widget, QComboBox):
             return widget.currentText()
         if isinstance(widget, QCheckBox):
@@ -1804,7 +1829,7 @@ Unit ID: {unit_id}<br><br>
             if scale_widget:
                 try:
                     self._updating_tag_table = True
-                    scale_widget.setChecked(True)
+                    scale_widget.checkbox.setChecked(True)
                 finally:
                     self._updating_tag_table = False
 
