@@ -263,11 +263,12 @@ Two options are provided:
 
 ## Upcoming Features
 
-- **Next up:** Multi-target/multi-connection monitoring - several devices managed from one window
-  (named targets, shared Tags/Trend view), instead of today's one-connection-per-window model
-  (File > New Connection Window already lets you run several *independent* windows side by side,
-  but they share nothing). This needs a real backend change - a device-abstraction layer around
-  what's currently a single connection per window - not just a UI addition.
+- **Coming in the next update:** Multi-target/multi-connection monitoring - several devices
+  managed from one window (named targets, shared Tags/Trend view), instead of today's
+  one-connection-per-window model (File > New Connection Window already lets you run several
+  *independent* windows side by side, but they share nothing). This needs a real backend change -
+  a device-abstraction layer around what's currently a single connection per window - not just a
+  UI addition.
 - Register maps with mixed data types per device profile  
 - Multiple Unit IDs over a single connection (useful for RTU/ASCII sharing one serial line, or a TCP-to-RTU gateway fanning out to several devices)  
 - Server tab simulating multiple devices/unit addresses at once, not just one  

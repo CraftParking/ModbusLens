@@ -747,6 +747,10 @@ own Server tab from a second window (see Server Mode).</p>
 <p>The one exception is Server mode: only one Server tab can be actively running at a time,
 across all open windows (see the Server Mode topic for why). Everything else is fully
 independent per window.</p>
+<p><b>Coming in the next update:</b> true multi-target/multi-connection monitoring - several
+devices managed from a single window (named targets, shared Tags/Trend view), instead of today's
+one-window-per-connection model. These separate windows already let you work with several devices
+at once, but they don't share anything with each other; that's the gap the next update closes.</p>
 """),
 
     ("Troubleshooting", """
