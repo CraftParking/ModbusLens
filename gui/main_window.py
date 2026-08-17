@@ -553,6 +553,11 @@ class ModbusGUI(QMainWindow):
         self.write_selected_btn.setMinimumWidth(120)
         buttons_layout.addWidget(self.write_selected_btn)
 
+        self.write_all_btn = QPushButton("Write All")
+        self.write_all_btn.setStyleSheet(self._get_button_style())
+        self.write_all_btn.setMinimumWidth(120)
+        buttons_layout.addWidget(self.write_all_btn)
+
         self.tags_log_btn = QPushButton("Log to CSV")
         self.tags_log_btn.setStyleSheet(self._get_button_style())
         self.tags_log_btn.setMinimumWidth(120)
@@ -599,6 +604,12 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
         self.monitoring_tag_table.setColumnWidth(11, 130)
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
+        # Every cell here is a setCellWidget() covering the row, so the only click surface
+        # Qt's own selection model ever sees is the row-number header (see TagTableWidget's
+        # docstring). Without an explicit mode here, QAbstractItemView defaults to
+        # SingleSelection -- a plain click there always worked, but Ctrl/Shift-click never
+        # extended it to more than one row. ExtendedSelection is what actually enables that.
+        self.monitoring_tag_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.monitoring_tag_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.monitoring_tag_table.customContextMenuRequested.connect(self._show_tag_context_menu)
         # Column drag-reorder is purely a display preference -- every cell lookup elsewhere
@@ -1462,6 +1473,8 @@ class ModbusGUI(QMainWindow):
             self.tag_stop_monitoring_btn.clicked.connect(self._stop_monitoring)
         if hasattr(self, 'write_selected_btn'):
             self.write_selected_btn.clicked.connect(self._write_selected_tags)
+        if hasattr(self, 'write_all_btn'):
+            self.write_all_btn.clicked.connect(self._write_all_tags)
         if hasattr(self, 'tags_log_btn'):
             self.tags_log_btn.clicked.connect(self._toggle_tags_logging)
 
@@ -1986,8 +1999,29 @@ Unit ID: {unit_id}<br><br>
             QMessageBox.warning(self, "No Tag Selected", "Please select at least one tag row to write.")
             return
 
+        self._write_tag_rows(selected_rows)
+
+    def _write_all_tags(self):
+        """Write every Write-mode tag in the table, regardless of selection or of the
+        per-tag Enabled checkbox -- same "manual actions always work" carve-out as
+        Write Selected and the one-shot Enter write (see the Enabled checkbox's
+        tooltip), since Enabled only pauses continuous polling, not a deliberate
+        one-off write the user just asked for."""
+        if not self._check_connection():
+            return
+
+        all_rows = set(range(self.monitoring_tag_table.rowCount()))
+        if not all_rows:
+            QMessageBox.warning(self, "No Tags", "There are no tags to write.")
+            return
+
+        self._write_tag_rows(all_rows)
+
+    def _write_tag_rows(self, rows):
+        """Shared by Write Selected and Write All -- validates and writes whichever
+        row set the caller collected."""
         tags_to_write = []
-        for row in selected_rows:
+        for row in rows:
             mode_widget = self.monitoring_tag_table.cellWidget(row, 1)
             write_value_widget = self.monitoring_tag_table.cellWidget(row, 8)
             
@@ -2031,7 +2065,7 @@ Unit ID: {unit_id}<br><br>
             tags_to_write.append(tag)
 
         if not tags_to_write:
-            QMessageBox.warning(self, "No Valid Tags", "No write-mode tags with values found in selection.")
+            QMessageBox.warning(self, "No Valid Tags", "No write-mode tags with values found.")
             return
 
         if not self._confirm_write(tags_to_write):

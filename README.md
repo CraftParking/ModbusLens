@@ -144,6 +144,7 @@
 - Insert new tags anywhere in the list (new tags drop in below the selected row), not just at the end  
 - Drag and drop to reorder rows, preserving live values, alarm, and scaling config  
 - Write to a tag while monitoring stays active, or press **Enter** in the Write Value cell to write just that row immediately - mirrors the type-and-Enter workflow classic tools like Modbus Poll use  
+- Multi-select rows via Ctrl+click / Shift+click on the row-number header, for **Write Selected** across several tags at once; **Write All** writes every Write-mode tag in the list regardless of selection (both ignore the Enabled checkbox, same as the one-shot Enter write - a manual write is a deliberate action, not something Enabled's polling-pause should block)  
 - A single misconfigured or failing tag no longer stops the rest of the list from updating  
 - Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting  
 - Engineering-unit scaling per tag - check the **Scale** box for either a linear transform (Raw Min/Max -> Scaled Min/Max, e.g. raw 0-4095 -> 0-100 PSI) or a simple multiply-by-constant factor, shown live in the **Engineering Value** column; choose whether the scaled result displays as Real or Integer  
