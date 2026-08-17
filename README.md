@@ -232,8 +232,15 @@
 Download latest release:  
 https://github.com/CraftParking/ModbusLens/releases
 
-Run:
-ModbusLens.exe
+Two options are provided:
+
+- **ModbusLens-Setup-x.x.x.exe** (recommended) - a normal Windows installer (Start Menu
+  shortcut, optional desktop shortcut, uninstalls via Apps & Features). Installs to
+  Program Files, so it asks for admin rights once during setup.
+- **ModbusLens.exe** - a portable single-file version, no installation needed. On some
+  machines (non-ASCII Windows usernames, aggressive antivirus) this portable form can
+  fail to start due to how it unpacks itself at runtime - if it won't launch, use the
+  installer instead.
 
 ---
 

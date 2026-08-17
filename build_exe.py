@@ -1,29 +1,30 @@
 """
-Build script for creating ModbusLens EXE using PyInstaller
+Build script for creating ModbusLens builds using PyInstaller.
+
+Two forms are produced:
+- onefile: a single portable ModbusLens.exe (dist/ModbusLens.exe). Simple to hand out,
+  but --onefile's self-extract-to-temp-on-every-launch behavior is fragile -- it's hit
+  a non-ASCII-username bootloader bug and a mid-run file-disappearance bug on real
+  machines (see notes.md), both traced to how onefile unpacks itself at runtime.
+- onedir: a folder build (dist/ModbusLens/) with no runtime extraction at all, meant to
+  be wrapped by installer.iss (Inno Setup) into a normal Windows installer -- avoids
+  that whole bug class, and reads as a normal app install to AV heuristics instead of
+  a suspicious self-extracting single exe.
+
+Usage: python build_exe.py [onefile|onedir|both]  (default: both)
 """
 
-import PyInstaller.__main__
+import argparse
 import os
 
-def build_exe():
-    """Build the ModbusLens EXE file."""
-    
-    # PyInstaller arguments
-    args = [
+import PyInstaller.__main__
+
+# Shared by both build forms -- only the packaging mode itself (--onefile/--onedir)
+# and onefile's --runtime-tmpdir differ, added by each build function below.
+COMMON_ARGS = [
         'gui_main.py',
         '--name=ModbusLens',
         '--windowed',  # Hide console for cleaner GUI experience
-        '--onefile',   # Create single EXE file
-        # A --onefile exe normally extracts itself under the OS temp dir, which sits
-        # under the user's own profile path (%TEMP% -> ...\Users\<username>\...) --
-        # PyInstaller's bootloader (compiled C, runs before Python's own encoding
-        # machinery exists yet) can fail entirely on a non-ASCII Windows username with
-        # "Failed to import encodings module", since that username is part of the path
-        # it has to extract to. C:\ProgramData is a fixed, all-users, username-free
-        # location, so this sidesteps that whole bug class regardless of who's logged
-        # in. Must NOT be anything under %USERPROFILE%/%APPDATA%/%LOCALAPPDATA% --
-        # those still contain the same problematic username segment.
-        r'--runtime-tmpdir=C:\ProgramData\ModbusLens\runtime',
         '--icon=assets/icon.ico' if os.path.exists('assets/icon.ico') else '',
         f'--add-data=assets{os.pathsep}assets',
         # main_window.py puts the gui/ folder itself on sys.path so its sibling modules
@@ -94,18 +95,52 @@ def build_exe():
         '--exclude-module=PySide6.QtXml',
         '--clean',
         '--noconfirm',
+]
+# Remove empty entries (e.g. the icon flag when assets/icon.ico doesn't exist).
+COMMON_ARGS = [arg for arg in COMMON_ARGS if arg]
+
+
+def build_onefile():
+    """Portable single .exe -- still offered as a direct download, but known to be
+    fragile on some machines (non-ASCII usernames, AV interference with onefile's
+    self-extract-to-temp behavior -- see notes.md). --runtime-tmpdir works around the
+    username issue specifically; the onedir build below sidesteps the whole class."""
+    args = [
+        *COMMON_ARGS,
+        '--onefile',
+        # A --onefile exe normally extracts itself under the OS temp dir, which sits
+        # under the user's own profile path (%TEMP% -> ...\Users\<username>\...) --
+        # PyInstaller's bootloader (compiled C, runs before Python's own encoding
+        # machinery exists yet) can fail entirely on a non-ASCII Windows username with
+        # "Failed to import encodings module", since that username is part of the path
+        # it has to extract to. C:\ProgramData is a fixed, all-users, username-free
+        # location, so this sidesteps that whole bug class regardless of who's logged
+        # in. Must NOT be anything under %USERPROFILE%/%APPDATA%/%LOCALAPPDATA% --
+        # those still contain the same problematic username segment.
+        r'--runtime-tmpdir=C:\ProgramData\ModbusLens\runtime',
     ]
-    
-    # Remove empty arguments
-    args = [arg for arg in args if arg]
-    
-    print("Building ModbusLens EXE...")
+    print("Building ModbusLens onefile EXE...")
     print(f"Arguments: {' '.join(args)}")
-    
     PyInstaller.__main__.run(args)
-    
-    print("\nBuild complete!")
-    print("EXE file should be in the 'dist' directory.")
+    print("\nOnefile build complete! dist/ModbusLens.exe")
+
+
+def build_onedir():
+    """Folder build with no runtime extraction -- what installer.iss (Inno Setup)
+    packages into a normal Windows installer."""
+    args = [*COMMON_ARGS, '--onedir']
+    print("Building ModbusLens onedir folder...")
+    print(f"Arguments: {' '.join(args)}")
+    PyInstaller.__main__.run(args)
+    print("\nOnedir build complete! dist/ModbusLens/")
+
 
 if __name__ == '__main__':
-    build_exe()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('mode', nargs='?', choices=['onefile', 'onedir', 'both'], default='both')
+    parsed = parser.parse_args()
+
+    if parsed.mode in ('onefile', 'both'):
+        build_onefile()
+    if parsed.mode in ('onedir', 'both'):
+        build_onedir()
