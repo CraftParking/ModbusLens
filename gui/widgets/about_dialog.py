@@ -157,6 +157,11 @@ FEATURES_HTML = """
 <li>Ctrl+scroll wheel zooms text size in the Status Log, System Logs, and Raw Data table</li>
 <li>Help > About has an Updates tab that checks GitHub Releases for a newer version</li>
 </ul>
+
+<h4>Coming Next</h4>
+<ul>
+<li>Multi-target/multi-connection monitoring - several devices managed from one window (named targets, shared Tags/Trend view), instead of today's one-connection-per-window model</li>
+</ul>
 """
 
 # Newest first. Older releases are summarized at a higher level than the current one -
