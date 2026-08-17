@@ -14,6 +14,16 @@ def build_exe():
         '--name=ModbusLens',
         '--windowed',  # Hide console for cleaner GUI experience
         '--onefile',   # Create single EXE file
+        # A --onefile exe normally extracts itself under the OS temp dir, which sits
+        # under the user's own profile path (%TEMP% -> ...\Users\<username>\...) --
+        # PyInstaller's bootloader (compiled C, runs before Python's own encoding
+        # machinery exists yet) can fail entirely on a non-ASCII Windows username with
+        # "Failed to import encodings module", since that username is part of the path
+        # it has to extract to. C:\ProgramData is a fixed, all-users, username-free
+        # location, so this sidesteps that whole bug class regardless of who's logged
+        # in. Must NOT be anything under %USERPROFILE%/%APPDATA%/%LOCALAPPDATA% --
+        # those still contain the same problematic username segment.
+        r'--runtime-tmpdir=C:\ProgramData\ModbusLens\runtime',
         '--icon=assets/icon.ico' if os.path.exists('assets/icon.ico') else '',
         f'--add-data=assets{os.pathsep}assets',
         # main_window.py puts the gui/ folder itself on sys.path so its sibling modules
