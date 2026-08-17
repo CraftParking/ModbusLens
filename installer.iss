@@ -35,12 +35,29 @@ DisableProgramGroupPage=yes
 ; Program Files needs admin rights to write to -- expected/normal for a per-machine
 ; desktop app install, triggers one UAC prompt during setup.
 PrivilegesRequired=admin
+; Same AppId across versions is what makes a newer Setup.exe recognized as an update to
+; an existing install (same install path, one Apps & Features entry, not a duplicate) --
+; never regenerate this GUID for ModbusLens.
+;
+; Update-safety: if ModbusLens.exe is running when the user installs an update, Windows
+; would otherwise lock the file and the install would fail outright. CloseApplications
+; detects that (via Windows' Restart Manager) and prompts to close it first;
+; RestartApplications reopens it afterward.
+CloseApplications=yes
+RestartApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
+
+[InstallDelete]
+; PyInstaller onedir's _internal folder's exact file set can change between versions
+; (a dependency added or dropped) -- [Files] below only overwrites/adds what THIS
+; version lists, it never removes files an older version left behind. Wipe it clean
+; before every install/update so nothing orphaned survives across versions.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 Source: "dist\ModbusLens\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
