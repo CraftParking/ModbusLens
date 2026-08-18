@@ -16,6 +16,11 @@
   <a href="#upcoming-features">Upcoming Features</a>
 </p>
 
+<p align="center">
+  <a href="https://craftparking.github.io/ModbusLens/"><img src="assets/badge_website.svg" alt="Website"></a>
+  <a href="https://github.com/CraftParking/ModbusLens/releases"><img src="assets/badge_releases.svg" alt="Releases"></a>
+</p>
+
 ---
 
 ## Overview
