@@ -6,7 +6,6 @@
 <p align="center">Free Modbus TCP &amp; RTU Client with Advanced Network Discovery &amp; Diagnostics</p>
 
 <p align="center">
-  <a href="https://craftparking.github.io/ModbusLens/">Website</a> |
   <a href="#overview">Overview</a> |
   <a href="#highlights">Highlights</a> |
   <a href="#screenshots">Screenshots</a> |
