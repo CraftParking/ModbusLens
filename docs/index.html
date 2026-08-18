@@ -61,29 +61,119 @@ and network diagnostics - in one tool.</p>
 <div class="feature-grid">
 <article class="panel-card feature-card reveal">
 <p class="eyebrow">COMMUNICATION</p>
-<h3>Talk to devices</h3>
+<h3>Modbus TCP &amp; RTU</h3>
 <ul>
-<li>Modbus TCP and Serial (RTU/ASCII) client</li>
-<li>Network discovery and diagnostics for finding devices on a subnet</li>
+<li>TCP or Serial (RTU/ASCII) client, multiple simultaneous connections</li>
+<li>Auto-reconnect with backoff, monitoring resumes on its own</li>
+<li>Fast LAN Mode for quick failure detection over TCP</li>
+<li>Save/Load a full session, or just Tags via CSV</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">DATA HANDLING</p>
+<h3>Decode it your way</h3>
+<ul>
+<li>BOOL, U16/S16, U32/S32/F32, U64/S64/F64, HEX</li>
+<li>Word-order swap handling for 32- and 64-bit formats</li>
+<li>0-based or 1-based addressing, per range or per tag</li>
+<li>Raw hex shown alongside every decoded value</li>
 </ul>
 </article>
 
 <article class="panel-card feature-card reveal">
 <p class="eyebrow">MONITORING</p>
-<h3>Monitor &amp; log</h3>
+<h3>Live tag monitoring</h3>
 <ul>
-<li>Named tag monitoring with alarms and engineering-unit scaling</li>
-<li>Trend graphing, including recording a session and replaying it later</li>
-<li>Raw Data view - the actual wire bytes behind every transaction</li>
+<li>Read/Write/Timestamp, alarms, and engineering-unit scaling in one table</li>
+<li>Drag-and-drop reorder, multi-select Write Selected / Write All</li>
+<li>Per-tag Enabled toggle, column show/hide and reorder</li>
+<li>Log live values to CSV</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">DIAGNOSTICS</p>
+<h3>Raw Data</h3>
+<ul>
+<li>Every transaction logged - time, value, hex, success/failure, latency</li>
+<li>The actual TX/RX bytes off the wire, not just decoded values</li>
+<li>Live filtering plus a full statistics breakdown</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">TRENDING</p>
+<h3>Trend graphing</h3>
+<ul>
+<li>Up to 20 pens, picked straight from your Tags list</li>
+<li>Detachable window, zoom/pan, live crosshair and stats</li>
+<li>Record a session and replay it later at 1x-8x speed</li>
 </ul>
 </article>
 
 <article class="panel-card feature-card reveal">
 <p class="eyebrow">SIMULATION</p>
-<h3>Simulate &amp; test</h3>
+<h3>Server mode</h3>
 <ul>
-<li>Server mode - act as a Modbus TCP slave for testing your own SCADA/PLC program</li>
-<li>A small scripting language for repeatable write/wait/read test sequences</li>
+<li>Act as a Modbus TCP slave for testing your own SCADA/PLC program</li>
+<li>Coils, discrete inputs, holding &amp; input registers all editable live</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">AUTOMATION</p>
+<h3>Scripting</h3>
+<ul>
+<li>Purpose-built test-sequence language - no imports, no exceptions to write</li>
+<li>WRITE, READ, WAIT, LOG, LET, REPEAT, IF, and a live Variables panel</li>
+<li>Target a real connected device or the built-in Server simulator</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">NETWORK</p>
+<h3>Network diagnostics</h3>
+<ul>
+<li>Fast parallel TCP discovery scan, sized to your real subnet</li>
+<li>Optional ARP mode (MAC/vendor lookup) and packet capture via Npcap</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">SERIAL</p>
+<h3>Serial discovery</h3>
+<ul>
+<li>Sweeps baud/parity/stop-bit combinations and Unit ID range to find an undocumented device's settings</li>
+<li>Jump straight in from Connection Settings' Serial section with the COM port already filled in</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">COMPLIANCE</p>
+<h3>Diagnostic functions</h3>
+<ul>
+<li>FC07, 08, 11/12, 17, 20/21, 22, 24, and 43 in one function picker</li>
+<li>For compliance and interop testing beyond basic read/write</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">SCANNING</p>
+<h3>Register scanner</h3>
+<ul>
+<li>Auto-discovers which addresses respond for Coils, Discrete, Holding, or Input Registers</li>
+<li>Works the same way over TCP or serial</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">INTERFACE</p>
+<h3>Built for the job</h3>
+<ul>
+<li>Light / Dark / Follow System theme</li>
+<li>Color-coded logs, compact connection bar, focused workspace</li>
+<li>Built-in update checker against GitHub Releases</li>
 </ul>
 </article>
 </div>
