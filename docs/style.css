@@ -26,22 +26,49 @@ body {
   line-height: 1.6;
   background: var(--bg);
   color: var(--text);
+  transition: background-color 0.4s ease, color 0.4s ease;
 }
 
 a {
   color: var(--link);
+  transition: color 0.4s ease;
 }
 
 #theme-toggle {
   position: fixed;
   top: 16px;
   right: 16px;
-  background: none;
-  border: 1px solid var(--text);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 16px;
-  line-height: 1.4;
-  color: var(--text);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  transition: background-color 0.4s ease;
+}
+
+#theme-toggle.icon-sun {
+  background: #f5a623;
+}
+
+#theme-toggle.icon-moon {
+  background: #3b4a6b;
+}
+
+#theme-toggle svg {
+  width: 20px;
+  height: 20px;
+  stroke: #ffffff;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
 }
