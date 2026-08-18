@@ -288,7 +288,7 @@ class ModbusGUI(QMainWindow):
         
     def _setup_window(self):
         """Setup main window properties."""
-        self.setWindowTitle("ModbusLens - Professional Modbus TCP Client")
+        self.setWindowTitle("ModbusLens - Modbus TCP & RTU Client")
         self.setGeometry(100, 100, 1200, 800)
         self.setMinimumSize(1000, 700)
 
