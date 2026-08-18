@@ -13,35 +13,107 @@
 </head>
 <body>
 
+<header class="topbar">
+<div class="topbar-inner">
+<a class="wordmark" href="#top">ModbusLens</a>
+<nav>
+<a href="#features">Features</a>
+<a href="#screenshots">Screenshots</a>
+<a href="https://github.com/CraftParking/ModbusLens/releases">Download</a>
+<a href="https://github.com/CraftParking/ModbusLens">GitHub</a>
+</nav>
+<div class="topbar-actions">
 <button id="theme-toggle" aria-label="Toggle dark mode"></button>
-
-<header>
-<h1>ModbusLens</h1>
-<p>A free Modbus TCP and RTU client for engineers working with industrial automation
-systems. Combines Modbus communication, real-time tag monitoring, scripting, a device
-simulator, and network diagnostics in one tool.</p>
-
-<p>
-<a href="https://github.com/CraftParking/ModbusLens/releases">Download the latest release</a><br>
-<a href="https://github.com/CraftParking/ModbusLens">Source on GitHub</a>
-</p>
+</div>
+</div>
 </header>
 
 <main>
-<h2>What it does</h2>
+
+<section class="hero" id="top">
+<div class="hero-inner">
+<div class="hero-copy reveal">
+<h1>A Modbus client built<br>for the people on the bus</h1>
+<p>Free Modbus TCP and RTU client for engineers working with industrial automation
+systems. Communication, live tag monitoring, trend graphing, a device simulator,
+and network diagnostics - in one tool.</p>
+<div class="cta-row">
+<a class="btn btn-primary" href="https://github.com/CraftParking/ModbusLens/releases">Download</a>
+<a class="btn btn-secondary" href="https://github.com/CraftParking/ModbusLens">View on GitHub</a>
+</div>
+<div class="badge-row">
+<img src="https://img.shields.io/github/v/release/CraftParking/ModbusLens?style=flat-square&label=RELEASE&color=f5a623&labelColor=12161b" alt="Latest release">
+<img src="https://img.shields.io/github/downloads/CraftParking/ModbusLens/total?style=flat-square&label=DOWNLOADS&color=3b4a6b&labelColor=12161b" alt="Total downloads">
+<img src="https://img.shields.io/github/license/CraftParking/ModbusLens?style=flat-square&label=LICENSE&color=3b4a6b&labelColor=12161b" alt="License">
+</div>
+</div>
+
+<div class="hero-shot reveal">
+<div class="panel-card">
+<div class="panel-readout">HR40001-40010 &middot; LIVE</div>
+<img src="assets/main_window.png" alt="ModbusLens Address Table window reading live holding registers">
+</div>
+</div>
+</div>
+</section>
+
+<section id="features">
+<h2 class="reveal">What it does</h2>
+<div class="feature-grid">
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">COMMUNICATION</p>
+<h3>Talk to devices</h3>
 <ul>
 <li>Modbus TCP and Serial (RTU/ASCII) client</li>
+<li>Network discovery and diagnostics for finding devices on a subnet</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">MONITORING</p>
+<h3>Monitor &amp; log</h3>
+<ul>
 <li>Named tag monitoring with alarms and engineering-unit scaling</li>
 <li>Trend graphing, including recording a session and replaying it later</li>
-<li>Server mode - act as a Modbus TCP slave for testing your own SCADA/PLC program</li>
-<li>A small scripting language for repeatable write/wait/read test sequences</li>
-<li>Network discovery and diagnostics for finding devices on a subnet</li>
 <li>Raw Data view - the actual wire bytes behind every transaction</li>
 </ul>
+</article>
+
+<article class="panel-card feature-card reveal">
+<p class="eyebrow">SIMULATION</p>
+<h3>Simulate &amp; test</h3>
+<ul>
+<li>Server mode - act as a Modbus TCP slave for testing your own SCADA/PLC program</li>
+<li>A small scripting language for repeatable write/wait/read test sequences</li>
+</ul>
+</article>
+</div>
+</section>
+
+<section id="screenshots">
+<h2 class="reveal">Screenshots</h2>
+<div class="shot-stack">
+<figure class="panel-card reveal">
+<img src="assets/main_window.png" alt="Main window">
+<figcaption>Address Table - quick read/write grid with live monitoring and a status log.</figcaption>
+</figure>
+
+<figure class="panel-card reveal">
+<img src="assets/tag_address.png" alt="Tags monitoring">
+<figcaption>Named tags across different addresses and types, monitored together in one list.</figcaption>
+</figure>
+
+<figure class="panel-card reveal">
+<img src="assets/trend.png" alt="Trend graphing">
+<figcaption>Live graphing of monitored values over time.</figcaption>
+</figure>
+</div>
+</section>
+
 </main>
 
 <footer>
-<p>Free software, Apache 2.0 licensed.</p>
+<p>Free software, Apache 2.0 licensed. &middot; <a href="https://github.com/CraftParking/ModbusLens">github.com/CraftParking/ModbusLens</a></p>
 </footer>
 
 <script>
@@ -71,6 +143,21 @@ simulator, and network diagnostics in one tool.</p>
   });
 
   updateIcon();
+
+  var revealItems = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window) {
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15 });
+    revealItems.forEach(function (el) { observer.observe(el); });
+  } else {
+    revealItems.forEach(function (el) { el.classList.add('is-visible'); });
+  }
 </script>
 
 </body>
