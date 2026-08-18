@@ -15,11 +15,11 @@
 
 <header class="topbar">
 <div class="topbar-inner">
-<a class="wordmark" href="#top">ModbusLens</a>
+<a class="wordmark" href="#top"><img src="assets/favicon.ico" alt="" width="28" height="28">ModbusLens</a>
 <nav>
 <a href="#features">Features</a>
 <a href="#screenshots">Screenshots</a>
-<a href="https://github.com/CraftParking/ModbusLens/releases">Download</a>
+<a href="#download">Download</a>
 <a href="https://github.com/CraftParking/ModbusLens">GitHub</a>
 </nav>
 <div class="topbar-actions">
@@ -38,7 +38,7 @@
 systems. Communication, live tag monitoring, trend graphing, a device simulator,
 and network diagnostics - in one tool.</p>
 <div class="cta-row">
-<a class="btn btn-primary" href="https://github.com/CraftParking/ModbusLens/releases">Download</a>
+<a class="btn btn-primary" href="#download">Download</a>
 <a class="btn btn-secondary" href="https://github.com/CraftParking/ModbusLens">View on GitHub</a>
 </div>
 <div class="badge-row">
@@ -103,6 +103,53 @@ and network diagnostics - in one tool.</p>
 <figure class="panel-card reveal">
 <img src="assets/trend.png" alt="Trend graphing" tabindex="0" role="button" aria-label="View larger">
 </figure>
+</div>
+</section>
+
+<section id="download">
+<h2 class="reveal">Download ModbusLens</h2>
+<p class="download-sub reveal">Get the latest version <span id="dl-version">&nbsp;</span> for your platform</p>
+
+<div class="platform-tabs reveal">
+<button class="platform-tab is-active" type="button" aria-current="true">
+<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg>
+Windows
+</button>
+<button class="platform-tab" type="button" disabled title="Linux build not available yet">
+<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M7 12c0 5 2 9 5 9s5-4 5-9"/></svg>
+Linux
+<span class="soon-tag">Coming soon</span>
+</button>
+<button class="platform-tab" type="button" disabled title="macOS build not available yet">
+<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M16.5 3c.1 1.2-.4 2.4-1.1 3.3-.7.8-1.9 1.5-3 1.4-.1-1.2.4-2.4 1.1-3.2.8-.9 2-1.5 3-1.5z"/><path d="M19.5 17.5c-.6 1.4-1.3 2.8-2.4 4-1 1.1-2.1 2.3-3.6 2.3-1.4 0-1.9-.9-3.5-.9s-2.1.9-3.5.9c-1.5 0-2.7-1.3-3.7-2.4C1 19 .3 15 1.8 12c.8-1.5 2.2-2.5 3.7-2.5 1.4 0 2.3.9 3.5.9 1.1 0 1.9-1 3.5-1 1.2 0 2.5.7 3.4 1.8-3 1.6-2.5 5.9.6 6.3z"/></svg>
+macOS
+<span class="soon-tag">Coming soon</span>
+</button>
+</div>
+
+<div class="download-grid">
+<article class="panel-card download-card reveal">
+<h3>Get ModbusLens</h3>
+<a class="btn btn-primary btn-block" id="dl-installer" href="https://github.com/CraftParking/ModbusLens/releases/latest">
+<svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+Download Installer
+</a>
+<a class="btn btn-secondary btn-block" id="dl-portable" href="https://github.com/CraftParking/ModbusLens/releases/latest">
+<svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+Download Portable EXE
+</a>
+<p class="download-note">Installer recommended - the portable exe can fail to start on some
+machines (non-ASCII Windows usernames, or antivirus interfering with how it unpacks itself).</p>
+</article>
+
+<article class="panel-card download-card reveal">
+<h3>System Requirements</h3>
+<ul class="req-list">
+<li>Windows 10 or newer, 64-bit</li>
+<li>Admin rights for the installer (one UAC prompt during setup)</li>
+<li>Npcap - optional, only needed for ARP-based discovery and packet capture</li>
+</ul>
+</article>
 </div>
 </section>
 
@@ -192,6 +239,18 @@ and network diagnostics - in one tool.</p>
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeLightbox();
   });
+
+  fetch('https://api.github.com/repos/CraftParking/ModbusLens/releases/latest')
+    .then(function (r) { return r.json(); })
+    .then(function (release) {
+      var assets = release.assets || [];
+      var installer = assets.find(function (a) { return /setup/i.test(a.name) && /\.exe$/i.test(a.name); });
+      var portable = assets.find(function (a) { return /\.exe$/i.test(a.name) && !/setup/i.test(a.name); });
+      if (installer) document.getElementById('dl-installer').href = installer.browser_download_url;
+      if (portable) document.getElementById('dl-portable').href = portable.browser_download_url;
+      if (release.tag_name) document.getElementById('dl-version').textContent = '(' + release.tag_name + ')';
+    })
+    .catch(function () { /* buttons keep their releases-page fallback links */ });
 </script>
 
 </body>
