@@ -50,7 +50,6 @@ and network diagnostics - in one tool.</p>
 
 <div class="hero-shot reveal">
 <div class="panel-card">
-<div class="panel-readout">HR40001-40010 &middot; LIVE</div>
 <img src="assets/main_window.png" alt="ModbusLens Address Table window reading live holding registers">
 </div>
 </div>
@@ -94,18 +93,15 @@ and network diagnostics - in one tool.</p>
 <h2 class="reveal">Screenshots</h2>
 <div class="shot-stack">
 <figure class="panel-card reveal">
-<img src="assets/main_window.png" alt="Main window">
-<figcaption>Address Table - quick read/write grid with live monitoring and a status log.</figcaption>
+<img src="assets/raw_data.png" alt="Raw Data view" tabindex="0" role="button" aria-label="View larger">
 </figure>
 
 <figure class="panel-card reveal">
-<img src="assets/tag_address.png" alt="Tags monitoring">
-<figcaption>Named tags across different addresses and types, monitored together in one list.</figcaption>
+<img src="assets/tag_address.png" alt="Tags monitoring" tabindex="0" role="button" aria-label="View larger">
 </figure>
 
 <figure class="panel-card reveal">
-<img src="assets/trend.png" alt="Trend graphing">
-<figcaption>Live graphing of monitored values over time.</figcaption>
+<img src="assets/trend.png" alt="Trend graphing" tabindex="0" role="button" aria-label="View larger">
 </figure>
 </div>
 </section>
@@ -115,6 +111,11 @@ and network diagnostics - in one tool.</p>
 <footer>
 <p>Free software, Apache 2.0 licensed. &middot; <a href="https://github.com/CraftParking/ModbusLens">github.com/CraftParking/ModbusLens</a></p>
 </footer>
+
+<div class="lightbox" id="lightbox">
+<button class="lightbox-close" id="lightbox-close" aria-label="Close">&times;</button>
+<img id="lightbox-img" src="" alt="">
+</div>
 
 <script>
   var root = document.documentElement;
@@ -158,6 +159,39 @@ and network diagnostics - in one tool.</p>
   } else {
     revealItems.forEach(function (el) { el.classList.add('is-visible'); });
   }
+
+  var lightbox = document.getElementById('lightbox');
+  var lightboxImg = document.getElementById('lightbox-img');
+
+  function openLightbox(img) {
+    lightboxImg.src = img.src;
+    lightboxImg.alt = img.alt;
+    lightbox.classList.add('is-open');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeLightbox() {
+    lightbox.classList.remove('is-open');
+    document.body.style.overflow = '';
+  }
+
+  document.querySelectorAll('.shot-stack img').forEach(function (img) {
+    img.addEventListener('click', function () { openLightbox(img); });
+    img.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openLightbox(img);
+      }
+    });
+  });
+
+  lightbox.addEventListener('click', function (e) {
+    if (e.target === lightbox) closeLightbox();
+  });
+  document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeLightbox();
+  });
 </script>
 
 </body>

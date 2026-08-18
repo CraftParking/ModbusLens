@@ -48,6 +48,12 @@
   box-sizing: border-box;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
 body {
   margin: 0;
   font-family: var(--font-body);
@@ -276,16 +282,6 @@ section h2 {
   overflow: hidden;
 }
 
-.panel-readout {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  color: var(--accent);
-  background: var(--panel);
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--line);
-}
-
 .panel-card img {
   display: block;
   width: 100%;
@@ -336,14 +332,49 @@ section h2 {
   aspect-ratio: 16 / 10;
   object-fit: cover;
   object-position: top;
+  cursor: zoom-in;
+  transition: opacity 0.2s ease;
 }
 
-.shot-stack figcaption {
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  color: var(--muted);
-  padding: 12px 14px;
-  border-top: 1px solid var(--line);
+.shot-stack img:hover {
+  opacity: 0.85;
+}
+
+/* ---------------- Lightbox ---------------- */
+
+.lightbox {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(8, 10, 13, 0.9);
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.lightbox.is-open {
+  display: flex;
+}
+
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 20px;
+  right: 28px;
+  background: none;
+  border: none;
+  color: #ffffff;
+  font-size: 2.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 8px;
 }
 
 /* ---------------- Scroll reveal ---------------- */
