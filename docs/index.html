@@ -6,8 +6,14 @@
 <link rel="icon" href="assets/favicon.ico">
 <meta name="description" content="ModbusLens is a free Modbus TCP and RTU client for engineers - communication, live tag monitoring, trend graphing, a device simulator, and network diagnostics in one tool.">
 <link rel="stylesheet" href="style.css">
+<script>
+  var saved = localStorage.getItem('theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+</script>
 </head>
 <body>
+
+<button id="theme-toggle" aria-label="Toggle dark mode"></button>
 
 <header>
 <h1>ModbusLens</h1>
@@ -37,6 +43,30 @@ simulator, and network diagnostics in one tool.</p>
 <footer>
 <p>Free software, Apache 2.0 licensed.</p>
 </footer>
+
+<script>
+  var root = document.documentElement;
+  var btn = document.getElementById('theme-toggle');
+
+  function isDark() {
+    var attr = root.getAttribute('data-theme');
+    if (attr) return attr === 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  function updateIcon() {
+    btn.textContent = isDark() ? '☀️' : '🌙';
+  }
+
+  btn.addEventListener('click', function () {
+    var next = isDark() ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    updateIcon();
+  });
+
+  updateIcon();
+</script>
 
 </body>
 </html>
