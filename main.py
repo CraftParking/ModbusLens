@@ -146,14 +146,14 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--gui":
         run_gui()
     elif len(sys.argv) > 1 and sys.argv[1] in ["--help", "-h"]:
-        print("ModbusLens - Modbus TCP Client")
+        print("ModbusLens - Modbus Client/Server")
         print("Usage:")
         print("  python main.py          # Run CLI version")
         print("  python main.py --gui    # Run GUI version")
         print("  python main.py --help   # Show this help")
     elif len(sys.argv) > 1:
         print(f"Unknown argument: {sys.argv[1]}")
-        print("ModbusLens - Modbus TCP Client")
+        print("ModbusLens - Modbus Client/Server")
         print("Usage:")
         print("  python main.py          # Run CLI version")
         print("  python main.py --gui    # Run GUI version")

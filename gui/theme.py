@@ -173,6 +173,7 @@ def apply_theme(app, mode):
     from PySide6.QtCore import Qt
 
     c = get_colors(mode)
+    up_arrow, down_arrow = get_arrow_icon_paths(mode)
     app.setStyle("Fusion")
 
     palette = QPalette()
@@ -300,6 +301,32 @@ def apply_theme(app, mode):
         QToolTip {{
             background-color: {c["tooltip_bg"]};
             color: {c["tooltip_text"]};
+            border: 1px solid {c["border"]};
+        }}
+
+        QComboBox {{
+            background-color: {c["surface"]};
+            color: {c["text"]};
+            border: 1px solid {c["border"]};
+            padding: 4px 8px;
+        }}
+
+        QComboBox::drop-down {{
+            border: none;
+            width: 24px;
+        }}
+
+        QComboBox::down-arrow {{
+            image: url({down_arrow});
+            width: 7px;
+            height: 7px;
+        }}
+
+        QComboBox QAbstractItemView {{
+            background-color: {c["surface"]};
+            color: {c["text"]};
+            selection-background-color: {c["selection_bg"]};
+            selection-color: {c["selection_text"]};
             border: 1px solid {c["border"]};
         }}
     """)

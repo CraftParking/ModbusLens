@@ -288,7 +288,7 @@ class ModbusGUI(QMainWindow):
         
     def _setup_window(self):
         """Setup main window properties."""
-        self.setWindowTitle("ModbusLens - Modbus TCP/RTU Client/Server")
+        self.setWindowTitle("ModbusLens - Modbus Client/Server")
         self.setGeometry(100, 100, 1200, 800)
         self.setMinimumSize(1000, 700)
 
@@ -3671,7 +3671,7 @@ class ConnectionSettingsDialog(QDialog):
         unit_group = QGroupBox("Unit ID")
         unit_layout = QHBoxLayout(unit_group)
         self.unit_input = QSpinBox()
-        self.unit_input.setRange(0, 247)
+        self.unit_input.setRange(0, 255)
         self.unit_input.setValue(current.target_unit_id)
         self.unit_input.setStyleSheet(parent._get_input_style())
         unit_layout.addWidget(self.unit_input)

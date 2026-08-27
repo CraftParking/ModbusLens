@@ -81,7 +81,7 @@ class ServerWidget(QWidget):
 
         toolbar.addWidget(QLabel("Unit ID:"))
         self.unit_input = QSpinBox()
-        self.unit_input.setRange(0, 247)
+        self.unit_input.setRange(0, 255)
         self.unit_input.setValue(1)
         self.unit_input.setStyleSheet(self._input_style())
         toolbar.addWidget(self.unit_input)

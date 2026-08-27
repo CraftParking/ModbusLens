@@ -174,14 +174,14 @@ class SerialDiscoveryDialog:
         row2.addWidget(QLabel("Start Unit ID:"))
         self.start_unit_input = QSpinBox()
         self.start_unit_input.setStyleSheet(self.parent._get_input_style())
-        self.start_unit_input.setRange(0, 247)
+        self.start_unit_input.setRange(0, 255)
         self.start_unit_input.setValue(1)
         row2.addWidget(self.start_unit_input)
 
         row2.addWidget(QLabel("End Unit ID:"))
         self.end_unit_input = QSpinBox()
         self.end_unit_input.setStyleSheet(self.parent._get_input_style())
-        self.end_unit_input.setRange(0, 247)
+        self.end_unit_input.setRange(0, 255)
         self.end_unit_input.setValue(1)
         row2.addWidget(self.end_unit_input)
 
