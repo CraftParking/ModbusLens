@@ -16,6 +16,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QHBoxLayout, QTextEdit, QLineEdit, QLabel, QSpinBox, QProgressBar, QComboBox, QCheckBox
 
 from theme import apply_dropdown_delegate
+from gui.network.device_identification import DeviceIdentificationWorker
 
 NPCAP_DOWNLOAD_URL = "https://npcap.com/#download"
 
@@ -1205,6 +1206,10 @@ class NetworkDiagnosticsDialog:
         self.modbus_devices = {}  # Store Modbus probe results: {ip: status}
         self.show_modbus_only = False  # Filter checkbox state
         self.subnet_info = None  # Local subnet information
+        # Auto-identification tracking (phase 1, item 3).
+        self.identifying_devices = {}  # ip -> DeviceIdentificationWorker
+        self.identify_progress = 0  # count of devices currently being identified
+        self.device_identities = {}  # ip -> (manufacturer, product, version)
 
     def show_diagnostics(self, host, port, unit_id):
         """Show network diagnostics dialog."""
@@ -1779,6 +1784,13 @@ class NetworkDiagnosticsDialog:
         """Start network device discovery."""
         if self.scanner and self.scanner.isRunning():
             return
+
+        # Clear any in-flight identification workers from the previous scan.
+        for ip in list(self.identifying_devices):
+            self._stop_identify(ip)
+        self.identifying_devices.clear()
+        self.identify_progress = 0
+        self.device_identities.clear()
         
         # Check packet capture capability and show popup if needed
         self.capture_capability = detect_packet_capture_capability()
@@ -1852,16 +1864,68 @@ class NetworkDiagnosticsDialog:
         self.modbus_devices[ip] = status
         if status == "YES":
             self.output_text.append(f"  → Modbus device confirmed: {ip}")
+            self._start_identify(ip, port)
         elif status == "NO":
             self.output_text.append(f"  → Not a Modbus device: {ip}")
+
+    def _start_identify(self, ip, port):
+        """Fire off a background FC43 query for this device (only one at a time per IP)."""
+        if ip in self.identifying_devices:
+            return
+        w = DeviceIdentificationWorker(ip, port, unit_id=1, timeout=2.0)
+        w.finished.connect(self._on_identify_finished)
+        w.start()
+        self.identifying_devices[ip] = w
+        self.identify_progress += 1
+        self.output_text.append(f"  → Identifying {ip} (FC43 Basic)...")
+
+    def _stop_identify(self, ip):
+        """Cancel a pending identification worker (called when a new scan starts)."""
+        w = self.identifying_devices.pop(ip, None)
+        if w is not None:
+            w.stop()
+            try:
+                w.wait(500)
+            except Exception:
+                pass
+            self.identify_progress = max(0, self.identify_progress - 1)
+
+    def _on_identify_finished(self, ip, manufacturer, product, version, error):
+        """When FC43 returns, record the result and update the display."""
+        self.identifying_devices.pop(ip, None)
+        self.identify_progress = max(0, self.identify_progress - 1)
+        if error == "no-id" and manufacturer == "" and product == "" and version == "":
+            # Device didn't return any Basic objects -- not an error, just no label.
+            identity = ("", "", "")
+            label = "ident"
+        elif error:
+            identity = ("", "", "")
+            label = f"identify error: {error}"
+        else:
+            identity = (manufacturer, product, version)
+            self.device_identities[ip] = identity
+            parts = []
+            if manufacturer:
+                parts.append(manufacturer)
+            if product:
+                parts.append(product)
+            if version:
+                parts.append(version)
+            label = " | ".join(parts) if parts else ""
+        self.output_text.append(f"  IDENT {ip}: {label or '(no ID returned)'}")
+        if self.identify_progress <= 0:
+            # All identify workers done; update progress bar format back to idle.
+            self.progress_bar.setFormat("Scanning... done")
     
     def on_scan_progress(self, percentage, ip=""):
         """Update scan progress."""
         self.progress_bar.setValue(percentage)
+        parts = [f"Scanning... {percentage}%"]
         if ip:
-            self.progress_bar.setFormat(f"Scanning... {percentage}% ({ip})")
-        else:
-            self.progress_bar.setFormat(f"Scanning... {percentage}%")
+            parts.append(f"({ip})")
+        if self.identify_progress:
+            parts.append(f"identifying {self.identify_progress}")
+        self.progress_bar.setFormat(" ".join(parts))
     
     def on_scan_complete(self, device_count):
         """Handle scan completion."""
