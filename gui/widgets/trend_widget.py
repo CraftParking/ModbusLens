@@ -15,6 +15,7 @@ from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateT
 from PySide6.QtPrintSupport import QPrinter
 
 from modbus_meta import MULTI_WORD_FORMATS
+from theme import apply_dropdown_delegate
 from widgets.trend_recording import TrendRecordingWindow
 
 MAX_PENS = 20
@@ -264,6 +265,7 @@ class AddPenDialog(QDialog):
                 "nothing is plotted for that tick rather than silently showing a raw number instead."
             )
             table.setCellWidget(row, 4, scale_combo)
+            apply_dropdown_delegate(scale_combo, getattr(main_window, "_theme_mode", "light"))
 
             color_btn = ColorButton(pen.color)
             table.setCellWidget(row, 5, color_btn)
@@ -592,6 +594,7 @@ class TrendWidget(QWidget):
             self.window_combo.addItem(label, seconds)
         self.window_combo.setCurrentIndex(0)
         self.window_combo.setStyleSheet(self._input_style())
+        apply_dropdown_delegate(self.window_combo, getattr(self.parent_window, "_theme_mode", "light"))
         self.window_combo.currentIndexChanged.connect(self._on_window_changed)
         bottom.addWidget(self.window_combo)
 

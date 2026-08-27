@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (
     QComboBox, QSpinBox, QProgressBar,
 )
 
+from theme import apply_dropdown_delegate
+
 # Floor between any two Modbus requests the scanner issues, regardless of how short a
 # probe timeout is configured -- mirrors the Script tab's MIN_STEP_INTERVAL_MS and the
 # Network Scanner's 50ms IP-probe delay: a fast timeout shouldn't turn into flooding.
@@ -224,6 +226,7 @@ class RegisterScannerWidget(QWidget):
         self.addr_function_combo.addItems(FUNCTION_TYPES)
         self.addr_function_combo.setCurrentText("Holding Registers")
         row1.addWidget(self.addr_function_combo)
+        apply_dropdown_delegate(self.addr_function_combo, getattr(self.parent_window, "_theme_mode", "light"))
 
         row1.addWidget(QLabel("Start:"))
         self.addr_start_input = QSpinBox()

@@ -10,6 +10,7 @@ import time
 
 from log_format import format_log_html
 from modbus_meta import FUNCTION_NAMES
+from theme import apply_dropdown_delegate
 from zoom import install_ctrl_wheel_zoom
 
 DEFAULT_STATUS_LOG_FONT_PX = 10
@@ -64,6 +65,7 @@ class AddressTableWidget(QWidget):
         ])
         self.function_combo.currentTextChanged.connect(self.on_function_changed)
         address_layout.addWidget(self.function_combo)
+        apply_dropdown_delegate(self.function_combo, getattr(self.parent_window, "_theme_mode", "light"))
 
         start_address_label = QLabel("Start Address:")
         start_address_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -100,6 +102,7 @@ class AddressTableWidget(QWidget):
         )
         self.format_combo.currentTextChanged.connect(self.on_display_format_changed)
         address_layout.addWidget(self.format_combo)
+        apply_dropdown_delegate(self.format_combo, getattr(self.parent_window, "_theme_mode", "light"))
 
         self.create_btn = QPushButton("Create Table")
         self.create_btn.clicked.connect(self.create_address_table)

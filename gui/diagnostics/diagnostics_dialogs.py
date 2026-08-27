@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QShortcut, QKeySequence
 from PySide6.QtCore import Qt
 
+from theme import apply_dropdown_delegate
 from zoom import install_ctrl_wheel_zoom
 
 MAX_RAW_DATA_ROWS = 1000  # oldest rows are dropped past this so the table can't grow unbounded
@@ -211,6 +212,7 @@ class DiagnosticsDialogs:
         self.filter_status_combo.setCurrentText(self.filter_status)
         self.filter_status_combo.currentTextChanged.connect(self._on_filter_changed)
         filter_layout.addWidget(self.filter_status_combo)
+        apply_dropdown_delegate(self.filter_status_combo, getattr(self.parent, "_theme_mode", "light"))
         layout.addLayout(filter_layout)
 
         # Use the pre-initialized raw data table

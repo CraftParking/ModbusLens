@@ -946,6 +946,8 @@ class ModbusGUI(QMainWindow):
             # Let a right-click bubble up to the table's own context menu (Configure
             # Alarm etc.) instead of the cell widget swallowing it for Cut/Copy/Paste.
             w.setContextMenuPolicy(Qt.NoContextMenu)
+            if isinstance(w, QComboBox):
+                theme.apply_dropdown_delegate(w, self._theme_mode)
         return w
  
     def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None,
@@ -3354,6 +3356,7 @@ class AlarmConfigDialog(QDialog):
             self.state_combo.addItems(["ON / True", "OFF / False"])
             self.state_combo.setCurrentIndex(0 if existing_alarm.get("bool_state", True) else 1)
             state_row.addWidget(self.state_combo)
+            theme.apply_dropdown_delegate(self.state_combo, getattr(parent, "_theme_mode", "light"))
             layout.addLayout(state_row)
         else:
             high_row = QHBoxLayout()
@@ -3470,6 +3473,10 @@ class ScalingConfigDialog(QDialog):
         self.value_type_combo.setCurrentText(existing_scaling.get("value_type", "Real"))
         type_row.addWidget(self.value_type_combo)
         layout.addLayout(type_row)
+
+        # Explicit item-paint delegate so popup text stays theme-colored.
+        for combo in (self.mode_combo, self.value_type_combo):
+            theme.apply_dropdown_delegate(combo, getattr(parent, "_theme_mode", "light"))
 
         button_row = QHBoxLayout()
         button_row.addStretch()
@@ -3685,6 +3692,13 @@ class ConnectionSettingsDialog(QDialog):
         self.hist_combo.currentIndexChanged.connect(self._on_history_select)
         hist_layout.addWidget(self.hist_combo)
         layout.addWidget(hist_group)
+
+        # Explicit item-paint delegate on every popup so dropdown text stays
+        # theme-colored regardless of palette mutations on the combo bodies.
+        for combo in (self.iface_combo, self.serial_port_combo, self.baud_combo,
+                      self.parity_combo, self.stopbits_combo, self.bytesize_combo,
+                      self.framer_combo, self.hist_combo):
+            theme.apply_dropdown_delegate(combo, getattr(parent, "_theme_mode", "light"))
 
         # Buttons
         btns = QHBoxLayout()

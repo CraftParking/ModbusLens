@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from log_format import format_log_html
 from modbus_meta import function_code_for
+from theme import apply_dropdown_delegate
 from widgets.trend_widget import TagPickerDialog
 
 HIDE_RUN_WARNING_KEY = "hide_script_run_warning"
@@ -821,6 +822,7 @@ class ScriptWidget(QWidget):
             "letting a script simulate a device instead of controlling one."
         )
         toolbar.addWidget(self.target_combo)
+        apply_dropdown_delegate(self.target_combo, getattr(self.parent_window, "_theme_mode", "light"))
         toolbar.addSpacing(10)
 
         self.compile_btn = QPushButton("Compile")

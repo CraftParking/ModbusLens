@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 
+from theme import apply_dropdown_delegate
+
 FILE_VERSION = 1
 FILE_FILTER = "ModbusLens Trend Recording (*.mltrend)"
 REPLAY_SPEEDS = [("1x", 1.0), ("2x", 2.0), ("4x", 4.0), ("8x", 8.0)]
@@ -174,6 +176,10 @@ class TrendRecordingWindow(QDialog):
         for label, _factor in REPLAY_SPEEDS:
             self.speed_combo.addItem(label)
         self.speed_combo.setStyleSheet(self._input_style())
+        apply_dropdown_delegate(
+            self.speed_combo,
+            getattr(getattr(self.trend_widget, "parent_window", None), "_theme_mode", "light"),
+        )
         transport_row.addWidget(self.speed_combo)
         transport_row.addStretch()
         layout.addLayout(transport_row)

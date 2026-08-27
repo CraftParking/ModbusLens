@@ -12,6 +12,7 @@ from pymodbus.datastore import ModbusSimulatorContext, ModbusServerContext
 from pymodbus.server import StartTcpServer, ServerStop
 
 from widgets.status_indicator import StatusIndicator
+from theme import apply_dropdown_delegate
 
 SPACE_SIZE = 1000  # cells per data space (coils/discrete/input/holding)
 
@@ -111,6 +112,7 @@ class ServerWidget(QWidget):
         self.space_combo = QComboBox()
         self.space_combo.addItems([label for label, _ in SPACES])
         self.space_combo.setStyleSheet(self._input_style())
+        apply_dropdown_delegate(self.space_combo, getattr(self.parent_window, "_theme_mode", "light"))
         self.space_combo.currentIndexChanged.connect(self._load_view)
         view_row.addWidget(self.space_combo)
 

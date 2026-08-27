@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QSpinBox, QLineEdit, QCheckBox, QTextEdit, QWidget,
 )
 
+from theme import apply_dropdown_delegate
+
 
 def _parse_hex_bytes(text):
     """Accepts "1234", "12 34", or "0x12 0x34" -- whatever's easiest to type -- and
@@ -212,6 +214,7 @@ class DiagnosticFunctionsDialog(QDialog):
             self.function_combo.addItem(spec["label"])
         self.function_combo.currentIndexChanged.connect(self._rebuild_params)
         picker_row.addWidget(self.function_combo, 1)
+        apply_dropdown_delegate(self.function_combo, getattr(self.parent_window, "_theme_mode", "light"))
         layout.addLayout(picker_row)
 
         self.param_container = QWidget()
@@ -272,6 +275,7 @@ class DiagnosticFunctionsDialog(QDialog):
         elif param["kind"] == "combo":
             widget = QComboBox()
             widget.setStyleSheet(self.parent_window._get_input_style())
+            apply_dropdown_delegate(widget, getattr(self.parent_window, "_theme_mode", "light"))
             for label, _value in param["options"]:
                 widget.addItem(label)
         else:

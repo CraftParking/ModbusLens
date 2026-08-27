@@ -15,6 +15,8 @@ except ImportError:
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QHBoxLayout, QTextEdit, QLineEdit, QLabel, QSpinBox, QProgressBar, QComboBox, QCheckBox
 
+from theme import apply_dropdown_delegate
+
 NPCAP_DOWNLOAD_URL = "https://npcap.com/#download"
 
 # subprocess.run() on a --windowed frozen build still flashes a console window for
@@ -1222,6 +1224,7 @@ class NetworkDiagnosticsDialog:
             
             self.interface_combo = QComboBox()
             self.interface_combo.setMinimumWidth(300)
+            apply_dropdown_delegate(self.interface_combo, getattr(self.parent, "_theme_mode", "light"))
             self.interface_combo.setStyleSheet("""
                 QComboBox {
                     padding: 5px;

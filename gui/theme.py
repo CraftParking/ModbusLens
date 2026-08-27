@@ -7,8 +7,9 @@ own scope: restart-to-apply, not live switching).
 """
 import os
 
-from PySide6.QtCore import QSettings
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QColor, QPalette, QPen
+from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate
 
 APP_ORG = "ModbusLens"
 APP_NAME = "ModbusLens"
@@ -324,9 +325,53 @@ def apply_theme(app, mode):
 
         QComboBox QAbstractItemView {{
             background-color: {c["surface"]};
-            color: {c["text"]};
-            selection-background-color: {c["selection_bg"]};
-            selection-color: {c["selection_text"]};
             border: 1px solid {c["border"]};
         }}
     """)
+
+
+class DropdownItemDelegate(QStyledItemDelegate):
+    """Explicitly paints QComboBox popup list items from the theme color dict.
+
+    Qt Fusion's QSS/palette signal propagation on QComboBox popup views is
+    fragile: a palette mutation on the combo body (e.g. from tagRowSelected
+    highlighting) leaks into the popup and makes unselected items white-on-white
+    in light mode. Painting each item directly from the color tokens is immune
+    to that, since it never consults the widget palette."""
+
+    def __init__(self, colors):
+        super().__init__()
+        self._c = colors
+
+    def paint(self, painter, option, index):
+        c = self._c
+        rect = option.rect
+
+        if option.state & QStyle.State_Selected:
+            bg, fg = QColor(c["selection_bg"]), QColor(c["selection_text"])
+        elif option.state & QStyle.State_MouseOver:
+            bg, fg = QColor(c["hover"]), QColor(c["text"])
+        else:
+            bg, fg = QColor(c["surface"]), QColor(c["text"])
+
+        painter.save()
+        painter.fillRect(rect, bg)
+        painter.setPen(QPen(fg))
+        text = index.data(Qt.DisplayRole)
+        if text is None:
+            text = ""
+        painter.drawText(rect.adjusted(6, 0, -4, 0),
+                         Qt.AlignLeft | Qt.AlignVCenter, str(text))
+        painter.restore()
+
+
+def apply_dropdown_delegate(combo, mode):
+    """Attach a DropdownItemDelegate to a QComboBox's popup view.
+
+    mode is the already-resolved ('light'/'dark') or raw ('system') preference;
+    if 'system' it is resolved against the current QApplication."""
+    if mode == "system":
+        app = QApplication.instance()
+        mode = resolve_mode(mode, app) if app else "light"
+    colors = get_colors(mode)
+    combo.view().setItemDelegate(DropdownItemDelegate(colors))

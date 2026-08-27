@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.modbus_client import ModbusClient
+from theme import apply_dropdown_delegate
 
 # Floor between any two connection attempts, regardless of how short the per-trial
 # timeout is configured -- mirrors the Script tab's MIN_STEP_INTERVAL_MS and the
@@ -162,12 +163,14 @@ class SerialDiscoveryDialog:
         self.port_combo.setStyleSheet(self.parent._get_input_style())
         self.port_combo.addItems(detect_serial_ports())
         row1.addWidget(self.port_combo)
+        apply_dropdown_delegate(self.port_combo, getattr(self.parent, "_theme_mode", "light"))
 
         row1.addWidget(QLabel("Framing:"))
         self.framer_combo = QComboBox()
         self.framer_combo.setStyleSheet(self.parent._get_input_style())
         self.framer_combo.addItems(["RTU", "ASCII"])
         row1.addWidget(self.framer_combo)
+        apply_dropdown_delegate(self.framer_combo, getattr(self.parent, "_theme_mode", "light"))
         layout.addLayout(row1)
 
         row2 = QHBoxLayout()
