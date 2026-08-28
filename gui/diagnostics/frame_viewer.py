@@ -7,7 +7,7 @@ bytes, CRC/LRC, and exception codes.
 """
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QFrame, QTableWidget,
-    QTableWidgetItem, QHeaderView, QWidget,
+    QTableWidgetItem, QHeaderView, QWidget, QSizePolicy,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
@@ -169,6 +169,9 @@ class FrameViewerPanel(QWidget):
         self._colors = parent._colors() if hasattr(parent, "_colors") else {}
         self._transport = "tcp"
         self._setup_ui()
+
+        self.setMinimumHeight(200)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def _setup_ui(self):
         c = self._colors
