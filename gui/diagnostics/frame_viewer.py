@@ -211,19 +211,20 @@ def _decode_pdu(pdu, result):
         result["fields"].append(("Data", "(none)"))
 
 
-def _make_widget(colors, label, value, accent_color=None):
-    """Create a label/value row for the frame viewer."""
+def _make_table_row(colors, label, value, row_index):
+    """Create a compact table-style label/value row, spreadsheet look."""
+    c = colors
     row = QHBoxLayout()
     row.setContentsMargins(0, 0, 0, 0)
-    row.setSpacing(8)
+    row.setSpacing(6)
 
     lbl = QLabel(label)
-    lbl.setStyleSheet(f"color: {accent_color or colors['accent']}; font-weight: 600; font-size: 11px;")
-    lbl.setMinimumWidth(100)
+    lbl.setStyleSheet(f"color: {c['text_dim']}; font-size: 10px; font-weight: 500;")
+    lbl.setMinimumWidth(90)
 
     val = QLabel(value)
-    val.setStyleSheet(f"color: {colors['text']}; font-size: 11px; font-family: 'Consolas', 'Monaco', monospace;")
-    val.setWordWrap(True)
+    val.setStyleSheet(f"color: {c['text']}; font-size: 10px; font-family: 'Consolas', 'Monaco', monospace;")
+    val.setWordWrap(False)
 
     row.addWidget(lbl)
     row.addWidget(val)
@@ -296,14 +297,10 @@ class FrameViewerDialog(QDialog):
 
         # Window flags: no title bar, stays on top, tool window so it doesn't clutter the taskbar
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        # Solid background — no translucency
         self.setAttribute(Qt.WA_ShowWithoutActivating)
 
         colors = parent._colors() if hasattr(parent, "_colors") else {}
         self._colors = colors
-        self._tx_color = colors.get("log_write", "#1565C0")
-        self._rx_success_color = colors.get("log_connect", "#2E7D32")
-        self._rx_fail_color = colors.get("log_error", "#C62828")
 
         self._setup_ui()
         self._position_popup(parent)
@@ -313,96 +310,119 @@ class FrameViewerDialog(QDialog):
         QApplication.instance().installEventFilter(self._outside_filter)
 
     def _setup_ui(self):
-        """Build the TX | RX panel layout."""
+        """Build the TX | RX panel layout — clean spreadsheet-style card."""
         c = self._colors
-        # Card-like background for the whole dialog
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {c['surface']};
                 border: 1px solid {c['border']};
-                border-radius: 6px;
             }}
         """)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # Title bar
-        title = QLabel("Modbus Frame Viewer")
-        title.setStyleSheet(f"""
-            font-size: 13px;
-            font-weight: bold;
-            color: {c['heading']};
-            padding-bottom: 4px;
-            border-bottom: 1px solid {c['border']};
+        # Header bar — thin strip matching the app's table header style
+        header = QFrame()
+        header.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['header_bg']};
+                border-bottom: 1px solid {c['border']};
+            }}
         """)
-        layout.addWidget(title)
+        h_layout = QHBoxLayout(header)
+        h_layout.setContentsMargins(10, 5, 10, 5)
+        h_layout.setSpacing(8)
 
-        # Transport badge
+        title = QLabel("Frame Viewer")
+        title.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {c['heading']};")
+        h_layout.addWidget(title)
+
         badge = QLabel(self.transport.upper())
         badge.setStyleSheet(f"""
-            background-color: {c['surface_alt']};
-            color: {c['accent']};
+            background-color: {c['surface']};
+            color: {c['text_dim']};
             border: 1px solid {c['border']};
-            border-radius: 3px;
-            padding: 2px 8px;
-            font-size: 10px;
+            padding: 1px 6px;
+            font-size: 9px;
             font-weight: 600;
         """)
-        layout.addWidget(badge)
+        h_layout.addWidget(badge)
 
-        # TX | RX split
+        h_layout.addStretch()
+
+        close_btn = QLabel("\u2715")
+        close_btn.setStyleSheet(f"font-size: 11px; color: {c['text_dim']};")
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.mousePressEvent = lambda e: self.close()
+        h_layout.addWidget(close_btn)
+
+        layout.addWidget(header)
+
+        # TX | RX split — two side-by-side table-style panels
         split = QHBoxLayout()
-        split.setSpacing(10)
+        split.setSpacing(0)
 
-        tx_panel = self._build_panel("TX", self.tx_decoded, self._tx_color)
-        rx_panel = self._build_panel("RX", self.rx_decoded, self._rx_success_color if self.rx_decoded["success"] else self._rx_fail_color)
+        tx_panel = self._build_panel("TX", self.tx_decoded)
+        rx_panel = self._build_panel("RX", self.rx_decoded)
 
         split.addWidget(tx_panel, 1)
+        # Divider line between panels
+        divider = QFrame()
+        divider.setFrameShape(QFrame.VLine)
+        divider.setFrameShadow(QFrame.Sunken)
+        divider.setStyleSheet(f"color: {c['border']};")
+        split.addWidget(divider)
         split.addWidget(rx_panel, 1)
-        layout.addLayout(split)
 
-        # Set minimum size
+        body = QFrame()
+        body.setStyleSheet(f"background-color: {c['surface']};")
+        body.setLayout(split)
+        layout.addWidget(body)
+
         self.setMinimumWidth(420)
-        self.setMaximumWidth(640)
+        self.setMaximumWidth(680)
 
-    def _build_panel(self, direction, decoded, accent_color):
-        """Build a single TX or RX panel with fields and hex dump."""
+    def _build_panel(self, direction, decoded):
+        """Build a single TX or RX panel as a clean table, spreadsheet-style."""
+        c = self._colors
         panel = QFrame()
         panel.setStyleSheet(f"""
             QFrame {{
-                background-color: {self._colors['surface']};
-                border: 1px solid {accent_color};
-                border-radius: 4px;
+                background-color: transparent;
+                border: none;
             }}
         """)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
+        layout.setSpacing(0)
 
-        # Direction header
-        dir_label = QLabel(direction)
+        # Direction label as a thin header row
+        dir_label = QLabel(f"{direction}")
         dir_label.setStyleSheet(f"""
-            font-size: 12px;
-            font-weight: bold;
-            color: {accent_color};
-            padding: 2px 0;
+            font-size: 10px;
+            font-weight: 600;
+            color: {c['text_dim']};
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid {c['border_light']};
         """)
         layout.addWidget(dir_label)
 
-        # Status indicator
+        # Status row — subtle, not flashy
         if decoded.get("error"):
             status = QLabel(f"  {decoded['error']}")
-            status.setStyleSheet(f"color: {self._colors['log_error']}; font-size: 10px; font-style: italic;")
+            status.setStyleSheet(f"color: {c['log_error']}; font-size: 10px; padding: 2px 0;")
             layout.addWidget(status)
         elif decoded["success"] and direction == "RX":
             status = QLabel("  OK")
-            status.setStyleSheet(f"color: {self._colors['log_connect']}; font-size: 10px; font-weight: 600;")
+            status.setStyleSheet(f"color: {c['log_connect']}; font-size: 10px; padding: 2px 0;")
             layout.addWidget(status)
 
-        # Field rows
-        for label, value in decoded.get("fields", []):
-            row = _make_widget(self._colors, label, value, accent_color)
+        # Field rows as a compact table
+        for i, (label, value) in enumerate(decoded.get("fields", [])):
+            row = _make_table_row(self._colors, label, value, i)
             layout.addLayout(row)
 
         layout.addStretch()
@@ -410,8 +430,7 @@ class FrameViewerDialog(QDialog):
         # Hex dump footer
         if decoded.get("pdu_hex") or decoded.get("raw_hex"):
             hex_str = decoded.get("pdu_hex", "") or decoded.get("raw_hex", "")
-            hex_label = f"Hex — {direction}"
-            dump = _make_hex_dump(self._colors, hex_str, hex_label)
+            dump = _make_hex_dump(self._colors, hex_str, f"HEX — {direction}")
             layout.addWidget(dump)
 
         return panel
