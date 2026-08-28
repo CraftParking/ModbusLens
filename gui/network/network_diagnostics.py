@@ -1504,6 +1504,17 @@ class NetworkDiagnosticsDialog:
             self._stop_worker(self.modbus_prober, "Modbus prober")
             self._stop_worker(self.worker, "Diagnostics worker")
 
+            # Stop any in-flight FC43 identification workers too -- if the dialog
+            # closes while these QThreads are still running, they abort the app
+            # ("QThread: Destroyed while thread '' is still running"). Use
+            # _stop_worker (which force-terminates a worker blocked in a native
+            # connect() call) rather than _stop_identify's plain wait.
+            for ip in list(self.identifying_devices):
+                self._stop_worker(self.identifying_devices.pop(ip), "Device identify")
+            self.identifying_devices.clear()
+            self.identify_progress = 0
+            self.device_identities.clear()
+
             # Disable Modbus filter
             self.disable_modbus_filter()
             
@@ -1884,15 +1895,24 @@ class NetworkDiagnosticsDialog:
         w = self.identifying_devices.pop(ip, None)
         if w is not None:
             w.stop()
-            try:
-                w.wait(500)
-            except Exception:
-                pass
+            if not w.wait(1000):
+                # Worker is blocked in a native connect() (up to the 2s timeout);
+                # terminare rather than leave a live thread dangling, which would
+                # abort the app on destruction.
+                w.terminate()
+                w.wait(2000)
             self.identify_progress = max(0, self.identify_progress - 1)
 
     def _on_identify_finished(self, ip, manufacturer, product, version, error):
         """When FC43 returns, record the result and update the display."""
-        self.identifying_devices.pop(ip, None)
+        w = self.identifying_devices.pop(ip, None)
+        # Ensure the worker thread has really exited before dropping our last
+        # reference. finished.emit() is the final statement of the worker's
+        # run(), so this returns immediately -- but if the reference were dropped
+        # while the QThread was still unwinding, the app aborts with
+        # "QThread: Destroyed while thread '' is still running".
+        if w is not None:
+            w.wait(200)
         self.identify_progress = max(0, self.identify_progress - 1)
         if error == "no-id" and manufacturer == "" and product == "" and version == "":
             # Device didn't return any Basic objects -- not an error, just no label.

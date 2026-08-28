@@ -1554,6 +1554,8 @@ class ModbusGUI(QMainWindow):
             self._save_settings()
         elif dialog.scan_requested_port is not None:
             self._serial_discovery(dialog.scan_requested_port)
+        elif dialog.network_discovery_requested:
+            self._network_diagnostics()
 
     def _connect(self):
         """Connect to Modbus server."""
@@ -3541,6 +3543,7 @@ class ConnectionSettingsDialog(QDialog):
         # Set by _open_serial_scan() -- the caller checks this after exec() to decide
         # whether to open Serial Discovery once this dialog has closed.
         self.scan_requested_port = None
+        self.network_discovery_requested = False
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
@@ -3574,6 +3577,10 @@ class ConnectionSettingsDialog(QDialog):
         self.port_input.setStyleSheet(parent._get_input_style())
         grid.addWidget(self.port_input, 1, 1)
 
+        grid.addWidget(QLabel("Unit ID:"), 2, 0)
+        self.unit_input = self._make_unit_input(parent, current.target_unit_id)
+        grid.addWidget(self.unit_input, 2, 1)
+
         self.fast_lan_checkbox = QCheckBox("Fast LAN Mode (200ms timeout, no retries)")
         self.fast_lan_checkbox.setToolTip(
             "For a local network where a timeout means the device is actually gone, not "
@@ -3581,7 +3588,12 @@ class ConnectionSettingsDialog(QDialog):
             "of retrying every tag when the device drops off."
         )
         self.fast_lan_checkbox.setChecked(getattr(current, "fast_lan_mode", False))
-        grid.addWidget(self.fast_lan_checkbox, 2, 0, 1, 2)
+        grid.addWidget(self.fast_lan_checkbox, 3, 0, 1, 2)
+
+        net_scan_btn = QPushButton("Network Discovery...")
+        net_scan_btn.clicked.connect(self._open_network_discovery)
+        net_scan_btn.setToolTip("Scan the local network for Modbus devices, verify they speak Modbus, and identify them.")
+        grid.addWidget(net_scan_btn, 4, 0, 1, 2)
         layout.addWidget(self.tcp_group)
 
         # 2. Network interface (TCP only)
@@ -3669,22 +3681,16 @@ class ConnectionSettingsDialog(QDialog):
         self.framer_combo.setCurrentIndex(framer_index)
         serial_grid.addWidget(self.framer_combo, 5, 1)
 
+        serial_grid.addWidget(QLabel("Unit ID:"), 6, 0)
+        self.serial_unit_input = self._make_unit_input(parent, current.target_unit_id)
+        serial_grid.addWidget(self.serial_unit_input, 6, 1)
+
         scan_btn = QPushButton("Scan for Connection Parameters...")
         scan_btn.clicked.connect(self._open_serial_scan)
-        serial_grid.addWidget(scan_btn, 6, 0, 1, 2)
+        serial_grid.addWidget(scan_btn, 7, 0, 1, 2)
         layout.addWidget(self.serial_group)
 
-        # 4. Unit ID (shared by both modes)
-        unit_group = QGroupBox("Unit ID")
-        unit_layout = QHBoxLayout(unit_group)
-        self.unit_input = QSpinBox()
-        self.unit_input.setRange(0, 255)
-        self.unit_input.setValue(current.target_unit_id)
-        self.unit_input.setStyleSheet(parent._get_input_style())
-        unit_layout.addWidget(self.unit_input)
-        layout.addWidget(unit_group)
-
-        # 5. History
+        # 4. History
         hist_group = QGroupBox("Recent Connections")
         hist_layout = QHBoxLayout(hist_group)
         self.hist_combo = QComboBox()
@@ -3726,6 +3732,7 @@ class ConnectionSettingsDialog(QDialog):
             if serial_overrides["stopbits"] in self.STOP_BITS:
                 self.stopbits_combo.setCurrentIndex(self.STOP_BITS.index(serial_overrides["stopbits"]))
             self.unit_input.setValue(serial_overrides["unit_id"])
+            self.serial_unit_input.setValue(serial_overrides["unit_id"])
             self.framer_combo.setCurrentIndex(1 if serial_overrides.get("framer") == "ascii" else 0)
 
         self._update_mode_visibility()
@@ -3747,6 +3754,11 @@ class ConnectionSettingsDialog(QDialog):
         self.scan_requested_port = self.serial_port_combo.currentText().strip()
         self.reject()
 
+    def _open_network_discovery(self):
+        """Close this dialog (which is modal) and let the caller open Network Discovery."""
+        self.network_discovery_requested = True
+        self.reject()
+
     def _update_mode_visibility(self):
         is_serial = self.serial_radio.isChecked()
         self.tcp_group.setVisible(not is_serial)
@@ -3761,6 +3773,27 @@ class ConnectionSettingsDialog(QDialog):
         data = self.iface_combo.currentData()
         if data and not self.ip_input.text().strip():
             self.ip_input.setText(data)
+
+    def _make_unit_input(self, parent, initial_value):
+        """Build a Unit ID spinbox that allows free typing of any 4-digit value on the
+        wire, then warns and clamps to 0-255 on blur."""
+        spin = QSpinBox()
+        spin.setRange(0, 9999)
+        spin.setFixedWidth(80)
+        spin.setValue(initial_value)
+        spin.setStyleSheet(parent._get_input_style())
+        spin.editingFinished.connect(lambda: self._validate_unit_id(spin))
+        return spin
+
+    def _validate_unit_id(self, spin):
+        """Allow free typing of any unit ID, but clamp and warn on blur if out of range."""
+        val = spin.value()
+        if val < 0 or val > 255:
+            QMessageBox.warning(
+                self, "Unit ID",
+                "Unit ID must be between 0 and 255. It has been set to 255."
+            )
+            spin.setValue(255)
 
     def _friendly_history_label(self, entry):
         """A raw history token like 'serial:COM5:9600:N:8:1:1:rtu' isn't something a user
@@ -3827,6 +3860,7 @@ class ConnectionSettingsDialog(QDialog):
                 if int(stopbits) in self.STOP_BITS:
                     self.stopbits_combo.setCurrentIndex(self.STOP_BITS.index(int(stopbits)))
                 self.unit_input.setValue(int(unit))
+                self.serial_unit_input.setValue(int(unit))
                 self.framer_combo.setCurrentIndex(1 if framer == "ascii" else 0)
                 return
 
@@ -3844,11 +3878,12 @@ class ConnectionSettingsDialog(QDialog):
                 self.hist_combo.blockSignals(False)
 
     def get_values(self):
+        is_serial = self.serial_radio.isChecked()
         return {
-            'mode': "serial" if self.serial_radio.isChecked() else "tcp",
+            'mode': "serial" if is_serial else "tcp",
             'ip': self.ip_input.text(),
             'port': self.port_input.value(),
-            'unit': self.unit_input.value(),
+            'unit': (self.serial_unit_input.value() if is_serial else self.unit_input.value()),
             'serial_port': self.serial_port_combo.currentText(),
             'baudrate': int(self.baud_combo.currentText()),
             'parity': self.parity_combo.currentData(),
