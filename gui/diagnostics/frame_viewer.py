@@ -1,16 +1,16 @@
-"""Modbus frame viewer — decode raw TX/RX bytes into human-readable frame fields.
+"""Integrated Modbus frame viewer panel — shown below the Raw Data table.
 
-When the user clicks any cell in the Raw Data table, this module shows a floating
-popup that decodes the transaction's TX and RX frames (MBAP for TCP, RTU for serial
-RTU, LRC for serial ASCII) side by side so the user can see exactly what was on the
-wire: unit ID, function code, address, data bytes, CRC/LRC, and exception codes.
+When the user clicks a row in the Raw Data table, this panel decodes and displays
+the TX and RX Modbus frames (MBAP for TCP, RTU, or LRC for ASCII) side by side
+so the user can see exactly what was on the wire: unit ID, function code, data
+bytes, CRC/LRC, and exception codes.
 """
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication, QTableWidget,
-    QTableWidgetItem, QHeaderView,
+    QVBoxLayout, QHBoxLayout, QLabel, QFrame, QTableWidget,
+    QTableWidgetItem, QHeaderView, QWidget,
 )
-from PySide6.QtCore import Qt, Signal, QEvent, QObject
-from PySide6.QtGui import QColor, QMouseEvent, QFont
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QColor
 
 from modbus_meta import FUNCTION_NAMES
 
@@ -30,39 +30,19 @@ _EXCEPTION_NAMES = {
 def _decode_modbus_frame(data_bytes, transport):
     """Decode a raw Modbus frame captured by pymodbus's trace_packet hook.
 
-    transport is one of "tcp", "rtu", or "ascii" — the same values used by the app.
-    Returns a dict with at minimum:
-        - direction: "TX" or "RX"
-        - raw_hex: full frame as space-separated hex
-        - raw_bytes: the original bytes
-        - success: bool
-        - error: None or a short description string
-      And one or more of:
-        - fields: dict of field_name -> (value, sub_value) tuples for the key-value UI
-        - pdu_hex: PDU portion as hex (for hex dump footer)
-        - exception_code: numeric exception code (RX only, when function code has bit 7 set)
+    transport is one of "tcp", "rtu", or "ascii".
+    Returns a dict with fields, error, success, raw_hex, pdu_hex, exception_code.
     """
     if not data_bytes:
         return {
-            "direction": "",
-            "raw_hex": "",
-            "raw_bytes": b"",
-            "success": False,
-            "error": "No frame data",
-            "fields": [],
-            "pdu_hex": "",
+            "fields": [], "error": "No frame data", "success": False,
+            "raw_hex": "", "pdu_hex": "", "exception_code": None,
         }
 
     raw = bytes(data_bytes)
     result = {
-        "direction": "",
-        "raw_hex": raw.hex(" ").upper(),
-        "raw_bytes": raw,
-        "success": True,
-        "error": None,
-        "fields": [],
-        "pdu_hex": "",
-        "exception_code": None,
+        "fields": [], "error": None, "success": True,
+        "raw_hex": raw.hex(" ").upper(), "pdu_hex": "", "exception_code": None,
     }
 
     if transport == "tcp":
@@ -76,44 +56,37 @@ def _decode_modbus_frame(data_bytes, transport):
 
 
 def _decode_tcp(raw, result):
-    """MBAP header (7 bytes) + PDU. pymodbus's trace_packet for TCP emits the full MBAP frame."""
-    result["direction"] = "TCP"
+    """MBAP header (7 bytes) + PDU."""
     if len(raw) < 7:
         result["success"] = False
-        result["error"] = f"Too short for TCP ({len(raw)} bytes, need >= 7)"
+        result["error"] = f"Too short for TCP ({len(raw)} bytes)"
         return
-
     transaction_id = int.from_bytes(raw[0:2], "big")
     protocol_id = int.from_bytes(raw[2:4], "big")
     length = int.from_bytes(raw[4:6], "big")
     unit_id = raw[6]
-
     result["fields"] = [
-        ("Transaction ID", f"{transaction_id}"),
-        ("Protocol ID", f"{protocol_id}"),
-        ("Length", f"{length}"),
-        ("Unit ID", f"{unit_id}"),
+        ("Transaction ID", str(transaction_id)),
+        ("Protocol ID", str(protocol_id)),
+        ("Length", f"{length} bytes"),
+        ("Unit ID", str(unit_id)),
     ]
-
     pdu = raw[7:]
     result["pdu_hex"] = pdu.hex(" ").upper() if pdu else ""
     _decode_pdu(pdu, result)
 
 
 def _decode_rtu(raw, result):
-    """RTU frame: Unit ID (1 byte) + PDU (N bytes) + CRC (2 bytes, little-endian)."""
-    result["direction"] = "RTU"
+    """RTU frame: Unit ID (1) + PDU (N) + CRC (2)."""
     if len(raw) < 4:
         result["success"] = False
-        result["error"] = f"Too short for RTU ({len(raw)} bytes, need >= 4)"
+        result["error"] = f"Too short for RTU ({len(raw)} bytes)"
         return
-
     unit_id = raw[0]
     pdu = raw[1:-2]
     crc_lo, crc_hi = raw[-2], raw[-1]
-
     result["fields"] = [
-        ("Unit ID", f"{unit_id}"),
+        ("Unit ID", str(unit_id)),
         ("CRC", f"{crc_hi:02X}{crc_lo:02X}"),
     ]
     result["pdu_hex"] = pdu.hex(" ").upper() if pdu else ""
@@ -121,54 +94,37 @@ def _decode_rtu(raw, result):
 
 
 def _decode_ascii(raw, result):
-    """ASCII frame: ':' (1) + Unit ID (2 ASCII hex chars) + PDU (N*2 ASCII chars) + LRC (2 ASCII) + CR LF (2).
-    pymodbus's trace_packet emits the raw ASCII string bytes, not decoded characters."""
-    result["direction"] = "ASCII"
-
+    """ASCII frame: ':' + Unit ID (2 hex chars) + PDU + LRC (2 hex chars) + CR LF."""
     try:
         text = raw.decode("ascii").strip()
     except UnicodeDecodeError:
         result["success"] = False
-        result["error"] = "Non-ASCII bytes in ASCII frame"
+        result["error"] = "Non-ASCII bytes"
         return
-
     if not text.startswith(":"):
         result["success"] = False
-        result["error"] = "Missing leading ':'"
+        result["error"] = "Missing ':'"
         return
-
-    inner = text[1:]
-    if len(inner) < 6:
-        result["success"] = False
-        result["error"] = f"Too short for ASCII ({len(inner)} chars, need >= 6)"
-        return
-
-    inner = inner.rstrip("\r\n")
+    inner = text[1:].rstrip("\r\n")
     if len(inner) < 4:
         result["success"] = False
-        result["error"] = f"Too short after stripping CR/LF ({len(inner)} chars)"
+        result["error"] = "Too short for ASCII"
         return
-
     lrc_str = inner[-2:]
     unit_and_pdu = inner[:-2]
-
     if len(unit_and_pdu) < 2:
         result["success"] = False
         result["error"] = "No unit ID or PDU"
         return
-
     unit_id = int(unit_and_pdu[:2], 16)
-    pdu_hex_str = unit_and_pdu[2:]
-
     try:
-        pdu_bytes = bytes.fromhex(pdu_hex_str)
+        pdu_bytes = bytes.fromhex(unit_and_pdu[2:])
     except ValueError:
         result["success"] = False
-        result["error"] = f"Invalid hex in PDU: {pdu_hex_str}"
+        result["error"] = "Invalid PDU hex"
         return
-
     result["fields"] = [
-        ("Unit ID", f"{unit_id}"),
+        ("Unit ID", str(unit_id)),
         ("LRC", lrc_str.upper()),
     ]
     result["pdu_hex"] = pdu_bytes.hex(" ").upper() if pdu_bytes else ""
@@ -176,26 +132,21 @@ def _decode_ascii(raw, result):
 
 
 def _decode_pdu(pdu, result):
-    """Decode the PDU portion (function code + data) common to all transports."""
+    """Decode PDU: function code + data (or exception)."""
     if not pdu:
         result["error"] = "Empty PDU"
         result["success"] = False
         return
-
     fc_byte = pdu[0]
     is_exception = (fc_byte & 0x80) != 0
     normal_fc = fc_byte & 0x7F
-
     fc_name = FUNCTION_NAMES.get(normal_fc, f"FC 0x{normal_fc:02X}")
     if is_exception:
         fc_display = f"{fc_name} (Exception)"
     else:
         fc_display = fc_name
-
     data = pdu[1:]
-
     result["fields"].append(("Function Code", fc_display))
-
     if is_exception and data:
         exc_code = data[0]
         exc_name = _EXCEPTION_NAMES.get(exc_code, f"Exception 0x{exc_code:02X}")
@@ -209,126 +160,115 @@ def _decode_pdu(pdu, result):
         result["fields"].append(("Data", "(none)"))
 
 
-class _OutsideClickFilter(QObject):
-    """Installs on QApplication to close the frame viewer when clicking outside it."""
+class FrameViewerPanel(QWidget):
+    """Integrated panel shown below the Raw Data table, decoding the selected row's
+    TX and RX Modbus frames into clean side-by-side table panels."""
 
-    def __init__(self, dialog):
-        super().__init__()
-        self._dialog = dialog
-
-    def eventFilter(self, obj, event):
-        if (event.type() == QEvent.Type.MouseButtonPress
-                and event.button() == Qt.LeftButton
-                and self._dialog.isVisible()):
-            pos = self._dialog.mapFromGlobal(event.globalPos())
-            if not self._dialog.rect().contains(pos):
-                self._dialog.close()
-                return True
-        return super().eventFilter(obj, event)
-
-
-class FrameViewerDialog(QDialog):
-    """Floating popup that decodes and displays the TX/RX Modbus frame for one raw data row."""
-
-    closed = Signal()
-
-    def __init__(self, parent, tx_bytes, rx_bytes, transport, row_index):
+    def __init__(self, parent):
         super().__init__(parent)
-        self.transport = transport
-        self.row_index = row_index
-
-        self.tx_decoded = _decode_modbus_frame(tx_bytes, transport)
-        self.rx_decoded = _decode_modbus_frame(rx_bytes, transport)
-
-        # Solid bordered window, no title bar, stays on top
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
-
-        colors = parent._colors() if hasattr(parent, "_colors") else {}
-        self._colors = colors
-
+        self._colors = parent._colors() if hasattr(parent, "_colors") else {}
+        self._transport = "tcp"
         self._setup_ui()
-        self._position_popup(parent)
-
-        self._outside_filter = _OutsideClickFilter(self)
-        QApplication.instance().installEventFilter(self._outside_filter)
 
     def _setup_ui(self):
-        """Build the popup: header bar + TX/RX table panels + hex footer."""
         c = self._colors
-
-        # Main border around the entire dialog
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {c['surface']};
-                border: 2px solid #000000;
-            }}
-        """)
-
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, 6, 0, 0)
         layout.setSpacing(0)
 
-        # --- Header bar ---
+        # Section header
         header = QFrame()
-        header.setStyleSheet(f"background-color: {c['header_bg']}; border-bottom: 1px solid {c['border']};")
+        header.setStyleSheet(f"background-color: {c['header_bg']}; border-top: 1px solid {c['border']};")
         h_layout = QHBoxLayout(header)
-        h_layout.setContentsMargins(10, 6, 10, 6)
-        h_layout.setSpacing(10)
-
+        h_layout.setContentsMargins(10, 5, 10, 5)
+        h_layout.setSpacing(8)
         title = QLabel("Frame Viewer")
-        title.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {c['heading']};")
+        title.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {c['heading']};")
         h_layout.addWidget(title)
-
-        badge = QLabel(self.transport.upper())
-        badge.setStyleSheet(f"""
-            background-color: {c['surface']};
-            color: {c['text_dim']};
-            border: 1px solid {c['border']};
-            padding: 1px 8px;
-            font-size: 10px;
-            font-weight: 600;
-        """)
-        h_layout.addWidget(badge)
+        self._transport_label = QLabel("(—)")
+        self._transport_label.setStyleSheet(f"font-size: 10px; color: {c['text_dim']};")
+        h_layout.addWidget(self._transport_label)
         h_layout.addStretch()
-
-        close_btn = QLabel("\u2715")
-        close_btn.setStyleSheet(f"font-size: 12px; color: {c['text_dim']};")
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.mousePressEvent = lambda e: self.close()
-        h_layout.addWidget(close_btn)
-
         layout.addWidget(header)
 
-        # --- TX | RX table panels ---
-        split = QHBoxLayout()
-        split.setSpacing(0)
+        # Placeholder text
+        self._placeholder = QLabel(
+            "Click any row in the Raw Data table above to view the decoded Modbus frames."
+        )
+        self._placeholder.setStyleSheet(f"""
+            color: {c['text_dim']};
+            font-size: 11px;
+            padding: 20px;
+            text-align: center;
+        """)
+        self._placeholder.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._placeholder)
 
-        tx_panel = self._build_table_panel("TX", self.tx_decoded)
-        rx_panel = self._build_table_panel("RX", self.rx_decoded)
-
-        split.addWidget(tx_panel, 1)
-        # Divider
+        # TX | RX split (hidden until a row is selected)
+        self._split = QHBoxLayout()
+        self._split.setSpacing(0)
+        self._tx_panel = self._build_empty_panel("TX")
+        self._rx_panel = self._build_empty_panel("RX")
+        self._split.addWidget(self._tx_panel)
         div = QFrame()
         div.setFrameShape(QFrame.VLine)
         div.setFrameShadow(QFrame.Sunken)
         div.setStyleSheet(f"background-color: {c['border']};")
-        split.addWidget(div)
-        split.addWidget(rx_panel, 1)
+        self._split.addWidget(div)
+        self._split.addWidget(self._rx_panel)
 
-        body = QFrame()
-        body.setStyleSheet(f"background-color: {c['surface']};")
-        body.setLayout(split)
-        layout.addWidget(body, 1)
+        self._body = QFrame()
+        self._body.setStyleSheet(f"background-color: {c['surface']};")
+        self._body.setLayout(self._split)
+        self._body.setVisible(False)
+        layout.addWidget(self._body)
 
-        # --- Hex dump footer ---
-        footer = self._build_hex_footer()
-        layout.addWidget(footer)
+        # Hex footer
+        self._hex_footer = QFrame()
+        self._hex_footer.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['surface_alt']};
+                border-top: 1px solid {c['border']};
+            }}
+        """)
+        hf_layout = QVBoxLayout(self._hex_footer)
+        hf_layout.setContentsMargins(10, 6, 10, 8)
+        hf_layout.setSpacing(3)
+        self._hex_title = QLabel("Raw Hex")
+        self._hex_title.setStyleSheet(f"font-size: 10px; font-weight: 600; color: {c['text_dim']};")
+        hf_layout.addWidget(self._hex_title)
+        self._hex_tx = QLabel("TX:  —")
+        self._hex_tx.setStyleSheet(f"color: {c['text_secondary']}; font-family: 'Consolas', 'Monaco', monospace; font-size: 10px;")
+        hf_layout.addWidget(self._hex_tx)
+        self._hex_rx = QLabel("RX:  —")
+        self._hex_rx.setStyleSheet(f"color: {c['text_secondary']}; font-family: 'Consolas', 'Monaco', monospace; font-size: 10px;")
+        hf_layout.addWidget(self._hex_rx)
+        self._hex_footer.setVisible(False)
+        layout.addWidget(self._hex_footer)
 
-        self.setMinimumSize(500, 340)
+    def _build_empty_panel(self, direction):
+        c = self._colors
+        panel = QFrame()
+        panel.setStyleSheet(f"background-color: {c['surface']};")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(0)
+        dir_label = QLabel(direction)
+        dir_label.setStyleSheet(f"""
+            font-size: 11px;
+            font-weight: 600;
+            color: {c['text_dim']};
+            padding: 0 0 4px 0;
+            border-bottom: 1px solid {c['border_light']};
+        """)
+        layout.addWidget(dir_label)
+        placeholder = QLabel("—")
+        placeholder.setStyleSheet(f"color: {c['text_dim']}; font-size: 11px; padding: 10px 0;")
+        layout.addWidget(placeholder)
+        layout.addStretch()
+        return panel
 
     def _build_table_panel(self, direction, decoded):
-        """Build a TX or RX panel as a clean table widget."""
         c = self._colors
         panel = QFrame()
         panel.setStyleSheet(f"background-color: {c['surface']};")
@@ -336,7 +276,6 @@ class FrameViewerDialog(QDialog):
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(0)
 
-        # Direction label
         dir_label = QLabel(direction)
         dir_label.setStyleSheet(f"""
             font-size: 11px;
@@ -347,7 +286,6 @@ class FrameViewerDialog(QDialog):
         """)
         layout.addWidget(dir_label)
 
-        # Status row
         if decoded.get("error"):
             status = QLabel(f"  {decoded['error']}")
             status.setStyleSheet(f"color: {c['log_error']}; font-size: 10px; padding: 3px 0;")
@@ -357,7 +295,6 @@ class FrameViewerDialog(QDialog):
             status.setStyleSheet(f"color: {c['log_connect']}; font-size: 10px; padding: 3px 0;")
             layout.addWidget(status)
 
-        # Table for decoded fields
         table = QTableWidget(len(decoded.get("fields", [])), 2)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -404,81 +341,85 @@ class FrameViewerDialog(QDialog):
         table.verticalHeader().setDefaultSectionSize(26)
         layout.addWidget(table)
         layout.addStretch()
-
         return panel
 
-    def _build_hex_footer(self):
-        """Build the hex dump footer as a clean monospace table."""
-        c = self._colors
-        frame = QFrame()
-        frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['surface_alt']};
-                border-top: 1px solid {c['border']};
-            }}
-        """)
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(10, 6, 10, 8)
-        layout.setSpacing(4)
-
-        title = QLabel("Raw Hex")
-        title.setStyleSheet(f"font-size: 10px; font-weight: 600; color: {c['text_dim']};")
-        layout.addWidget(title)
-
-        # TX hex
-        tx_line = QLabel(f"TX:  {self.tx_decoded.get('raw_hex', '(none)')}")
-        tx_line.setStyleSheet(f"""
-            color: {c['text_secondary']};
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 10px;
-        """)
-        layout.addWidget(tx_line)
-
-        # RX hex
-        rx_line = QLabel(f"RX:  {self.rx_decoded.get('raw_hex', '(none)')}")
-        rx_line.setStyleSheet(f"""
-            color: {c['text_secondary']};
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 10px;
-        """)
-        layout.addWidget(rx_line)
-
-        return frame
-
-    def _position_popup(self, parent):
-        """Position the popup near the bottom-right of the parent window."""
-        if parent is None:
-            self.move(100, 100)
+    def update_from_row(self, table, row, transport="tcp"):
+        """Decode and display the TX/RX frames for the given raw data table row."""
+        if table is None or row < 0 or row >= table.rowCount():
             return
+        self._transport = transport
+        self._transport_label.setText(f"({transport.upper()})")
 
-        geo = parent.geometry()
-        popup_w = min(600, geo.width() // 2)
-        popup_h = 360
+        tx_text = table.item(row, 4).text() if row < table.columnCount() else ""
+        rx_text = table.item(row, 5).text() if row < table.columnCount() else ""
 
-        x = geo.right() - popup_w - 16
-        y = geo.bottom() - popup_h - 80
-        screen = parent.screen()
-        if screen is not None:
-            sg = screen.availableGeometry()
-            x = max(sg.left(), min(x, sg.right() - popup_w))
-            y = max(sg.top(), min(y, sg.bottom() - popup_h))
+        tx_bytes = self._parse_hex_bytes(tx_text) if tx_text else None
+        rx_bytes = self._parse_hex_bytes(rx_text) if rx_text else None
 
-        self.setGeometry(x, y, popup_w, popup_h)
+        tx_decoded = _decode_modbus_frame(tx_bytes, transport)
+        rx_decoded = _decode_modbus_frame(rx_bytes, transport)
 
-    def closeEvent(self, event):
-        """Clean up app-level event filter when closed and notify the owner."""
-        app = QApplication.instance()
-        if app is not None and hasattr(self, '_outside_filter'):
-            try:
-                app.removeEventFilter(self._outside_filter)
-            except Exception:
-                pass
-        self.closed.emit()
-        super().closeEvent(event)
+        self._tx_panel = self._build_table_panel("TX", tx_decoded)
+        self._rx_panel = self._build_table_panel("RX", rx_decoded)
 
-    def keyPressEvent(self, event):
-        """Close on Escape."""
-        if event.key() == Qt.Key_Escape:
-            self.close()
-        else:
-            super().keyPressEvent(event)
+        # Rebuild the split layout
+        old_split = self._split
+        new_split = QHBoxLayout()
+        new_split.setSpacing(0)
+        new_split.addWidget(self._tx_panel)
+        div = QFrame()
+        div.setFrameShape(QFrame.VLine)
+        div.setFrameShadow(QFrame.Sunken)
+        div.setStyleSheet(f"background-color: {self._colors['border']};")
+        new_split.addWidget(div)
+        new_split.addWidget(self._rx_panel)
+
+        self._body.setLayout(new_split)
+
+        # Update hex footer
+        tx_hex = tx_decoded.get("raw_hex", "") or "(none)"
+        rx_hex = rx_decoded.get("raw_hex", "") or "(none)"
+        self._hex_tx.setText(f"TX:  {tx_hex}")
+        self._hex_rx.setText(f"RX:  {rx_hex}")
+
+        self._placeholder.setVisible(False)
+        self._body.setVisible(True)
+        self._hex_footer.setVisible(True)
+
+    @staticmethod
+    def _parse_hex_bytes(text):
+        if not text:
+            return None
+        cleaned = text.strip().replace(" ", "").replace("-", "")
+        if len(cleaned) < 2 or len(cleaned) % 2 != 0:
+            return None
+        try:
+            return bytes.fromhex(cleaned)
+        except ValueError:
+            return None
+
+    def clear(self):
+        """Clear the panel back to placeholder state."""
+        self._tx_panel = self._build_empty_panel("TX")
+        self._rx_panel = self._build_empty_panel("RX")
+        old_split = self._split
+        new_split = QHBoxLayout()
+        new_split.setSpacing(0)
+        new_split.addWidget(self._tx_panel)
+        div = QFrame()
+        div.setFrameShape(QFrame.VLine)
+        div.setFrameShadow(QFrame.Sunken)
+        div.setStyleSheet(f"background-color: {self._colors['border']};")
+        new_split.addWidget(div)
+        new_split.addWidget(self._rx_panel)
+        self._body.setLayout(new_split)
+
+        self._transport_label.setText("(—)")
+        self._hex_tx.setText("TX:  —")
+        self._hex_rx.setText("RX:  —")
+        self._placeholder.setVisible(True)
+        self._body.setVisible(False)
+        self._hex_footer.setVisible(False)
+
+
+from PySide6.QtCore import Qt
