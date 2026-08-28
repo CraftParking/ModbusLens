@@ -6,10 +6,11 @@ RTU, LRC for serial ASCII) side by side so the user can see exactly what was on 
 wire: unit ID, function code, address, data bytes, CRC/LRC, and exception codes.
 """
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication, QTableWidget,
+    QTableWidgetItem, QHeaderView,
 )
 from PySide6.QtCore import Qt, Signal, QEvent, QObject
-from PySide6.QtGui import QColor, QMouseEvent
+from PySide6.QtGui import QColor, QMouseEvent, QFont
 
 from modbus_meta import FUNCTION_NAMES
 
@@ -88,10 +89,10 @@ def _decode_tcp(raw, result):
     unit_id = raw[6]
 
     result["fields"] = [
-        ("Transaction ID", f"{transaction_id} ({transaction_id & 0xFFFF:04X})"),
-        ("Protocol ID", f"{protocol_id} (0x{protocol_id:04X})"),
-        ("Length", f"{length} bytes (Unit + PDU)"),
-        ("Unit ID", f"{unit_id} (0x{unit_id:02X})"),
+        ("Transaction ID", f"{transaction_id}"),
+        ("Protocol ID", f"{protocol_id}"),
+        ("Length", f"{length}"),
+        ("Unit ID", f"{unit_id}"),
     ]
 
     pdu = raw[7:]
@@ -112,8 +113,8 @@ def _decode_rtu(raw, result):
     crc_lo, crc_hi = raw[-2], raw[-1]
 
     result["fields"] = [
-        ("Unit ID", f"{unit_id} (0x{unit_id:02X})"),
-        ("CRC", f"{crc_hi:02X}{crc_lo:02X} (0x{crc_hi:02X}{crc_lo:02X})"),
+        ("Unit ID", f"{unit_id}"),
+        ("CRC", f"{crc_hi:02X}{crc_lo:02X}"),
     ]
     result["pdu_hex"] = pdu.hex(" ").upper() if pdu else ""
     _decode_pdu(pdu, result)
@@ -124,7 +125,6 @@ def _decode_ascii(raw, result):
     pymodbus's trace_packet emits the raw ASCII string bytes, not decoded characters."""
     result["direction"] = "ASCII"
 
-    # Decode the ASCII representation to get the logical bytes
     try:
         text = raw.decode("ascii").strip()
     except UnicodeDecodeError:
@@ -137,14 +137,12 @@ def _decode_ascii(raw, result):
         result["error"] = "Missing leading ':'"
         return
 
-    inner = text[1:]  # strip leading colon
+    inner = text[1:]
     if len(inner) < 6:
         result["success"] = False
         result["error"] = f"Too short for ASCII ({len(inner)} chars, need >= 6)"
         return
 
-    # The last 4 chars are LRC (2 hex chars) + CR + LF (or just LRC if stripped)
-    # Strip trailing CR/LF if present
     inner = inner.rstrip("\r\n")
     if len(inner) < 4:
         result["success"] = False
@@ -170,8 +168,8 @@ def _decode_ascii(raw, result):
         return
 
     result["fields"] = [
-        ("Unit ID", f"{unit_id} (0x{unit_id:02X})"),
-        ("LRC", f"{lrc_str.upper()} (0x{int(lrc_str, 16):02X})"),
+        ("Unit ID", f"{unit_id}"),
+        ("LRC", lrc_str.upper()),
     ]
     result["pdu_hex"] = pdu_bytes.hex(" ").upper() if pdu_bytes else ""
     _decode_pdu(pdu_bytes, result)
@@ -190,9 +188,9 @@ def _decode_pdu(pdu, result):
 
     fc_name = FUNCTION_NAMES.get(normal_fc, f"FC 0x{normal_fc:02X}")
     if is_exception:
-        fc_display = f"0x{fc_byte:02X} ({fc_name}, Exception)"
+        fc_display = f"{fc_name} (Exception)"
     else:
-        fc_display = f"0x{fc_byte:02X} ({fc_name})"
+        fc_display = fc_name
 
     data = pdu[1:]
 
@@ -202,65 +200,13 @@ def _decode_pdu(pdu, result):
         exc_code = data[0]
         exc_name = _EXCEPTION_NAMES.get(exc_code, f"Exception 0x{exc_code:02X}")
         result["exception_code"] = exc_code
-        result["fields"].append(("Exception", f"0x{exc_code:02X} — {exc_name}"))
+        result["fields"].append(("Exception", exc_name))
         result["success"] = False
         result["error"] = exc_name
     elif data:
         result["fields"].append(("Data", data.hex(" ").upper()))
     else:
         result["fields"].append(("Data", "(none)"))
-
-
-def _make_table_row(colors, label, value, row_index):
-    """Create a compact table-style label/value row, spreadsheet look."""
-    c = colors
-    row = QHBoxLayout()
-    row.setContentsMargins(0, 0, 0, 0)
-    row.setSpacing(6)
-
-    lbl = QLabel(label)
-    lbl.setStyleSheet(f"color: {c['text_dim']}; font-size: 10px; font-weight: 500;")
-    lbl.setMinimumWidth(90)
-
-    val = QLabel(value)
-    val.setStyleSheet(f"color: {c['text']}; font-size: 10px; font-family: 'Consolas', 'Monaco', monospace;")
-    val.setWordWrap(False)
-
-    row.addWidget(lbl)
-    row.addWidget(val)
-    row.addStretch()
-    return row
-
-
-def _make_hex_dump(colors, hex_str, label="Hex Dump"):
-    """Create a hex dump footer showing the raw frame bytes."""
-    group = QFrame()
-    group.setStyleSheet(f"""
-        QFrame {{
-            background-color: {colors['surface_alt']};
-            border: 1px solid {colors['border']};
-            border-radius: 3px;
-        }}
-    """)
-    layout = QVBoxLayout(group)
-    layout.setContentsMargins(6, 4, 6, 4)
-    layout.setSpacing(2)
-
-    header = QLabel(f"{label}")
-    header.setStyleSheet(f"color: {colors['text_dim']}; font-size: 10px; font-weight: 600;")
-    layout.addWidget(header)
-
-    dump = QLabel(hex_str if hex_str else "(empty)")
-    dump.setStyleSheet(f"""
-        color: {colors['text_secondary']};
-        font-family: 'Consolas', 'Monaco', monospace;
-        font-size: 11px;
-        padding: 2px 0;
-    """)
-    dump.setWordWrap(True)
-    layout.addWidget(dump)
-
-    return group
 
 
 class _OutsideClickFilter(QObject):
@@ -291,11 +237,10 @@ class FrameViewerDialog(QDialog):
         self.transport = transport
         self.row_index = row_index
 
-        # Store decoded data for later reference
         self.tx_decoded = _decode_modbus_frame(tx_bytes, transport)
         self.rx_decoded = _decode_modbus_frame(rx_bytes, transport)
 
-        # Window flags: no title bar, stays on top, tool window so it doesn't clutter the taskbar
+        # Solid bordered window, no title bar, stays on top
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
 
@@ -305,37 +250,34 @@ class FrameViewerDialog(QDialog):
         self._setup_ui()
         self._position_popup(parent)
 
-        # Install app-level event filter to close when clicking outside
         self._outside_filter = _OutsideClickFilter(self)
         QApplication.instance().installEventFilter(self._outside_filter)
 
     def _setup_ui(self):
-        """Build the TX | RX panel layout — clean spreadsheet-style card."""
+        """Build the popup: header bar + TX/RX table panels + hex footer."""
         c = self._colors
+
+        # Main border around the entire dialog
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {c['surface']};
-                border: 1px solid {c['border']};
+                border: 2px solid #000000;
             }}
         """)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header bar — thin strip matching the app's table header style
+        # --- Header bar ---
         header = QFrame()
-        header.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['header_bg']};
-                border-bottom: 1px solid {c['border']};
-            }}
-        """)
+        header.setStyleSheet(f"background-color: {c['header_bg']}; border-bottom: 1px solid {c['border']};")
         h_layout = QHBoxLayout(header)
-        h_layout.setContentsMargins(10, 5, 10, 5)
-        h_layout.setSpacing(8)
+        h_layout.setContentsMargins(10, 6, 10, 6)
+        h_layout.setSpacing(10)
 
         title = QLabel("Frame Viewer")
-        title.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {c['heading']};")
+        title.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {c['heading']};")
         h_layout.addWidget(title)
 
         badge = QLabel(self.transport.upper())
@@ -343,97 +285,165 @@ class FrameViewerDialog(QDialog):
             background-color: {c['surface']};
             color: {c['text_dim']};
             border: 1px solid {c['border']};
-            padding: 1px 6px;
-            font-size: 9px;
+            padding: 1px 8px;
+            font-size: 10px;
             font-weight: 600;
         """)
         h_layout.addWidget(badge)
-
         h_layout.addStretch()
 
         close_btn = QLabel("\u2715")
-        close_btn.setStyleSheet(f"font-size: 11px; color: {c['text_dim']};")
+        close_btn.setStyleSheet(f"font-size: 12px; color: {c['text_dim']};")
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.mousePressEvent = lambda e: self.close()
         h_layout.addWidget(close_btn)
 
         layout.addWidget(header)
 
-        # TX | RX split — two side-by-side table-style panels
+        # --- TX | RX table panels ---
         split = QHBoxLayout()
         split.setSpacing(0)
 
-        tx_panel = self._build_panel("TX", self.tx_decoded)
-        rx_panel = self._build_panel("RX", self.rx_decoded)
+        tx_panel = self._build_table_panel("TX", self.tx_decoded)
+        rx_panel = self._build_table_panel("RX", self.rx_decoded)
 
         split.addWidget(tx_panel, 1)
-        # Divider line between panels
-        divider = QFrame()
-        divider.setFrameShape(QFrame.VLine)
-        divider.setFrameShadow(QFrame.Sunken)
-        divider.setStyleSheet(f"color: {c['border']};")
-        split.addWidget(divider)
+        # Divider
+        div = QFrame()
+        div.setFrameShape(QFrame.VLine)
+        div.setFrameShadow(QFrame.Sunken)
+        div.setStyleSheet(f"background-color: {c['border']};")
+        split.addWidget(div)
         split.addWidget(rx_panel, 1)
 
         body = QFrame()
         body.setStyleSheet(f"background-color: {c['surface']};")
         body.setLayout(split)
-        layout.addWidget(body)
+        layout.addWidget(body, 1)
 
-        self.setMinimumWidth(420)
-        self.setMaximumWidth(680)
+        # --- Hex dump footer ---
+        footer = self._build_hex_footer()
+        layout.addWidget(footer)
 
-    def _build_panel(self, direction, decoded):
-        """Build a single TX or RX panel as a clean table, spreadsheet-style."""
+        self.setMinimumSize(500, 340)
+
+    def _build_table_panel(self, direction, decoded):
+        """Build a TX or RX panel as a clean table widget."""
         c = self._colors
         panel = QFrame()
-        panel.setStyleSheet(f"""
-            QFrame {{
-                background-color: transparent;
-                border: none;
-            }}
-        """)
+        panel.setStyleSheet(f"background-color: {c['surface']};")
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(0)
 
-        # Direction label as a thin header row
-        dir_label = QLabel(f"{direction}")
+        # Direction label
+        dir_label = QLabel(direction)
         dir_label.setStyleSheet(f"""
-            font-size: 10px;
+            font-size: 11px;
             font-weight: 600;
             color: {c['text_dim']};
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding-bottom: 4px;
+            padding: 0 0 4px 0;
             border-bottom: 1px solid {c['border_light']};
         """)
         layout.addWidget(dir_label)
 
-        # Status row — subtle, not flashy
+        # Status row
         if decoded.get("error"):
             status = QLabel(f"  {decoded['error']}")
-            status.setStyleSheet(f"color: {c['log_error']}; font-size: 10px; padding: 2px 0;")
+            status.setStyleSheet(f"color: {c['log_error']}; font-size: 10px; padding: 3px 0;")
             layout.addWidget(status)
         elif decoded["success"] and direction == "RX":
             status = QLabel("  OK")
-            status.setStyleSheet(f"color: {c['log_connect']}; font-size: 10px; padding: 2px 0;")
+            status.setStyleSheet(f"color: {c['log_connect']}; font-size: 10px; padding: 3px 0;")
             layout.addWidget(status)
 
-        # Field rows as a compact table
-        for i, (label, value) in enumerate(decoded.get("fields", [])):
-            row = _make_table_row(self._colors, label, value, i)
-            layout.addLayout(row)
+        # Table for decoded fields
+        table = QTableWidget(len(decoded.get("fields", [])), 2)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.verticalHeader().setVisible(False)
+        table.setHorizontalHeaderLabels(["Field", "Value"])
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {c['surface']};
+                color: {c['text']};
+                border: none;
+                gridline-color: {c['border_light']};
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 11px;
+                padding: 2px 0;
+            }}
+            QHeaderView::section {{
+                background-color: {c['header_bg']};
+                color: {c['text']};
+                border: none;
+                border-bottom: 1px solid {c['border']};
+                padding: 3px 6px;
+                font-size: 10px;
+                font-weight: 600;
+            }}
+            QTableWidget::item {{
+                padding: 4px 6px;
+                border-bottom: 1px solid {c['border_light']};
+            }}
+        """)
 
+        for i, (label, value) in enumerate(decoded.get("fields", [])):
+            lbl = QTableWidgetItem(label)
+            lbl.setForeground(QColor(c['text_dim']))
+            lbl.setFont(QFont('Consolas', 10))
+            val = QTableWidgetItem(value)
+            val.setFont(QFont('Consolas', 10))
+            if label == "Function Code" and "Exception" in value:
+                val.setForeground(QColor(c['log_error']))
+            table.setItem(i, 0, lbl)
+            table.setItem(i, 1, val)
+
+        table.verticalHeader().setDefaultSectionSize(26)
+        layout.addWidget(table)
         layout.addStretch()
 
-        # Hex dump footer
-        if decoded.get("pdu_hex") or decoded.get("raw_hex"):
-            hex_str = decoded.get("pdu_hex", "") or decoded.get("raw_hex", "")
-            dump = _make_hex_dump(self._colors, hex_str, f"HEX — {direction}")
-            layout.addWidget(dump)
-
         return panel
+
+    def _build_hex_footer(self):
+        """Build the hex dump footer as a clean monospace table."""
+        c = self._colors
+        frame = QFrame()
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['surface_alt']};
+                border-top: 1px solid {c['border']};
+            }}
+        """)
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(10, 6, 10, 8)
+        layout.setSpacing(4)
+
+        title = QLabel("Raw Hex")
+        title.setStyleSheet(f"font-size: 10px; font-weight: 600; color: {c['text_dim']};")
+        layout.addWidget(title)
+
+        # TX hex
+        tx_line = QLabel(f"TX:  {self.tx_decoded.get('raw_hex', '(none)')}")
+        tx_line.setStyleSheet(f"""
+            color: {c['text_secondary']};
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 10px;
+        """)
+        layout.addWidget(tx_line)
+
+        # RX hex
+        rx_line = QLabel(f"RX:  {self.rx_decoded.get('raw_hex', '(none)')}")
+        rx_line.setStyleSheet(f"""
+            color: {c['text_secondary']};
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 10px;
+        """)
+        layout.addWidget(rx_line)
+
+        return frame
 
     def _position_popup(self, parent):
         """Position the popup near the bottom-right of the parent window."""
@@ -442,12 +452,11 @@ class FrameViewerDialog(QDialog):
             return
 
         geo = parent.geometry()
-        popup_w = min(560, geo.width() // 2)
-        popup_h = 320
+        popup_w = min(600, geo.width() // 2)
+        popup_h = 360
 
         x = geo.right() - popup_w - 16
         y = geo.bottom() - popup_h - 80
-        # Keep within screen bounds
         screen = parent.screen()
         if screen is not None:
             sg = screen.availableGeometry()
