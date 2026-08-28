@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox,
 )
 from PySide6.QtGui import QColor, QShortcut, QKeySequence
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from theme import apply_dropdown_delegate
 from zoom import install_ctrl_wheel_zoom
@@ -126,7 +126,9 @@ class DiagnosticsDialogs:
             table.setStyleSheet(self._raw_table_style())
             table.setContextMenuPolicy(Qt.CustomContextMenu)
             table.customContextMenuRequested.connect(self._show_raw_data_context_menu)
-            table.itemClicked.connect(self._on_raw_data_row_clicked)
+            # currentCellChanged (not itemClicked) so arrow-key navigation updates the
+            # Frame Viewer too, not just mouse clicks.
+            table.currentCellChanged.connect(self._on_raw_data_selection_changed)
             # Ctrl+C copies the current selection as text, same as the context menu's
             # "Copy Row(s) as Text" -- WidgetWithChildrenShortcut since the table itself
             # (not a child editor) normally holds focus here, unlike the Tags table.
@@ -247,6 +249,14 @@ class DiagnosticsDialogs:
         button_layout.addWidget(export_btn)
 
         button_layout.addStretch()
+
+        # Lets the user collapse the Frame Viewer to give the table the full tab height
+        # when they just want to scan through transactions.
+        self.toggle_frame_viewer_btn = QPushButton("Hide Frame Viewer")
+        self.toggle_frame_viewer_btn.setStyleSheet(self.parent._get_button_style())
+        self.toggle_frame_viewer_btn.clicked.connect(self._toggle_frame_viewer)
+        button_layout.addWidget(self.toggle_frame_viewer_btn)
+
         layout.addLayout(button_layout)
 
         # Frame Viewer panel — below the buttons, shows decoded TX/RX frames
@@ -355,17 +365,40 @@ class DiagnosticsDialogs:
         elif chosen == copy_bytes_action:
             self._copy_raw_data_rows(table, rows, as_bytes=True)
 
-    def _on_raw_data_row_clicked(self, item):
-        """Update the integrated frame viewer when a row in the Raw Data table is clicked."""
+    def _on_raw_data_selection_changed(self, current_row, current_column, previous_row, previous_column):
+        """Update the integrated frame viewer whenever the current row changes -- via a
+        mouse click or via arrow-key/Home/End/PageUp/PageDown keyboard navigation."""
+        if current_row < 0:
+            return
         table = getattr(self.parent, 'raw_data_table', None)
         if table is None:
             return
-        row = item.row()
+        row = current_row
         transport = "tcp"
         if hasattr(self.parent, 'modbus') and self.parent.modbus is not None:
             if self.parent.modbus.mode == "serial":
                 transport = "ascii" if self.parent.modbus.serial_framer == "ascii" else "rtu"
+        # Update the Frame Viewer first -- when it's visible, its TX/RX field tables
+        # change height with every row (different frames decode to different field
+        # counts), which resizes the table's viewport on the very next layout pass.
+        # Scrolling before that resize just gets overridden by it, which is why
+        # autoscroll looked like it "did nothing" whenever the panel was shown.
         self.frame_viewer.update_from_row(table, row, transport)
+
+        item = table.item(row, 0)
+        if item is not None:
+            # Deferred to let the layout pass triggered by the frame viewer's new
+            # content actually finish before we scroll, instead of scrolling against
+            # stale geometry.
+            QTimer.singleShot(0, lambda item=item: table.scrollToItem(item))
+
+    def _toggle_frame_viewer(self):
+        """Collapse/expand the Frame Viewer panel so the user can see the full Raw Data
+        table without it, without losing their place -- the last decoded frame is kept,
+        just hidden, so re-showing it doesn't require re-selecting a row."""
+        visible = not self.frame_viewer.isVisible()
+        self.frame_viewer.setVisible(visible)
+        self.toggle_frame_viewer_btn.setText("Hide Frame Viewer" if visible else "Show Frame Viewer")
 
     def _copy_selected_raw_data_rows(self, table):
         rows = sorted({index.row() for index in table.selectedIndexes()})
@@ -434,8 +467,8 @@ class DiagnosticsDialogs:
 
     def clear_diagnostics_raw_data(self):
         """Clear raw data."""
-        if hasattr(self.parent, 'frame_viewer_panel'):
-            self.parent.frame_viewer_panel.clear()
+        if hasattr(self, 'frame_viewer'):
+            self.frame_viewer.clear()
         if hasattr(self.parent, 'raw_data_table'):
             self.parent.raw_data_table.setRowCount(0)
 

@@ -6,11 +6,11 @@ so the user can see exactly what was on the wire: unit ID, function code, data
 bytes, CRC/LRC, and exception codes.
 """
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QFrame, QTableWidget,
+    QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QWidget, QSizePolicy,
 )
+from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QColor
 
 from modbus_meta import FUNCTION_NAMES
 
@@ -25,6 +25,8 @@ _EXCEPTION_NAMES = {
     0x0A: "Gateway Path Unavailable",
     0x0B: "Gateway Target Device Failed to Respond",
 }
+
+PLACEHOLDER_TEXT = "Click any row in the Raw Data table above to view its decoded TX/RX frames."
 
 
 def _decode_modbus_frame(data_bytes, transport):
@@ -162,143 +164,105 @@ def _decode_pdu(pdu, result):
 
 class FrameViewerPanel(QWidget):
     """Integrated panel shown below the Raw Data table, decoding the selected row's
-    TX and RX Modbus frames into clean side-by-side table panels."""
+    TX and RX Modbus frames into clean side-by-side table panels.
+
+    Styled as a QGroupBox (like "Monitoring Controls", "Tags", etc. elsewhere in the
+    app) rather than hand-rolled QFrames, so it matches the rest of the UI instead of
+    looking like a bolted-on widget."""
 
     def __init__(self, parent):
         super().__init__(parent)
+        self._main_window = parent
         self._colors = parent._colors() if hasattr(parent, "_colors") else {}
         self._transport = "tcp"
         self._setup_ui()
 
-        self.setMinimumHeight(200)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def _setup_ui(self):
         c = self._colors
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 6, 0, 0)
-        layout.setSpacing(0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 6, 0, 0)
 
-        # Section header
-        header = QFrame()
-        header.setStyleSheet(f"background-color: {c['header_bg']}; border-top: 1px solid {c['border']};")
-        h_layout = QHBoxLayout(header)
-        h_layout.setContentsMargins(10, 5, 10, 5)
-        h_layout.setSpacing(8)
-        title = QLabel("Frame Viewer")
-        title.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {c['heading']};")
-        h_layout.addWidget(title)
-        self._transport_label = QLabel("(—)")
-        self._transport_label.setStyleSheet(f"font-size: 10px; color: {c['text_dim']};")
-        h_layout.addWidget(self._transport_label)
-        h_layout.addStretch()
-        layout.addWidget(header)
+        self._group = QGroupBox("Frame Viewer")
+        if hasattr(self._main_window, "_get_groupbox_style"):
+            self._group.setStyleSheet(self._main_window._get_groupbox_style())
+        outer.addWidget(self._group)
 
-        # Placeholder text
-        self._placeholder = QLabel(
-            "Click any row in the Raw Data table above to view the decoded Modbus frames."
+        layout = QVBoxLayout(self._group)
+        layout.setContentsMargins(15, 20, 15, 15)
+        layout.setSpacing(8)
+
+        self._status_label = QLabel(PLACEHOLDER_TEXT)
+        self._status_label.setStyleSheet(f"color: {c['text_dim']}; font-size: 11px;")
+        self._status_label.setWordWrap(True)
+        layout.addWidget(self._status_label)
+
+        # TX | RX side by side. Each side is a persistent container with its own
+        # layout that gets cleared and repopulated on every row click -- never
+        # replaced -- since Qt silently refuses a second setLayout() on a widget
+        # that already has one.
+        split = QHBoxLayout()
+        split.setSpacing(15)
+        self._tx_container, self._tx_layout = self._build_side_container()
+        self._rx_container, self._rx_layout = self._build_side_container()
+        split.addWidget(self._tx_container, 1)
+        split.addWidget(self._rx_container, 1)
+        layout.addLayout(split)
+        self._tx_container.setVisible(False)
+        self._rx_container.setVisible(False)
+
+        # Raw hex footer
+        self._hex_tx = QLabel("")
+        self._hex_tx.setStyleSheet(
+            f"color: {c['text_secondary']}; font-family: 'Consolas', 'Monaco', monospace; font-size: 10px;"
         )
-        self._placeholder.setStyleSheet(f"""
-            color: {c['text_dim']};
-            font-size: 11px;
-            padding: 20px;
-            text-align: center;
-        """)
-        self._placeholder.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self._placeholder)
+        self._hex_tx.setWordWrap(True)
+        self._hex_rx = QLabel("")
+        self._hex_rx.setStyleSheet(
+            f"color: {c['text_secondary']}; font-family: 'Consolas', 'Monaco', monospace; font-size: 10px;"
+        )
+        self._hex_rx.setWordWrap(True)
+        self._hex_tx.setVisible(False)
+        self._hex_rx.setVisible(False)
+        layout.addWidget(self._hex_tx)
+        layout.addWidget(self._hex_rx)
 
-        # TX | RX split (hidden until a row is selected)
-        self._split = QHBoxLayout()
-        self._split.setSpacing(0)
-        self._tx_panel = self._build_empty_panel("TX")
-        self._rx_panel = self._build_empty_panel("RX")
-        self._split.addWidget(self._tx_panel)
-        div = QFrame()
-        div.setFrameShape(QFrame.VLine)
-        div.setFrameShadow(QFrame.Sunken)
-        div.setStyleSheet(f"background-color: {c['border']};")
-        self._split.addWidget(div)
-        self._split.addWidget(self._rx_panel)
+    def _build_side_container(self):
+        container = QWidget()
+        inner = QVBoxLayout(container)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(4)
+        return container, inner
 
-        self._body = QFrame()
-        self._body.setStyleSheet(f"background-color: {c['surface']};")
-        self._body.setLayout(self._split)
-        self._body.setVisible(False)
-        layout.addWidget(self._body)
+    @staticmethod
+    def _clear_layout(layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
 
-        # Hex footer
-        self._hex_footer = QFrame()
-        self._hex_footer.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['surface_alt']};
-                border-top: 1px solid {c['border']};
-            }}
-        """)
-        hf_layout = QVBoxLayout(self._hex_footer)
-        hf_layout.setContentsMargins(10, 6, 10, 8)
-        hf_layout.setSpacing(3)
-        self._hex_title = QLabel("Raw Hex")
-        self._hex_title.setStyleSheet(f"font-size: 10px; font-weight: 600; color: {c['text_dim']};")
-        hf_layout.addWidget(self._hex_title)
-        self._hex_tx = QLabel("TX:  —")
-        self._hex_tx.setStyleSheet(f"color: {c['text_secondary']}; font-family: 'Consolas', 'Monaco', monospace; font-size: 10px;")
-        hf_layout.addWidget(self._hex_tx)
-        self._hex_rx = QLabel("RX:  —")
-        self._hex_rx.setStyleSheet(f"color: {c['text_secondary']}; font-family: 'Consolas', 'Monaco', monospace; font-size: 10px;")
-        hf_layout.addWidget(self._hex_rx)
-        self._hex_footer.setVisible(False)
-        layout.addWidget(self._hex_footer)
-
-    def _build_empty_panel(self, direction):
+    def _populate_side(self, layout, direction, decoded):
         c = self._colors
-        panel = QFrame()
-        panel.setStyleSheet(f"background-color: {c['surface']};")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(0)
-        dir_label = QLabel(direction)
-        dir_label.setStyleSheet(f"""
-            font-size: 11px;
-            font-weight: 600;
-            color: {c['text_dim']};
-            padding: 0 0 4px 0;
-            border-bottom: 1px solid {c['border_light']};
-        """)
-        layout.addWidget(dir_label)
-        placeholder = QLabel("—")
-        placeholder.setStyleSheet(f"color: {c['text_dim']}; font-size: 11px; padding: 10px 0;")
-        layout.addWidget(placeholder)
-        layout.addStretch()
-        return panel
-
-    def _build_table_panel(self, direction, decoded):
-        c = self._colors
-        panel = QFrame()
-        panel.setStyleSheet(f"background-color: {c['surface']};")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(0)
 
         dir_label = QLabel(direction)
-        dir_label.setStyleSheet(f"""
-            font-size: 11px;
-            font-weight: 600;
-            color: {c['text_dim']};
-            padding: 0 0 4px 0;
-            border-bottom: 1px solid {c['border_light']};
-        """)
+        dir_label.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {c['heading']};")
         layout.addWidget(dir_label)
 
         if decoded.get("error"):
-            status = QLabel(f"  {decoded['error']}")
-            status.setStyleSheet(f"color: {c['log_error']}; font-size: 10px; padding: 3px 0;")
+            status = QLabel(decoded["error"])
+            status.setStyleSheet(f"color: {c['log_error']}; font-size: 10px;")
+            status.setWordWrap(True)
             layout.addWidget(status)
         elif decoded["success"] and direction == "RX":
-            status = QLabel("  OK")
-            status.setStyleSheet(f"color: {c['log_connect']}; font-size: 10px; padding: 3px 0;")
+            status = QLabel("OK")
+            status.setStyleSheet(f"color: {c['log_connect']}; font-size: 10px;")
             layout.addWidget(status)
 
-        table = QTableWidget(len(decoded.get("fields", [])), 2)
+        fields = decoded.get("fields", [])
+        table = QTableWidget(len(fields), 2)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -309,52 +273,44 @@ class FrameViewerPanel(QWidget):
             QTableWidget {{
                 background-color: {c['surface']};
                 color: {c['text']};
-                border: none;
+                border: 1px solid {c['border']};
                 gridline-color: {c['border_light']};
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 11px;
-                padding: 2px 0;
             }}
             QHeaderView::section {{
                 background-color: {c['header_bg']};
                 color: {c['text']};
-                border: none;
-                border-bottom: 1px solid {c['border']};
+                border: 1px solid {c['border']};
                 padding: 3px 6px;
                 font-size: 10px;
                 font-weight: 600;
             }}
-            QTableWidget::item {{
-                padding: 4px 6px;
-                border-bottom: 1px solid {c['border_light']};
-            }}
         """)
 
-        for i, (label, value) in enumerate(decoded.get("fields", [])):
+        for i, (label, value) in enumerate(fields):
             lbl = QTableWidgetItem(label)
             lbl.setForeground(QColor(c['text_dim']))
-            lbl.setFont(QFont('Consolas', 10))
             val = QTableWidgetItem(value)
-            val.setFont(QFont('Consolas', 10))
             if label == "Function Code" and "Exception" in value:
                 val.setForeground(QColor(c['log_error']))
             table.setItem(i, 0, lbl)
             table.setItem(i, 1, val)
 
-        table.verticalHeader().setDefaultSectionSize(26)
+        table.verticalHeader().setDefaultSectionSize(24)
+        row_height = table.verticalHeader().defaultSectionSize()
+        table.setFixedHeight(table.horizontalHeader().height() + max(len(fields), 1) * row_height + 4)
         layout.addWidget(table)
-        layout.addStretch()
-        return panel
 
     def update_from_row(self, table, row, transport="tcp"):
         """Decode and display the TX/RX frames for the given raw data table row."""
         if table is None or row < 0 or row >= table.rowCount():
             return
         self._transport = transport
-        self._transport_label.setText(f"({transport.upper()})")
+        self._status_label.setText(f"Transport: {transport.upper()}")
 
-        tx_text = table.item(row, 4).text() if row < table.columnCount() else ""
-        rx_text = table.item(row, 5).text() if row < table.columnCount() else ""
+        tx_text = table.item(row, 4).text() if table.item(row, 4) else ""
+        rx_text = table.item(row, 5).text() if table.item(row, 5) else ""
 
         tx_bytes = self._parse_hex_bytes(tx_text) if tx_text else None
         rx_bytes = self._parse_hex_bytes(rx_text) if rx_text else None
@@ -362,32 +318,19 @@ class FrameViewerPanel(QWidget):
         tx_decoded = _decode_modbus_frame(tx_bytes, transport)
         rx_decoded = _decode_modbus_frame(rx_bytes, transport)
 
-        self._tx_panel = self._build_table_panel("TX", tx_decoded)
-        self._rx_panel = self._build_table_panel("RX", rx_decoded)
+        self._clear_layout(self._tx_layout)
+        self._clear_layout(self._rx_layout)
+        self._populate_side(self._tx_layout, "TX", tx_decoded)
+        self._populate_side(self._rx_layout, "RX", rx_decoded)
+        self._tx_container.setVisible(True)
+        self._rx_container.setVisible(True)
 
-        # Rebuild the split layout
-        old_split = self._split
-        new_split = QHBoxLayout()
-        new_split.setSpacing(0)
-        new_split.addWidget(self._tx_panel)
-        div = QFrame()
-        div.setFrameShape(QFrame.VLine)
-        div.setFrameShadow(QFrame.Sunken)
-        div.setStyleSheet(f"background-color: {self._colors['border']};")
-        new_split.addWidget(div)
-        new_split.addWidget(self._rx_panel)
-
-        self._body.setLayout(new_split)
-
-        # Update hex footer
         tx_hex = tx_decoded.get("raw_hex", "") or "(none)"
         rx_hex = rx_decoded.get("raw_hex", "") or "(none)"
         self._hex_tx.setText(f"TX:  {tx_hex}")
         self._hex_rx.setText(f"RX:  {rx_hex}")
-
-        self._placeholder.setVisible(False)
-        self._body.setVisible(True)
-        self._hex_footer.setVisible(True)
+        self._hex_tx.setVisible(True)
+        self._hex_rx.setVisible(True)
 
     @staticmethod
     def _parse_hex_bytes(text):
@@ -403,26 +346,10 @@ class FrameViewerPanel(QWidget):
 
     def clear(self):
         """Clear the panel back to placeholder state."""
-        self._tx_panel = self._build_empty_panel("TX")
-        self._rx_panel = self._build_empty_panel("RX")
-        old_split = self._split
-        new_split = QHBoxLayout()
-        new_split.setSpacing(0)
-        new_split.addWidget(self._tx_panel)
-        div = QFrame()
-        div.setFrameShape(QFrame.VLine)
-        div.setFrameShadow(QFrame.Sunken)
-        div.setStyleSheet(f"background-color: {self._colors['border']};")
-        new_split.addWidget(div)
-        new_split.addWidget(self._rx_panel)
-        self._body.setLayout(new_split)
-
-        self._transport_label.setText("(—)")
-        self._hex_tx.setText("TX:  —")
-        self._hex_rx.setText("RX:  —")
-        self._placeholder.setVisible(True)
-        self._body.setVisible(False)
-        self._hex_footer.setVisible(False)
-
-
-from PySide6.QtCore import Qt
+        self._clear_layout(self._tx_layout)
+        self._clear_layout(self._rx_layout)
+        self._tx_container.setVisible(False)
+        self._rx_container.setVisible(False)
+        self._hex_tx.setVisible(False)
+        self._hex_rx.setVisible(False)
+        self._status_label.setText(PLACEHOLDER_TEXT)
