@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 
 from theme import apply_dropdown_delegate
 from zoom import install_ctrl_wheel_zoom
+from diagnostics.frame_viewer import FrameViewerDialog
 
 MAX_RAW_DATA_ROWS = 1000  # oldest rows are dropped past this so the table can't grow unbounded
 
@@ -62,6 +63,8 @@ class DiagnosticsDialogs:
         self.logs_dialog = None
         self.filter_text = ""
         self.filter_status = "All"
+        self._frame_viewer = None
+        self._last_raw_row = -1
 
     def _log_text_style(self, font_px=DEFAULT_LOG_FONT_PX):
         c = self.parent._colors()
@@ -125,6 +128,7 @@ class DiagnosticsDialogs:
             table.setStyleSheet(self._raw_table_style())
             table.setContextMenuPolicy(Qt.CustomContextMenu)
             table.customContextMenuRequested.connect(self._show_raw_data_context_menu)
+            table.itemClicked.connect(self._on_raw_data_cell_clicked)
             # Ctrl+C copies the current selection as text, same as the context menu's
             # "Copy Row(s) as Text" -- WidgetWithChildrenShortcut since the table itself
             # (not a child editor) normally holds focus here, unlike the Tags table.
@@ -349,6 +353,58 @@ class DiagnosticsDialogs:
         elif chosen == copy_bytes_action:
             self._copy_raw_data_rows(table, rows, as_bytes=True)
 
+    def _on_raw_data_cell_clicked(self, item):
+        """When the user clicks any cell in the Raw Data table, show a floating popup
+        that decodes the TX and RX Modbus frames for that transaction."""
+        table = getattr(self.parent, 'raw_data_table', None)
+        if table is None:
+            return
+
+        row = item.row()
+        # Reuse the same popup for the same row; open a new one for a different row.
+        if self._frame_viewer is not None and self._last_raw_row == row:
+            return
+
+        self._close_frame_viewer()
+        self._last_raw_row = row
+
+        tx_text = table.item(row, 4).text() if row < table.columnCount() else ""
+        rx_text = table.item(row, 5).text() if row < table.columnCount() else ""
+        tx_bytes = self._parse_hex_bytes(tx_text) if tx_text else None
+        rx_bytes = self._parse_hex_bytes(rx_text) if rx_text else None
+
+        transport = "tcp"
+        if hasattr(self.parent, 'modbus') and self.parent.modbus is not None:
+            if self.parent.modbus.mode == "serial":
+                transport = "ascii" if self.parent.modbus.serial_framer == "ascii" else "rtu"
+
+        self._frame_viewer = FrameViewerDialog(
+            self.parent, tx_bytes, rx_bytes, transport, row,
+        )
+        self._frame_viewer.closed.connect(self._close_frame_viewer)
+        self._frame_viewer.show()
+
+    @staticmethod
+    def _parse_hex_bytes(text):
+        """Convert a space-separated hex string like '01 03 00 0A 00 01 6C 0B' back
+        to raw bytes, or return None if the input is blank or unparseable."""
+        if not text:
+            return None
+        cleaned = text.strip().replace(" ", "").replace("-", "")
+        if len(cleaned) < 2 or len(cleaned) % 2 != 0:
+            return None
+        try:
+            return bytes.fromhex(cleaned)
+        except ValueError:
+            return None
+
+    def _close_frame_viewer(self):
+        """Close and clean up the currently-open frame viewer popup, if any."""
+        if self._frame_viewer is not None:
+            self._frame_viewer.close()
+            self._frame_viewer = None
+            self._last_raw_row = -1
+
     def _copy_selected_raw_data_rows(self, table):
         rows = sorted({index.row() for index in table.selectedIndexes()})
         if not rows:
@@ -416,6 +472,7 @@ class DiagnosticsDialogs:
 
     def clear_diagnostics_raw_data(self):
         """Clear raw data."""
+        self._close_frame_viewer()
         if hasattr(self.parent, 'raw_data_table'):
             self.parent.raw_data_table.setRowCount(0)
 
