@@ -345,16 +345,20 @@ code, address, byte count, and (for serial) the CRC/LRC. RX is blank if the requ
 with no response at all.</li>
 <li><b>Status</b> - <span style="color:#2E7D32;">Success</span> or
 <span style="color:#C62828;">Failed</span>, color-coded the same way as the other logs.</li>
+<li><b>Exception</b> - the decoded Modbus exception description (e.g. "Illegal Data Address")
+when the device itself replied but refused the request. Left blank for a plain communications
+failure (timeout, no response at all), so you can tell "the device rejected this" apart from
+"nothing answered" at a glance instead of both just showing Failed.</li>
 <li><b>Latency (ms)</b> - how long that specific request took round-trip. A device that's
 technically working but degrading usually shows up here first, before it starts failing outright.</li>
 </ul>
 
 <h3>Filter</h3>
-<p>The text box filters by whatever's in the Operation or Value columns - a tag name (e.g.
-<code>pump</code>), an address, or a specific value. The dropdown next to it narrows to just
-<b>Success</b> or <b>Failed</b> rows. Both apply live as you type/select, and to new rows as they
-arrive - useful for watching one specific tag during a busy poll, or isolating every failure to
-see if they cluster around one address.</p>
+<p>The text box filters by whatever's in the Operation, Value, or Exception columns - a tag name
+(e.g. <code>pump</code>), an address, a specific value, or part of an exception message. The
+dropdown next to it narrows to just <b>Success</b> or <b>Failed</b> rows. Both apply live as you
+type/select, and to new rows as they arrive - useful for watching one specific tag during a busy
+poll, or isolating every failure to see if they cluster around one address.</p>
 
 <h3>Show Statistics</h3>
 <p>Opens a summary of the current connection's traffic: total requests, successful vs. failed
@@ -363,8 +367,32 @@ counts, exception responses, and average/min/max response times across everythin
 confirming a "slow" feeling is real and quantifying it.</p>
 
 <h3>Clear Data</h3>
-<p>Empties the table without affecting the connection or any other tab. Do this before
-reproducing an intermittent issue so the table only contains the run you care about.</p>
+<p>Empties the table (and the Frame Viewer panel below it) without affecting the connection or any
+other tab. Do this before reproducing an intermittent issue so the table only contains the run you
+care about.</p>
+
+<h3>Export CSV</h3>
+<p>Saves whatever rows are currently visible - i.e. respecting the text/status filter - to a CSV
+file, in the same column order as the table.</p>
+
+<h3>Right-click / Ctrl+C</h3>
+<p>Right-click a row (or a multi-selection of rows) for <b>Copy Row(s) as Text</b> - every column,
+tab-separated, ready to paste into a spreadsheet - or <b>Copy Row(s) as Hex Bytes (TX/RX)</b>,
+which copies just the literal wire bytes without the decoded columns in the way. <b>Ctrl+C</b> does
+the same as "Copy Row(s) as Text" on whatever's currently selected.</p>
+
+<h3>Frame Viewer</h3>
+<p>Below the table, decodes whichever transaction row is currently selected into its TX and RX
+Modbus frames side by side - not just the register values, but the actual frame structure: the
+MBAP header (Transaction ID, Protocol ID, Length, Unit ID) for TCP, or Unit ID plus CRC/LRC for
+RTU/ASCII, then the function code, data bytes, and any exception code, plus the raw hex for both
+directions along the bottom.</p>
+<p>Select a row by clicking it or by navigating with the arrow keys, Home/End, or Page Up/Page
+Down - the Frame Viewer updates immediately either way, and the table scrolls to keep the selected
+row visible even while new transactions keep arriving underneath you.</p>
+<p>The <b>Hide Frame Viewer</b> button (next to Export CSV) collapses the panel so the table gets
+the tab's full height when you just want to scan through transactions - click it again
+(<b>Show Frame Viewer</b>) to bring it back; the last decoded frame is still there, not cleared.</p>
 """),
 
     ("Trend", """

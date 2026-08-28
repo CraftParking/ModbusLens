@@ -163,10 +163,13 @@
 ### Raw Data
 - One row per Modbus transaction: time, operation, raw value in decimal and hex, Success/Failed status, and round-trip latency  
 - TX/RX Bytes - the literal bytes sent and received on the wire for that transaction (captured via pymodbus's trace hook), one level more raw than the decoded register values  
+- Exception column - the decoded Modbus exception (e.g. "Illegal Data Address") when the device itself refused the request, left blank for a plain communications timeout, so the two don't just blur into the same red Failed status  
 - Color-coded status (green success, red failure) at a glance, same coloring as the other logs  
 - Filter by tag name/address/value, and by Success/Failed status, live as new rows arrive  
 - Show Statistics - total requests, success/failure counts, average/min/max response times, and a failure-cause breakdown (Connection, Timeout, Device-returned Exception, Rejected locally, Other) across everything logged, not just what's currently visible  
+- Export CSV of whatever's currently visible (respects the active filter); right-click a row (or Ctrl+C) to copy selected rows as text or as raw TX/RX hex bytes  
 - Capped at 1000 rows so it can't grow unbounded; oldest rows fall off automatically  
+- **Frame Viewer** - an integrated panel below the table that decodes the selected transaction's TX/RX frames side by side: the MBAP header for TCP or Unit ID + CRC/LRC for RTU/ASCII, then function code, data bytes, and any exception code, plus the raw hex for both directions. Select a row by clicking or with the arrow keys/Home/End/Page Up/Page Down - either way the panel updates immediately and the table auto-scrolls to keep the selection in view, even while new transactions keep arriving. A **Hide Frame Viewer** button collapses it to give the table the full tab height without losing the last decoded frame.  
 
 ### Trend
 - Up to 20 pens, each picked straight from your Tags list (no retyping type/address/format) - only Holding/Input Register tags with a numeric format show up, since a trend line is for continuously varying values, not on/off state  
