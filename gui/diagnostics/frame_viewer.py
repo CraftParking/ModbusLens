@@ -6,9 +6,9 @@ RTU, LRC for serial ASCII) side by side so the user can see exactly what was on 
 wire: unit ID, function code, address, data bytes, CRC/LRC, and exception codes.
 """
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QApplication,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QEvent, QObject
 from PySide6.QtGui import QColor, QMouseEvent
 
 from modbus_meta import FUNCTION_NAMES
@@ -262,6 +262,24 @@ def _make_hex_dump(colors, hex_str, label="Hex Dump"):
     return group
 
 
+class _OutsideClickFilter(QObject):
+    """Installs on QApplication to close the frame viewer when clicking outside it."""
+
+    def __init__(self, dialog):
+        super().__init__()
+        self._dialog = dialog
+
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.Type.MouseButtonPress
+                and event.button() == Qt.LeftButton
+                and self._dialog.isVisible()):
+            pos = self._dialog.mapFromGlobal(event.globalPos())
+            if not self._dialog.rect().contains(pos):
+                self._dialog.close()
+                return True
+        return super().eventFilter(obj, event)
+
+
 class FrameViewerDialog(QDialog):
     """Floating popup that decodes and displays the TX/RX Modbus frame for one raw data row."""
 
@@ -278,7 +296,7 @@ class FrameViewerDialog(QDialog):
 
         # Window flags: no title bar, stays on top, tool window so it doesn't clutter the taskbar
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        # Solid background — no translucency
         self.setAttribute(Qt.WA_ShowWithoutActivating)
 
         colors = parent._colors() if hasattr(parent, "_colors") else {}
@@ -288,14 +306,23 @@ class FrameViewerDialog(QDialog):
         self._rx_fail_color = colors.get("log_error", "#C62828")
 
         self._setup_ui()
+        self._position_popup(parent)
 
-        # Click-outside-to-close: install an event filter on the parent
-        if parent is not None:
-            parent.installEventFilter(self)
+        # Install app-level event filter to close when clicking outside
+        self._outside_filter = _OutsideClickFilter(self)
+        QApplication.instance().installEventFilter(self._outside_filter)
 
     def _setup_ui(self):
         """Build the TX | RX panel layout."""
         c = self._colors
+        # Card-like background for the whole dialog
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {c['surface']};
+                border: 1px solid {c['border']};
+                border-radius: 6px;
+            }}
+        """)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(10)
@@ -411,24 +438,15 @@ class FrameViewerDialog(QDialog):
         self.setGeometry(x, y, popup_w, popup_h)
 
     def closeEvent(self, event):
-        """Clean up event filter when closed and notify the owner."""
-        if self.parent() is not None:
+        """Clean up app-level event filter when closed and notify the owner."""
+        app = QApplication.instance()
+        if app is not None and hasattr(self, '_outside_filter'):
             try:
-                self.parent().removeEventFilter(self)
+                app.removeEventFilter(self._outside_filter)
             except Exception:
                 pass
         self.closed.emit()
         super().closeEvent(event)
-
-    def eventFilter(self, obj, event):
-        """Close when the user clicks anywhere outside this popup."""
-        if event.type() == QMouseEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
-            if self.isVisible() and obj != self:
-                global_pos = self.mapFromGlobal(event.globalPos())
-                if not self.rect().contains(global_pos):
-                    self.close()
-                    return True
-        return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
         """Close on Escape."""
