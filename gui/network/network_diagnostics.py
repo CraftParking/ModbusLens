@@ -447,12 +447,15 @@ class NetworkScanner(QThread):
                     if status in ("TIMEOUT", "ERROR"):
                         continue
 
-                    if ip not in self.discovered_devices:
-                        self.discovered_devices.add(ip)
-                        found_devices += 1
-                        cycle_new_devices += 1
-                    self.device_found.emit(ip, str(self.modbus_port), status)
-                    self.output.emit(f"Device found: {ip}:{self.modbus_port} (Modbus: {status})")
+                    # Only report devices that actually speak Modbus -- non-Modbus
+                    # hosts (NO) just add noise to a user hunting for a PLC.
+                    if status == "YES":
+                        if ip not in self.discovered_devices:
+                            self.discovered_devices.add(ip)
+                            found_devices += 1
+                            cycle_new_devices += 1
+                        self.device_found.emit(ip, str(self.modbus_port), status)
+                        self.output.emit(f"Device found: {ip}:{self.modbus_port} (Modbus: {status})")
 
             # Report cycle results
             if cycle_new_devices > 0:

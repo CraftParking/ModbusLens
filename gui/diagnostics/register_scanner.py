@@ -262,6 +262,12 @@ class RegisterScannerWidget(QWidget):
         self.addr_stop_btn.setEnabled(False)
         self.addr_stop_btn.clicked.connect(self._stop_address_scan)
         row2.addWidget(self.addr_stop_btn)
+
+        self.clear_results_btn = QPushButton("Clear Results")
+        self.clear_results_btn.setStyleSheet(self.parent_window._get_button_style())
+        self.clear_results_btn.setToolTip("Clear the scanner output log and any found ranges.")
+        self.clear_results_btn.clicked.connect(self._clear_results)
+        row2.addWidget(self.clear_results_btn)
         layout.addLayout(row2)
 
         self.progress_bar = QProgressBar()
@@ -281,6 +287,11 @@ class RegisterScannerWidget(QWidget):
             }}
         """)
         layout.addWidget(self.output_text, 1)
+
+    def _clear_results(self):
+        """Clear the scanner's output log and any ranges it has found so far."""
+        self._found_ranges = []
+        self.output_text.clear()
 
     def refresh_connection_state(self):
         connected = bool(self.parent_window.modbus and self.parent_window.modbus.is_connected())
