@@ -292,13 +292,15 @@ class DiagnosticsDialogs:
             table.setRowHidden(row, not self._row_matches_filter(table, row))
 
     def add_raw_data_row(self, timestamp, title, data, elapsed_ms, error_text, tx_bytes=None, rx_bytes=None,
-                          exception_text=""):
+                          exception_text="", exception_tooltip=""):
         """Append one transaction row to the Raw Data table. exception_text is the decoded
         Modbus exception description (e.g. "Illegal Data Address - ...") when the device
         itself replied with an exception response -- left blank for a plain communications
         failure (timeout, no response), so the Exception column distinguishes "the device
         refused this" from "nothing answered at all" at a glance, not just a shared red
-        Failed status for both."""
+        Failed status for both. exception_tooltip, when given, is the fuller name/meaning/
+        possible-causes explainer shown on hover, so the Exception cell itself can stay a
+        short one-line label."""
         table = getattr(self.parent, 'raw_data_table', None)
         if table is None:
             return
@@ -330,6 +332,8 @@ class DiagnosticsDialogs:
                 item.setForeground(status_color)
             elif col == EXCEPTION_COLUMN and exception_text:
                 item.setForeground(warning_color)
+                if exception_tooltip:
+                    item.setToolTip(exception_tooltip)
             table.setItem(row, col, item)
 
         table.setRowHidden(row, not self._row_matches_filter(table, row))

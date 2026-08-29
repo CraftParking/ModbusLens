@@ -1,5 +1,119 @@
 MAX_TRACKED_RESPONSE_TIMES = 500
 
+# Single source of truth for exception-code text -- get_exception_code_description's
+# one-line label and get_exception_code_details' fuller (name, meaning, causes) tooltip
+# both derive from this, so the two can't drift apart the way two separate dicts would.
+# Covers every standard code 0x01-0x0B (including 0x07 Negative Acknowledge and 0x09,
+# both undefined by the spec but listed for completeness); anything else -- including the
+# vendor-specific range some devices use above 0x0B -- falls through to a generic entry
+# below rather than a guessed meaning, since the spec doesn't define one.
+EXCEPTION_CODE_DETAILS = {
+    0x01: (
+        "Illegal Function",
+        "The function code in the request isn't supported by this device, or the device "
+        "is currently in a state where it can't process it.",
+        [
+            "Device doesn't implement this function code at all",
+            "Wrong function selected (e.g. tried to write a read-only register type)",
+            "Device is in a mode that disallows this function (e.g. bootloader/config mode)",
+        ],
+    ),
+    0x02: (
+        "Illegal Data Address",
+        "The register/coil address in the request isn't valid for this device, or isn't "
+        "available in the combination requested.",
+        [
+            "Wrong start address",
+            "0-based vs. 1-based addressing mismatch -- check the Tags/Address Table addressing toggle",
+            "Wrong register space (Coil vs. Holding Register vs. Input Register vs. Discrete Input)",
+            "Address plus count exceeds what the device actually exposes",
+            "Device documentation's address numbering differs from the raw wire protocol offset",
+        ],
+    ),
+    0x03: (
+        "Illegal Data Value",
+        "The value in the request is structurally valid but not acceptable to this "
+        "device.",
+        [
+            "Value out of the device's valid range for this register",
+            "Wrong data type/format (e.g. sent unsigned where the device expects signed)",
+            "Count field doesn't match the byte count on a multiple-write request",
+            "A device-specific validation rule was violated (e.g. must be an even value)",
+        ],
+    ),
+    0x04: (
+        "Server Device Failure",
+        "An unrecoverable error occurred on the device itself while it was attempting "
+        "the requested action.",
+        [
+            "Device-internal fault",
+            "Hardware behind the requested register isn't ready or present (e.g. a disconnected sensor)",
+            "Device firmware bug",
+        ],
+    ),
+    0x05: (
+        "Acknowledge",
+        "The device accepted the request and is processing it, but the action will take "
+        "longer than a normal response -- not necessarily a failure.",
+        [
+            "A long-running device operation is in progress (e.g. a firmware update, calibration cycle)",
+            "Some clients should retry rather than treat this as an error",
+        ],
+    ),
+    0x06: (
+        "Server Device Busy",
+        "The device is currently processing a long-duration command and can't accept "
+        "this request right now.",
+        [
+            "Device is still mid-operation from a previous request",
+            "Polling faster than this device can keep up with",
+            "Multiple masters/clients contending for the same device",
+        ],
+    ),
+    0x07: (
+        "Negative Acknowledge",
+        "The device can't perform the requested programming/diagnostic function.",
+        [
+            "The specific programming/diagnostic function isn't supported in the device's current state",
+            "Rarely implemented -- check this device's own documentation for what triggers it",
+        ],
+    ),
+    0x08: (
+        "Memory Parity Error",
+        "The device detected a parity error reading its extended memory area, usually in "
+        "response to a Read/Write File Record request.",
+        [
+            "Corrupted or faulty extended memory area on the device",
+            "Rare -- typically indicates a device hardware fault",
+        ],
+    ),
+    0x0A: (
+        "Gateway Path Unavailable",
+        "A gateway device couldn't establish a path to the target device -- the gateway "
+        "itself is misconfigured or overloaded, not the end device replying.",
+        [
+            "Wrong Unit ID for a device sitting behind a gateway",
+            "Gateway misconfiguration",
+            "Gateway's downstream bus/subsystem is overloaded or unreachable",
+        ],
+    ),
+    0x0B: (
+        "Gateway Target Device Failed to Respond",
+        "A gateway forwarded the request, but the target device behind it never "
+        "responded.",
+        [
+            "Target device is offline or disconnected from the gateway's bus",
+            "Wrong Unit ID reaching the wrong device, or no device at all",
+            "Serial bus wiring/termination issue behind the gateway",
+        ],
+    ),
+}
+
+_UNKNOWN_EXCEPTION_CAUSES = [
+    "Not part of the standard Modbus specification (0x01-0x0B) -- check this device's own documentation",
+    "Confirm the request itself was valid before assuming this code has a special vendor meaning",
+]
+
 
 class AdvancedDiagnostics:
     """Statistics for Modbus communication troubleshooting, surfaced via Show Statistics."""
@@ -138,19 +252,26 @@ class AdvancedDiagnostics:
         return function_names.get(code, f"Unknown Function (0x{code:02X})")
 
     def get_exception_code_description(self, code):
-        """Get human-readable description for Modbus exception code."""
-        exception_descriptions = {
-            0x01: "Illegal Function - Function not supported by device",
-            0x02: "Illegal Data Address - Address not valid or not configured",
-            0x03: "Illegal Data Value - Value not acceptable for device",
-            0x04: "Server Device Failure - Device cannot process request",
-            0x05: "Acknowledge - Device accepted but processing will take time",
-            0x06: "Server Device Busy - Device busy, try again later",
-            0x08: "Memory Parity Error - Extended file area cannot be accessed",
-            0x0A: "Gateway Path Unavailable - Gateway target device not responding",
-            0x0B: "Gateway Target Failed - Gateway failed to process request"
-        }
-        return exception_descriptions.get(code, f"Unknown Exception (0x{code:02X})")
+        """One-line 'Name - meaning' label, e.g. for the Statistics report and the Raw
+        Data tab's plain-text Exception cell. See get_exception_code_details for the
+        fuller (name, meaning, causes) breakdown this derives from."""
+        details = self.get_exception_code_details(code)
+        return f"{details['name']} - {details['meaning']}"
+
+    def get_exception_code_details(self, code):
+        """Full explainer for a Modbus exception code: {name, meaning, causes}. Powers the
+        Raw Data tab's Exception column tooltip (see DiagnosticsDialogs.add_raw_data_row) --
+        get_exception_code_description above derives its own shorter one-line text from
+        this same data instead of a separate dict, so the two can't drift apart."""
+        entry = EXCEPTION_CODE_DETAILS.get(code)
+        if entry is None:
+            return {
+                "name": f"Unknown/Vendor-Specific Exception (0x{code:02X})",
+                "meaning": "This exception code isn't defined by the standard Modbus specification.",
+                "causes": _UNKNOWN_EXCEPTION_CAUSES,
+            }
+        name, meaning, causes = entry
+        return {"name": name, "meaning": meaning, "causes": causes}
 
     def get_error_category_label(self, category):
         """Human-readable label for a ModbusClient._set_error category."""

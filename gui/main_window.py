@@ -2815,13 +2815,28 @@ Unit ID: {unit_id}<br><br>
             # device that actually replied with a Modbus exception code gets one, so the
             # Raw Data tab's Exception column distinguishes "the device refused this" from
             # "nothing answered at all" instead of lumping both under the same Failed status.
-            exception_text = (
-                self.advanced_diagnostics.get_exception_code_description(exception_code)
-                if exception_code is not None else ""
-            )
+            exception_text = ""
+            exception_tooltip = ""
+            if exception_code is not None:
+                exception_text = self.advanced_diagnostics.get_exception_code_description(exception_code)
+                exception_tooltip = self._format_exception_tooltip(exception_code)
             self.diagnostics_dialogs.add_raw_data_row(
-                timestamp, title, data, elapsed_ms, error_text, tx_bytes, rx_bytes, exception_text
+                timestamp, title, data, elapsed_ms, error_text, tx_bytes, rx_bytes, exception_text,
+                exception_tooltip,
             )
+
+    def _format_exception_tooltip(self, exception_code):
+        """Plain-English name/meaning/possible-causes explainer for a Modbus exception
+        code, shown as a tooltip on the Raw Data tab's Exception column -- so a device
+        refusing a request (e.g. 0x02 Illegal Data Address) points straight at likely
+        fixes instead of just a name someone has to go look up."""
+        details = self.advanced_diagnostics.get_exception_code_details(exception_code)
+        lines = [f"{details['name']} (0x{exception_code:02X})", "", details["meaning"]]
+        if details["causes"]:
+            lines.append("")
+            lines.append("Possible causes:")
+            lines.extend(f"• {cause}" for cause in details["causes"])
+        return "\n".join(lines)
     
     def _get_function_code_from_title(self, title):
         """Extract function code from title for statistics."""
