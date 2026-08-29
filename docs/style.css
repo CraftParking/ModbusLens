@@ -334,6 +334,74 @@ section h2 {
   margin-bottom: 8px;
 }
 
+/* ---------------- Changelog ---------------- */
+
+.changelog-intro {
+  color: var(--muted);
+  max-width: 60ch;
+  margin: -12px 0 40px 0;
+}
+
+.changelog-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.changelog-card {
+  padding: 28px 32px;
+}
+
+.changelog-card h3 {
+  font-size: 1.6rem;
+  margin: 0 0 16px 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.version-tag {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.version-tag.is-current {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.version-tag.is-upcoming {
+  color: var(--steel);
+  border-color: var(--steel);
+}
+
+.changelog-sub {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 20px 0 8px 0;
+}
+
+.changelog-card ul {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+.changelog-card li {
+  margin-bottom: 8px;
+}
+
 /* ---------------- Screenshots ---------------- */
 
 .shot-stack {

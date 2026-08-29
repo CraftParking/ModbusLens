@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Changelog - ModbusLens</title>
+<link rel="icon" href="assets/favicon.ico">
+<meta name="description" content="ModbusLens release history - what's new and what's fixed in every version.">
+<link rel="canonical" href="https://craftparking.github.io/ModbusLens/changelog.html">
+<link rel="stylesheet" href="style.css">
+<script>
+  var saved = localStorage.getItem('theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+</script>
+</head>
+<body>
+
+<header class="topbar">
+<div class="topbar-inner">
+<a class="wordmark" href="index.html#top"><img src="assets/favicon.ico" alt="" width="28" height="28">ModbusLens</a>
+<nav>
+<a href="index.html#features">Features</a>
+<a href="changelog.html">Changelog</a>
+<a href="index.html#screenshots">Screenshots</a>
+<a href="index.html#download">Download</a>
+<a href="https://github.com/CraftParking/ModbusLens">GitHub</a>
+<a href="https://buymeacoffee.com/craftparking">Donate</a>
+</nav>
+<div class="topbar-actions">
+<button id="theme-toggle" aria-label="Toggle dark mode"></button>
+</div>
+</div>
+</header>
+
+<main>
+
+<section id="changelog-list">
+<h2 class="reveal">Changelog</h2>
+<p class="changelog-intro reveal">Major changes in every release. For the full, line-by-line
+detail - including smaller fixes and polish - see <a href="https://github.com/CraftParking/ModbusLens">the
+GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p>
+
+<div class="changelog-stack">
+
+<article class="panel-card changelog-card reveal">
+<h3>v2.3.0 <span class="version-tag is-upcoming">Upcoming</span></h3>
+<p class="changelog-sub">New</p>
+<ul>
+<li>Diagnostics &gt; Decode Registers - a standalone hex decoder (U16 through F64, HEX, binary, ASCII, BCD, individual bits, all four byte/word orderings), no connection needed</li>
+<li>Raw Data's Exception column now explains what a device's error actually means and likely causes, not just its name</li>
+<li>Raw Data's Frame Viewer: every decoded field and the raw hex bytes can now be selected and copied</li>
+</ul>
+<p class="changelog-sub">Fixed</p>
+<ul>
+<li>Write-mode tag polling no longer freezes the window when a device is unreachable</li>
+</ul>
+</article>
+
+<article class="panel-card changelog-card reveal">
+<h3>v2.2.0 <span class="version-tag is-current">Current</span></h3>
+<p class="changelog-sub">New</p>
+<ul>
+<li>Modbus Diagnostic Functions dialog - the function codes beyond basic read/write (exception status, diagnostics, comm event log, report server ID, file records, mask write, FIFO queue, device identification)</li>
+<li>Save/Load Session - connection settings, Tags, Address Table range, and write bounds together in one file</li>
+<li>U64/S64/F64 numeric formats, alongside the existing U32/S32/F32</li>
+<li>Fast LAN Mode - instant unreachable-device detection instead of retrying every tag</li>
+<li>Raw Data gained an Exception column and an integrated Frame Viewer decoding TX/RX frames side by side</li>
+<li>Tags table: drag-to-reorder columns, a show/hide column picker, per-tag enable/disable</li>
+<li>A shared read cache and coalesced adjacent reads cut duplicate traffic on the wire</li>
+</ul>
+<p class="changelog-sub">Fixed</p>
+<ul>
+<li>Tag Monitoring's polling moved off the GUI thread - a single unreachable device no longer freezes the whole window</li>
+<li>Write-mode tags with a signed format showed the raw unsigned value instead of the signed one</li>
+<li>Tags table selection was invisible, with a related write-safety gap around deselected rows</li>
+</ul>
+</article>
+
+<article class="panel-card changelog-card reveal">
+<h3>v2.1.0</h3>
+<p class="changelog-sub">New</p>
+<ul>
+<li>Light/Dark theme, with a "follow system" option</li>
+<li>Scanner tab - auto-discover which addresses actually respond on a connected device</li>
+<li>Serial Discovery - sweep baud rate/parity/stop bits/Unit ID to find an undocumented serial device's settings</li>
+<li>Auto-reconnect with backoff, and monitoring resumes automatically once the connection comes back</li>
+<li>Modbus ASCII framing support for serial connections, alongside RTU</li>
+<li>Raw Data became its own dedicated tab - full wire-level diagnostics for every transaction</li>
+</ul>
+<p class="changelog-sub">Fixed</p>
+<ul>
+<li>Scanner/Serial Discovery could race with auto-reconnect or a manual disconnect, and closing the app mid-scan could crash instead of shutting down cleanly</li>
+<li>Server tab's Unit ID field did nothing - the simulator answered on any unit ID</li>
+<li>Monitoring's auto-stop-after-repeated-failures didn't actually stop</li>
+</ul>
+</article>
+
+<article class="panel-card changelog-card reveal">
+<h3>v2.0.0</h3>
+<ul>
+<li>Modbus Serial (RTU) support, alongside TCP</li>
+<li>Scripting tab - a small test-sequence language (WRITE/READ/WAIT/LOG/LET) with a safety warning before running against a live device</li>
+<li>Multi-window support - connect to more than one device at once, each in its own window</li>
+<li>Built-in documentation (Help menu)</li>
+</ul>
+</article>
+
+<article class="panel-card changelog-card reveal">
+<h3>v1.1.0</h3>
+<ul>
+<li>Server/slave mode - act as a Modbus TCP device so another master can poll ModbusLens</li>
+<li>Trend tab with live graphing</li>
+<li>Per-tag alarms (high/low limits) and CSV logging of live values</li>
+<li>ARP-based network discovery and Modbus device detection</li>
+</ul>
+</article>
+
+<article class="panel-card changelog-card reveal">
+<h3>v1.0.0</h3>
+<ul>
+<li>Initial public release</li>
+<li>Modbus TCP client - connect, read, and write coils/registers from an address table</li>
+<li>Tag table for monitoring named addresses, with safety interlocks around live writes</li>
+<li>Standalone Windows executable</li>
+</ul>
+</article>
+
+</div>
+</section>
+
+</main>
+
+<footer>
+<p>Free software, Apache 2.0 licensed. &middot; <a href="https://github.com/CraftParking/ModbusLens">github.com/CraftParking/ModbusLens</a></p>
+</footer>
+
+<script>
+  var root = document.documentElement;
+  var btn = document.getElementById('theme-toggle');
+
+  var SUN_ICON = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/></svg>';
+  var MOON_ICON = '<svg viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>';
+
+  function isDark() {
+    var attr = root.getAttribute('data-theme');
+    if (attr) return attr === 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  function updateIcon() {
+    var dark = isDark();
+    btn.innerHTML = dark ? SUN_ICON : MOON_ICON;
+    btn.className = dark ? 'icon-sun' : 'icon-moon';
+  }
+
+  btn.addEventListener('click', function () {
+    var next = isDark() ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    updateIcon();
+  });
+
+  updateIcon();
+
+  var revealItems = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window) {
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15 });
+    revealItems.forEach(function (el) { observer.observe(el); });
+  } else {
+    revealItems.forEach(function (el) { el.classList.add('is-visible'); });
+  }
+</script>
+
+</body>
+</html>
