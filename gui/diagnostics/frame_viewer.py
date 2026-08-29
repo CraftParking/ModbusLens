@@ -7,9 +7,9 @@ bytes, CRC/LRC, and exception codes.
 """
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QTableWidget,
-    QTableWidgetItem, QHeaderView, QWidget, QSizePolicy,
+    QTableWidgetItem, QHeaderView, QWidget, QSizePolicy, QApplication, QMenu,
 )
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QShortcut, QKeySequence
 from PySide6.QtCore import Qt
 
 from modbus_meta import FUNCTION_NAMES
@@ -212,17 +212,23 @@ class FrameViewerPanel(QWidget):
         self._tx_container.setVisible(False)
         self._rx_container.setVisible(False)
 
-        # Raw hex footer
+        # Raw hex footer -- selectable/copyable by mouse drag + Ctrl+C (or right-click,
+        # which TextSelectableByMouse gives a built-in Copy entry for free) since this is
+        # often the one thing someone actually wants to paste into a hex viewer or bug
+        # report.
+        hex_flags = Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard
         self._hex_tx = QLabel("")
         self._hex_tx.setStyleSheet(
             f"color: {c['text_secondary']}; font-family: 'Consolas', 'Monaco', monospace; font-size: 10px;"
         )
         self._hex_tx.setWordWrap(True)
+        self._hex_tx.setTextInteractionFlags(hex_flags)
         self._hex_rx = QLabel("")
         self._hex_rx.setStyleSheet(
             f"color: {c['text_secondary']}; font-family: 'Consolas', 'Monaco', monospace; font-size: 10px;"
         )
         self._hex_rx.setWordWrap(True)
+        self._hex_rx.setTextInteractionFlags(hex_flags)
         self._hex_tx.setVisible(False)
         self._hex_rx.setVisible(False)
         layout.addWidget(self._hex_tx)
@@ -300,7 +306,46 @@ class FrameViewerPanel(QWidget):
         table.verticalHeader().setDefaultSectionSize(24)
         row_height = table.verticalHeader().defaultSectionSize()
         table.setFixedHeight(table.horizontalHeader().height() + max(len(fields), 1) * row_height + 4)
+        self._wire_copy(table)
         layout.addWidget(table)
+
+    def _wire_copy(self, table):
+        """Rebuilt fresh on every row click (see _clear_layout/_populate_side), so this
+        has to be re-wired on the new instance each time rather than set up once --
+        mirrors the Raw Data table's own Ctrl+C/context-menu copy convention
+        (DiagnosticsDialogs._show_raw_data_context_menu)."""
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(lambda pos, t=table: self._show_context_menu(t, pos))
+        shortcut = QShortcut(QKeySequence.StandardKey.Copy, table)
+        shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        shortcut.activated.connect(lambda t=table: self._copy_selected_rows(t))
+        # Keep the shortcut alive for exactly as long as the table it's bound to --
+        # QShortcut has no other owner once this method returns, and losing the last
+        # Python reference to it would silently stop it from firing.
+        table._copy_shortcut = shortcut
+
+    def _show_context_menu(self, table, pos):
+        rows = sorted({index.row() for index in table.selectedIndexes()})
+        clicked_row = table.rowAt(pos.y())
+        if clicked_row >= 0 and clicked_row not in rows:
+            table.selectRow(clicked_row)
+            rows = [clicked_row]
+        if not rows:
+            return
+        menu = QMenu(table)
+        copy_action = menu.addAction("Copy Row(s)")
+        if menu.exec(table.viewport().mapToGlobal(pos)) == copy_action:
+            self._copy_rows(table, rows)
+
+    def _copy_selected_rows(self, table):
+        rows = sorted({index.row() for index in table.selectedIndexes()})
+        if rows:
+            self._copy_rows(table, rows)
+
+    @staticmethod
+    def _copy_rows(table, rows):
+        lines = ["\t".join(table.item(row, col).text() for col in range(table.columnCount())) for row in rows]
+        QApplication.clipboard().setText("\n".join(lines))
 
     def update_from_row(self, table, row, transport="tcp"):
         """Decode and display the TX/RX frames for the given raw data table row."""
