@@ -1,5 +1,9 @@
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QTextBrowser, QPushButton, QSplitter
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QTextCursor, QTextDocument
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QTextBrowser, QPushButton, QSplitter,
+    QLineEdit, QLabel, QWidget,
+)
 
 DOCS = [
     ("Getting Started", """
@@ -993,7 +997,13 @@ than a fault on the device.</li>
 
 
 class DocumentationDialog(QDialog):
-    """A simple two-pane Help viewer: topic list on the left, content on the right."""
+    """A simple two-pane Help viewer: topic list on the left, content on the right.
+
+    The topic list already shows which topic is "current" via its own native selection
+    highlight the moment one is picked -- there's no separate scroll-spy to add on top of
+    that, since (unlike the website's single continuously-scrolled page) each topic here
+    is its own freshly-loaded document in the viewer, not one long page you scroll through
+    across topics."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1004,12 +1014,52 @@ class DocumentationDialog(QDialog):
 
         splitter = QSplitter(Qt.Horizontal)
 
+        sidebar = QWidget()
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(6)
+
+        search_row = QHBoxLayout()
+        search_row.setSpacing(4)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search this topic...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.textChanged.connect(self._on_search_text_changed)
+        # Plain Enter falls through to this and searches forward; Shift+Enter is caught by
+        # the eventFilter below (consumed there, so it never also reaches returnPressed).
+        self.search_input.returnPressed.connect(lambda: self._do_search(backward=False))
+        self.search_input.installEventFilter(self)
+        search_row.addWidget(self.search_input, 1)
+
+        self.search_count_label = QLabel("")
+        self.search_count_label.setMinimumWidth(36)
+        self.search_count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        search_row.addWidget(self.search_count_label)
+
+        self.search_prev_btn = QPushButton("▲")
+        self.search_prev_btn.setToolTip("Previous match (Shift+Enter)")
+        self.search_prev_btn.setFixedWidth(28)
+        self.search_prev_btn.setEnabled(False)
+        self.search_prev_btn.clicked.connect(lambda: self._do_search(backward=True))
+        search_row.addWidget(self.search_prev_btn)
+
+        self.search_next_btn = QPushButton("▼")
+        self.search_next_btn.setToolTip("Next match (Enter)")
+        self.search_next_btn.setFixedWidth(28)
+        self.search_next_btn.setEnabled(False)
+        self.search_next_btn.clicked.connect(lambda: self._do_search(backward=False))
+        search_row.addWidget(self.search_next_btn)
+
+        sidebar_layout.addLayout(search_row)
+
         self.topic_list = QListWidget()
         for title, _ in DOCS:
             self.topic_list.addItem(title)
-        self.topic_list.setMaximumWidth(220)
         self.topic_list.currentRowChanged.connect(self._show_topic)
-        splitter.addWidget(self.topic_list)
+        sidebar_layout.addWidget(self.topic_list, 1)
+
+        sidebar.setMaximumWidth(240)
+        splitter.addWidget(sidebar)
 
         self.viewer = QTextBrowser()
         self.viewer.setOpenExternalLinks(True)
@@ -1025,8 +1075,80 @@ class DocumentationDialog(QDialog):
         button_row.addWidget(close_btn)
         layout.addLayout(button_row)
 
+        main_window = self.parent()
+        if hasattr(main_window, "_get_input_style"):
+            self.search_input.setStyleSheet(main_window._get_input_style())
+        if hasattr(main_window, "_get_button_style"):
+            btn_style = main_window._get_button_style(small=True)
+            self.search_prev_btn.setStyleSheet(btn_style)
+            self.search_next_btn.setStyleSheet(btn_style)
+
         self.topic_list.setCurrentRow(0)
+
+    def eventFilter(self, obj, event):
+        """Shift+Enter for the previous match -- plain QLineEdit only exposes a single
+        returnPressed signal with no modifier info, so the modifier-aware case is caught
+        here instead, before it reaches (and would otherwise separately trigger)
+        returnPressed's own forward-search handler."""
+        if obj is self.search_input and event.type() == QEvent.Type.KeyPress:
+            if (
+                event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            ):
+                self._do_search(backward=True)
+                return True
+        return super().eventFilter(obj, event)
 
     def _show_topic(self, row):
         if 0 <= row < len(DOCS):
             self.viewer.setHtml(DOCS[row][1])
+            # A search typed before switching topics stays in the box (searching the same
+            # term in a different topic is a normal thing to want) -- just re-sync the
+            # count/highlight against whatever's now loaded instead of clearing it.
+            self._on_search_text_changed(self.search_input.text())
+
+    def _on_search_text_changed(self, text):
+        cursor = self.viewer.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        self.viewer.setTextCursor(cursor)
+        if text:
+            self._do_search(backward=False)
+        else:
+            self._set_search_status(0, 0)
+
+    def _do_search(self, backward):
+        """Uses QTextBrowser's own find() -- native text-cursor selection, so a match is
+        highlighted with the app's normal selection color (already theme-correct via the
+        global QPalette, no custom highlight styling needed) and scrolled into view for
+        free. find() doesn't wrap around on its own, so a failed search retries once from
+        the opposite end before actually reporting no match -- Enter/Next past the last
+        match cycles back to the first, matching how the website's version behaves."""
+        query = self.search_input.text()
+        if not query:
+            return
+        flags = QTextDocument.FindFlag.FindBackward if backward else QTextDocument.FindFlag(0)
+        found = self.viewer.find(query, flags)
+        if not found:
+            cursor = self.viewer.textCursor()
+            cursor.movePosition(
+                QTextCursor.MoveOperation.End if backward else QTextCursor.MoveOperation.Start
+            )
+            self.viewer.setTextCursor(cursor)
+            found = self.viewer.find(query, flags)
+        self._update_search_count(query, found)
+
+    def _update_search_count(self, query, found):
+        plain = self.viewer.toPlainText()
+        total = plain.lower().count(query.lower()) if query else 0
+        if not found or total == 0:
+            self._set_search_status(0, 0)
+            return
+        cursor = self.viewer.textCursor()
+        current_index = plain[: cursor.selectionStart()].lower().count(query.lower()) + 1
+        self._set_search_status(current_index, total)
+
+    def _set_search_status(self, current, total):
+        self.search_count_label.setText(f"{current}/{total}" if total else ("0/0" if self.search_input.text() else ""))
+        has_matches = total > 0
+        self.search_prev_btn.setEnabled(has_matches)
+        self.search_next_btn.setEnabled(has_matches)
