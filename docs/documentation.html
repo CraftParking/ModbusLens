@@ -40,6 +40,17 @@
 into the app itself (Help &gt; Documentation), kept in sync with it.</p>
 
 <div class="doc-layout">
+<div class="doc-sidebar">
+<div class="doc-search">
+<input type="text" id="doc-search-input" placeholder="Search..." aria-label="Search documentation" autocomplete="off">
+<span class="doc-search-count" id="doc-search-count"></span>
+<button type="button" id="doc-search-prev" aria-label="Previous match" disabled>
+<svg viewBox="0 0 24 24"><path d="M18 15l-6-6-6 6"/></svg>
+</button>
+<button type="button" id="doc-search-next" aria-label="Next match" disabled>
+<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+</button>
+</div>
 <nav class="doc-nav" aria-label="Documentation topics">
 <a href="#getting-started" data-doc-nav>Getting Started</a>
 <a href="#menus-and-toolbars" data-doc-nav>Menus &amp; Toolbars</a>
@@ -58,6 +69,7 @@ into the app itself (Help &gt; Documentation), kept in sync with it.</p>
 <a href="#troubleshooting" data-doc-nav>Troubleshooting</a>
 <a href="#tips-and-safety" data-doc-nav>Tips &amp; Safety</a>
 </nav>
+</div>
 
 <div class="doc-content">
 <article class="doc-section" id="getting-started">
@@ -1099,6 +1111,148 @@ than a fault on the device.</li>
     revealItems.forEach(function (el) { observer.observe(el); });
   } else {
     revealItems.forEach(function (el) { el.classList.add('is-visible'); });
+  }
+
+  // ---- Scroll-spy: highlight whichever topic is currently in view ----
+  var docSections = document.querySelectorAll('.doc-section');
+  var docNavLinks = document.querySelectorAll('.doc-nav a[data-doc-nav]');
+  var docNavLinkById = {};
+  docNavLinks.forEach(function (a) {
+    docNavLinkById[a.getAttribute('href').slice(1)] = a;
+  });
+
+  function setActiveDocLink(id) {
+    docNavLinks.forEach(function (a) { a.classList.remove('is-active'); });
+    var link = docNavLinkById[id];
+    if (!link) return;
+    link.classList.add('is-active');
+    link.scrollIntoView({ block: 'nearest' });
+  }
+
+  if (docSections.length && 'IntersectionObserver' in window) {
+    // The observed band is shrunk to roughly the top 30% of the viewport (below the
+    // sticky topbar) so "current section" means whichever topic's heading has just
+    // scrolled past that band, not merely "somewhere on screen."
+    var spy = new IntersectionObserver(function (entries) {
+      var visible = entries.filter(function (e) { return e.isIntersecting; });
+      if (visible.length === 0) return;
+      visible.sort(function (a, b) { return a.boundingClientRect.top - b.boundingClientRect.top; });
+      setActiveDocLink(visible[0].target.id);
+    }, { rootMargin: '-96px 0px -70% 0px', threshold: 0 });
+    docSections.forEach(function (s) { spy.observe(s); });
+  } else if (docSections.length) {
+    setActiveDocLink(docSections[0].id);
+  }
+
+  // ---- Search: highlight every match in the content, step through with Next/Previous ----
+  var searchInput = document.getElementById('doc-search-input');
+  var searchCount = document.getElementById('doc-search-count');
+  var searchPrev = document.getElementById('doc-search-prev');
+  var searchNext = document.getElementById('doc-search-next');
+  var docContent = document.querySelector('.doc-content');
+
+  var searchHits = [];
+  var searchIndex = -1;
+
+  function clearDocHighlights() {
+    searchHits.forEach(function (mark) {
+      mark.parentNode.replaceChild(document.createTextNode(mark.textContent), mark);
+    });
+    searchHits = [];
+    searchIndex = -1;
+    if (docContent) docContent.normalize();
+  }
+
+  function updateSearchStatus() {
+    if (searchHits.length === 0) {
+      searchCount.textContent = searchInput.value ? '0/0' : '';
+      searchPrev.disabled = true;
+      searchNext.disabled = true;
+    } else {
+      searchCount.textContent = (searchIndex + 1) + '/' + searchHits.length;
+      searchPrev.disabled = false;
+      searchNext.disabled = false;
+    }
+  }
+
+  function goToDocHit(index) {
+    if (searchHits.length === 0) return;
+    var current = searchHits[searchIndex];
+    if (current) current.classList.remove('is-current');
+    searchIndex = ((index % searchHits.length) + searchHits.length) % searchHits.length;
+    var hit = searchHits[searchIndex];
+    hit.classList.add('is-current');
+    hit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    updateSearchStatus();
+  }
+
+  function highlightDocMatches(query) {
+    clearDocHighlights();
+    if (!query || !docContent) {
+      updateSearchStatus();
+      return;
+    }
+    var lowerQuery = query.toLowerCase();
+
+    // Collect matching text nodes first, then mutate -- walking and mutating the same
+    // tree at once would skip or double-visit nodes as the structure shifts underneath
+    // the walker.
+    var walker = document.createTreeWalker(docContent, NodeFilter.SHOW_TEXT, null);
+    var textNodes = [];
+    var node;
+    while ((node = walker.nextNode())) {
+      if (node.nodeValue && node.nodeValue.toLowerCase().indexOf(lowerQuery) !== -1) {
+        textNodes.push(node);
+      }
+    }
+
+    textNodes.forEach(function (textNode) {
+      var text = textNode.nodeValue;
+      var lowerText = text.toLowerCase();
+      var frag = document.createDocumentFragment();
+      var cursor = 0;
+      var pos = lowerText.indexOf(lowerQuery, cursor);
+      while (pos !== -1) {
+        if (pos > cursor) frag.appendChild(document.createTextNode(text.slice(cursor, pos)));
+        var mark = document.createElement('mark');
+        mark.className = 'doc-hit';
+        mark.textContent = text.slice(pos, pos + query.length);
+        frag.appendChild(mark);
+        searchHits.push(mark);
+        cursor = pos + query.length;
+        pos = lowerText.indexOf(lowerQuery, cursor);
+      }
+      if (cursor < text.length) frag.appendChild(document.createTextNode(text.slice(cursor)));
+      textNode.parentNode.replaceChild(frag, textNode);
+    });
+
+    if (searchHits.length > 0) {
+      searchIndex = 0;
+      goToDocHit(0);
+    } else {
+      updateSearchStatus();
+    }
+  }
+
+  if (searchInput && docContent) {
+    var searchDebounce;
+    searchInput.addEventListener('input', function () {
+      clearTimeout(searchDebounce);
+      var value = searchInput.value.trim();
+      searchDebounce = setTimeout(function () { highlightDocMatches(value); }, 150);
+    });
+
+    // Enter jumps to the next match, Shift+Enter to the previous -- same convention as
+    // a browser's own in-page find.
+    searchInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (searchHits.length) goToDocHit(searchIndex + (e.shiftKey ? -1 : 1));
+      }
+    });
+
+    searchNext.addEventListener('click', function () { goToDocHit(searchIndex + 1); });
+    searchPrev.addEventListener('click', function () { goToDocHit(searchIndex - 1); });
   }
 </script>
 

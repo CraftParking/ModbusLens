@@ -417,15 +417,91 @@ section h2 {
   align-items: start;
 }
 
-.doc-nav {
+.doc-sidebar {
   position: sticky;
   top: 88px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 14px;
   max-height: calc(100vh - 120px);
+}
+
+.doc-search {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  padding: 4px 6px 4px 10px;
+}
+
+.doc-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.doc-search input::placeholder {
+  color: var(--muted);
+}
+
+.doc-search-count {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+  min-width: 3.2em;
+  text-align: right;
+}
+
+.doc-search button {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.doc-search button:hover:not(:disabled) {
+  background: var(--grid-line);
+  color: var(--ink);
+}
+
+.doc-search button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.doc-search button svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.doc-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   overflow-y: auto;
   padding-right: 8px;
+  min-height: 0;
 }
 
 .doc-nav a {
@@ -434,6 +510,7 @@ section h2 {
   font-size: 0.9rem;
   text-decoration: none;
   color: var(--muted);
+  border-left: 2px solid transparent;
 }
 
 .doc-nav a:hover {
@@ -441,8 +518,27 @@ section h2 {
   background: var(--grid-line);
 }
 
+.doc-nav a.is-active {
+  color: var(--ink);
+  background: var(--grid-line);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
 .doc-content {
   min-width: 0;
+}
+
+.doc-hit {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--ink);
+  border-radius: 2px;
+  scroll-margin-top: 96px;
+}
+
+.doc-hit.is-current {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .doc-section {
@@ -729,8 +825,12 @@ footer {
     grid-template-columns: 1fr;
   }
 
-  .doc-nav {
+  .doc-sidebar {
     position: static;
+    max-height: none;
+  }
+
+  .doc-nav {
     flex-direction: row;
     flex-wrap: wrap;
     max-height: none;
