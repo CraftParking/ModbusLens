@@ -300,7 +300,7 @@ class RegisterScannerWidget(QWidget):
         self.status_label.setText(
             f"Scanning: {self.parent_window.modbus.target_description()} (Unit {self.parent_window.modbus.unit_id})"
             if connected else
-            "Not connected -- connect to a device first (File/Settings > Connect)."
+            "Not connected -- connect to a device first."
         )
 
     def _pause_shared_connection_monitoring(self):
