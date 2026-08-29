@@ -2,7 +2,7 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QTextBrowser, QPushButton, QSplitter,
-    QLineEdit, QLabel, QWidget,
+    QLineEdit, QLabel, QWidget, QCheckBox,
 )
 
 DOCS = [
@@ -1052,6 +1052,11 @@ class DocumentationDialog(QDialog):
 
         sidebar_layout.addLayout(search_row)
 
+        self.full_search_checkbox = QCheckBox("Full search")
+        self.full_search_checkbox.setToolTip("Search every topic instead of just the one currently shown")
+        self.full_search_checkbox.toggled.connect(self._on_full_search_toggled)
+        sidebar_layout.addWidget(self.full_search_checkbox)
+
         self.topic_list = QListWidget()
         for title, _ in DOCS:
             self.topic_list.addItem(title)
@@ -1083,6 +1088,15 @@ class DocumentationDialog(QDialog):
             self.search_prev_btn.setStyleSheet(btn_style)
             self.search_next_btn.setStyleSheet(btn_style)
 
+        # Full-search state: a flat list of (topic_index, start_pos_in_that_topic's_plain_text)
+        # tuples covering every topic, plus where we currently are in it. Kept separate from the
+        # single-topic path (which just drives QTextBrowser.find() directly) since jumping to a
+        # match here may also need to switch which topic is loaded.
+        self._full_search_matches = []
+        self._full_search_index = -1
+        self._navigating_full_search = False  # sidesteps _show_topic's own re-sync while
+                                               # a full-search jump is the thing switching topics
+
         self.topic_list.setCurrentRow(0)
 
     def eventFilter(self, obj, event):
@@ -1102,12 +1116,38 @@ class DocumentationDialog(QDialog):
     def _show_topic(self, row):
         if 0 <= row < len(DOCS):
             self.viewer.setHtml(DOCS[row][1])
+            if self._navigating_full_search:
+                # A full-search jump is what triggered this topic switch -- it'll position
+                # the selection/scroll itself right after, so don't let the single-topic
+                # re-sync below fight it.
+                return
+            if self.full_search_checkbox.isChecked():
+                # Topic was changed by clicking the list directly while in full-search mode
+                # -- leave the existing whole-search count/results as they are; only a
+                # search-text edit or Next/Previous should recompute them in this mode.
+                return
             # A search typed before switching topics stays in the box (searching the same
             # term in a different topic is a normal thing to want) -- just re-sync the
             # count/highlight against whatever's now loaded instead of clearing it.
             self._on_search_text_changed(self.search_input.text())
 
+    def _on_full_search_toggled(self, checked):
+        self.search_input.setPlaceholderText(
+            "Search every topic..." if checked else "Search this topic..."
+        )
+        # Re-run whatever's currently typed under the new mode, so toggling the checkbox with
+        # an active query switches scope immediately instead of waiting for the next keystroke.
+        self._on_search_text_changed(self.search_input.text())
+
     def _on_search_text_changed(self, text):
+        if self.full_search_checkbox.isChecked():
+            self._rebuild_full_search_matches(text)
+            if self._full_search_matches:
+                self._go_to_full_search_match(0)
+            else:
+                self._set_search_status(0, 0)
+            return
+
         cursor = self.viewer.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.Start)
         self.viewer.setTextCursor(cursor)
@@ -1126,6 +1166,14 @@ class DocumentationDialog(QDialog):
         query = self.search_input.text()
         if not query:
             return
+
+        if self.full_search_checkbox.isChecked():
+            if not self._full_search_matches:
+                return
+            step = -1 if backward else 1
+            self._go_to_full_search_match(self._full_search_index + step)
+            return
+
         flags = QTextDocument.FindFlag.FindBackward if backward else QTextDocument.FindFlag(0)
         found = self.viewer.find(query, flags)
         if not found:
@@ -1146,6 +1194,48 @@ class DocumentationDialog(QDialog):
         cursor = self.viewer.textCursor()
         current_index = plain[: cursor.selectionStart()].lower().count(query.lower()) + 1
         self._set_search_status(current_index, total)
+
+    def _rebuild_full_search_matches(self, query):
+        """Every occurrence of query across every topic, as (topic_index, start_pos) pairs --
+        start_pos is a character offset into that topic's own plain text, recomputed fresh
+        here via a throwaway QTextDocument rather than by actually loading each topic into
+        the visible viewer just to count. Rebuilt on every query change; 16 topics/~60KB of
+        text is cheap enough to rescan on every keystroke without a debounce."""
+        self._full_search_matches = []
+        self._full_search_index = -1
+        if not query:
+            return
+        lower_query = query.lower()
+        for topic_index, (_title, html) in enumerate(DOCS):
+            scratch = QTextDocument()
+            scratch.setHtml(html)
+            lower_plain = scratch.toPlainText().lower()
+            start = 0
+            while True:
+                pos = lower_plain.find(lower_query, start)
+                if pos == -1:
+                    break
+                self._full_search_matches.append((topic_index, pos))
+                start = pos + len(lower_query)
+
+    def _go_to_full_search_match(self, index):
+        if not self._full_search_matches:
+            return
+        self._full_search_index = index % len(self._full_search_matches)
+        topic_index, start_pos = self._full_search_matches[self._full_search_index]
+        query_len = len(self.search_input.text())
+
+        if self.topic_list.currentRow() != topic_index:
+            self._navigating_full_search = True
+            self.topic_list.setCurrentRow(topic_index)
+            self._navigating_full_search = False
+
+        cursor = QTextCursor(self.viewer.document())
+        cursor.setPosition(start_pos)
+        cursor.setPosition(start_pos + query_len, QTextCursor.MoveMode.KeepAnchor)
+        self.viewer.setTextCursor(cursor)
+        self.viewer.ensureCursorVisible()
+        self._set_search_status(self._full_search_index + 1, len(self._full_search_matches))
 
     def _set_search_status(self, current, total):
         self.search_count_label.setText(f"{current}/{total}" if total else ("0/0" if self.search_input.text() else ""))
