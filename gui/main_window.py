@@ -259,7 +259,6 @@ class ModbusGUI(QMainWindow):
         # otherwise invisible.
         self._highlighted_tag_rows = set()
         self.monitoring_active = False
-        self._write_poll_in_progress = False
         self.tag_address_one_based = True
         
         self.monitoring_timer = QTimer(self)
@@ -2269,16 +2268,22 @@ Unit ID: {unit_id}<br><br>
             )
         return True, self._format_written_value(tag, desired_registers), "Write verified"
 
-    def _read_tag_value(self, tag, is_one_based=None):
+    def _read_tag_value(self, tag, is_one_based=None, modbus=None):
+        """modbus defaults to self.modbus, but a caller running off the GUI thread (the
+        Write-mode Tags poll worker) must pass its own snapshot explicitly instead --
+        self.modbus can be swapped out by a disconnect/reconnect on the GUI thread while
+        such a worker is still mid-read, same reasoning TagPollWorker already applies to
+        the read-mode poll (see poll_worker.py)."""
+        modbus = modbus if modbus is not None else self.modbus
         try:
             protocol_offset = self._tag_user_address_to_offset(tag)
         except ValueError as e:
             raise ValueError(f"Address error for tag {tag['name']}: {e}")
-        
+
         if tag["type"] == "Coil":
-            value = self.modbus.read_coils(protocol_offset, tag["count"])
+            value = modbus.read_coils(protocol_offset, tag["count"])
         elif tag["type"] == "Holding Register":
-            value = self.modbus.read_registers(protocol_offset, tag["count"])
+            value = modbus.read_registers(protocol_offset, tag["count"])
         else:
             raise ValueError(f"{tag['type']} cannot be written")
 
@@ -2618,6 +2623,7 @@ Unit ID: {unit_id}<br><br>
         # Stop Monitoring click, so an in-flight poll worker can just finish its current
         # tag in the background rather than needing to be waited on here.
         self.monitoring_manager.stop_poll_worker(wait=False)
+        self.monitoring_manager.stop_write_poll_worker(wait=False)
         self.monitoring_manager._monitoring_poll_in_progress = False
         self.monitoring_manager._write_poll_in_progress = False
 
@@ -2667,75 +2673,7 @@ Unit ID: {unit_id}<br><br>
 
     def _update_write_tag_values(self):
         """Poll write-mode tags at a fixed 1000ms interval for their current device values."""
-        if not self.modbus or not self.monitoring_active:
-            return
-        if self._write_poll_in_progress:
-            self._log("Safety interlock: skipped write-tag poll because previous poll is still running")
-            return
-        if self._modbus_busy:
-            return
-
-        tags = [tag for tag in self._get_monitoring_tags() if tag["mode"] == "Write" and tag["enabled"]]
-        if not tags:
-            return
-
-        self._write_poll_in_progress = True
-        self.write_poll_timer.stop()
-        failed_count = 0
-        timestamp = time.strftime("%H:%M:%S")
-        try:
-            for tag in tags:
-                try:
-                    self._validate_tag_request(tag, "read")
-                    if not self._begin_modbus_operation(tag, "read"):
-                        self._log(f"Safety interlock: skipped write-tag read for {tag['name']} because the range is busy")
-                        continue
-
-                    start_time = time.perf_counter()
-                    try:
-                        value = self._read_tag_value(tag)
-                    finally:
-                        self._end_modbus_operation(tag, "read")
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
-
-                    display_value = self._format_monitoring_value(tag, value)
-                    raw_hex = self.monitoring_manager.format_raw_hex(tag, value)
-                    self._display_raw_data(
-                        f"Tag[{tag['name']}] (write-mode, current value)", value, elapsed_ms,
-                        function_code_for(tag["type"], is_write=False),
-                    )
-                    self._add_monitoring_row(
-                        tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                        tag["comment"], timestamp, raw_hex
-                    )
-                except Exception as e:
-                    failed_count += 1
-                    self._log(f"Write-tag value polling error for {tag['name']}: {e}")
-                    continue
-
-            # Only a fully failed tick (every write tag failed) counts toward
-            # auto-stop -- one bad tag shouldn't halt polling for the rest.
-            if tags and failed_count == len(tags):
-                self.monitoring_manager._monitoring_failure_count += 1
-                if self.monitoring_manager._monitoring_failure_count >= self.monitoring_manager._monitoring_max_failures:
-                    self._log(
-                        f"Monitoring stopped after {self.monitoring_manager._monitoring_failure_count} consecutive failed poll(s)"
-                    )
-                    self._monitoring_paused_by_disconnect = True
-                    self._stop_monitoring()
-                    QMessageBox.warning(
-                        self,
-                        "Monitoring Stopped",
-                        "Monitoring was stopped after repeated Modbus failures. ModbusLens will keep trying to "
-                        "reconnect in the background and resume monitoring automatically once it succeeds. If it "
-                        "doesn't recover, check write tag type, address, unit ID, and server status.",
-                    )
-            else:
-                self.monitoring_manager._monitoring_failure_count = 0
-        finally:
-            self._write_poll_in_progress = False
-            if self.monitoring_active:
-                self.write_poll_timer.start(1000)
+        self.monitoring_manager.update_write_tag_values()
 
     def _format_monitoring_value(self, tag, value):
         if value is None:

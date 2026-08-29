@@ -3,9 +3,12 @@ import os
 import socket
 import time
 
+from PySide6.QtWidgets import QMessageBox
+
 from modbus_meta import function_code_for
 
 from .poll_worker import TagPollWorker
+from .write_poll_worker import WriteTagPollWorker
 
 
 class MonitoringManager:
@@ -24,12 +27,16 @@ class MonitoringManager:
         self._log_file = None
         self._log_writer = None
         self._poll_worker = None  # the in-flight TagPollWorker, if a poll cycle is running
+        self._write_poll_worker = None  # the in-flight WriteTagPollWorker, if one is running
         # Workers told to stop (Stop Monitoring, disconnect) but not yet actually finished
         # -- held here so nothing drops the last Python reference to a still-running
         # QThread, which crashes. Each one removes itself via its own `finished` signal.
+        # Shared between the read-mode and write-mode poll workers -- this set doesn't
+        # care which kind of worker it's holding, only that it isn't finished yet.
         self._retiring_poll_workers = set()
         self._current_poll_timestamp = None
         self._current_poll_log_timestamp = None
+        self._current_write_poll_timestamp = None
 
     def start_csv_logging(self, file_path):
         """Start appending one row per poll tick to file_path."""
@@ -399,10 +406,32 @@ class MonitoringManager:
     def _on_poll_device_unreachable(self):
         self.parent._log("Fast LAN Mode: device unreachable, skipping remaining tags this cycle")
 
+    def _retire_worker(self, worker):
+        """A poll cycle's own completion signal (cycle_complete) is delivered to the GUI
+        thread as a queued connection from the worker thread, emitted as the very last
+        thing run() does -- but a queued delivery reaching the GUI thread's event loop
+        doesn't guarantee Qt has already finished internally marking that QThread as
+        no-longer-running. If the handler here were the *only* place still holding a
+        Python reference to the worker (which it is, once the caller's own
+        _poll_worker/_write_poll_worker slot is set to None), dropping that reference
+        would drop the object's refcount to zero and trigger its C++ destructor right
+        then -- and destroying a QThread Qt still considers running is undefined
+        behavior (can abort the process: "QThread: Destroyed while thread is still
+        running"). Confirmed reproducible, not just theoretical, while verifying the
+        write-mode poll fix. Same reasoning stop_poll_worker already applies on the
+        explicit-stop path -- this covers the natural-completion path the same way,
+        keeping a strong reference alive in _retiring_poll_workers until the QThread's
+        own finished signal proves it's actually done."""
+        if worker is None or worker.isFinished():
+            return
+        self._retiring_poll_workers.add(worker)
+        worker.finished.connect(lambda w=worker: self._retiring_poll_workers.discard(w))
+
     def _on_poll_cycle_complete(self, failed_count, total_count):
         """GUI-thread handler for the end of a poll cycle -- the auto-stop-after-N-failures
         logic and restarting monitoring_timer, exactly as the old inline loop's finally
         block did, just triggered by the worker finishing instead of falling out of a loop."""
+        self._retire_worker(self._poll_worker)
         self._poll_worker = None
         self._monitoring_poll_in_progress = False
 
@@ -422,6 +451,134 @@ class MonitoringManager:
 
         if self.parent.monitoring_active:
             self.parent.monitoring_timer.start()
+
+    def update_write_tag_values(self):
+        """Launch one Write-mode Tags poll cycle on a background WriteTagPollWorker
+        instead of reading every write-mode tag right here on the GUI thread -- mirrors
+        update_monitored_data's 2026-08-12 read-mode fix: a single unreachable write-mode
+        device used to freeze the whole window for timeout*retries seconds, every cycle,
+        since this ran as a plain blocking loop on write_poll_timer. The actual per-tag
+        results and the cycle-level wrap-up arrive later via
+        _on_write_tag_poll_result/_on_write_poll_cycle_complete, reproducing exactly what
+        this loop used to do inline, just off the GUI thread for the parts that block
+        (validation and the wire call itself)."""
+        if not self.parent.modbus or not self.parent.monitoring_active:
+            return
+        if self._write_poll_in_progress:
+            self.parent._log("Safety interlock: skipped write-tag poll because previous poll is still running")
+            return
+        if self.parent._modbus_busy:
+            return
+
+        tags = [tag for tag in self.get_monitoring_tags() if tag["mode"] == "Write" and tag["enabled"]]
+        if not tags:
+            return
+
+        self._write_poll_in_progress = True
+        self.parent.write_poll_timer.stop()
+        self._current_write_poll_timestamp = time.strftime("%H:%M:%S")
+
+        worker = WriteTagPollWorker(
+            tags, self.parent.modbus, self.parent._tag_user_address_to_offset, self.parent._read_tag_value,
+            self.parent._validate_tag_request, self.parent._reserve_range, self.parent._release_range,
+        )
+        worker.tag_result.connect(self._on_write_tag_poll_result)
+        worker.cycle_complete.connect(self._on_write_poll_cycle_complete)
+        self._write_poll_worker = worker
+        worker.start()
+
+    def _on_write_tag_poll_result(self, tag, value, elapsed_ms, status, detail, category):
+        """GUI-thread handler for one write-mode tag's result from the poll worker -- does
+        exactly what the old inline loop body did after getting a value back, since all of
+        this touches Qt widgets (the Tags table, Raw Data tab, System Log) and must stay
+        off the worker thread. Matches the pre-threading behavior's minimal error handling
+        exactly: unlike the read-mode poll, a failed write-mode tag never touches the Tags
+        table or Raw Data tab at all -- it just logs and leaves the row at its
+        last-known value."""
+        if status == "ok":
+            timestamp = self._current_write_poll_timestamp
+            display_value = self.parent._format_monitoring_value(tag, value)
+            raw_hex = self.format_raw_hex(tag, value)
+            self.parent._display_raw_data(
+                f"Tag[{tag['name']}] (write-mode, current value)", value, elapsed_ms,
+                function_code_for(tag["type"], is_write=False),
+            )
+            self.add_monitoring_row(
+                tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
+                tag["comment"], timestamp, raw_hex
+            )
+            return
+
+        if status == "busy":
+            self.parent._log(f"Safety interlock: skipped write-tag read for {tag['name']} because the range is busy")
+            return
+
+        # status == "exception": address/validation error, an unwritable tag type, or a
+        # failed pre-read -- the old inline try/except produced the exact same single
+        # generic log line for all of these, so detail (str(e)) reproduces it here too.
+        self.parent._log(f"Write-tag value polling error for {tag['name']}: {detail}")
+
+    def _on_write_poll_cycle_complete(self, failed_count, total_count):
+        """GUI-thread handler for the end of a write-mode poll cycle -- the
+        auto-stop-after-N-failures logic and restarting write_poll_timer, exactly as the
+        old inline loop's finally block did, just triggered by the worker finishing
+        instead of falling out of a loop. Deliberately shares _monitoring_failure_count
+        with the read-mode poll's own cycle-complete handler, matching the original's
+        behavior exactly -- read-mode and write-mode failures were already counted
+        against the same auto-stop threshold before this fix, not tracked separately."""
+        self._retire_worker(self._write_poll_worker)
+        self._write_poll_worker = None
+        self._write_poll_in_progress = False
+
+        # Only a fully failed tick (every write tag failed) counts toward auto-stop --
+        # one bad tag shouldn't halt polling for the rest.
+        if total_count and failed_count == total_count:
+            self._monitoring_failure_count += 1
+            if self._monitoring_failure_count >= self._monitoring_max_failures:
+                self.parent._log(
+                    f"Monitoring stopped after {self._monitoring_failure_count} consecutive failed poll(s)"
+                )
+                self.parent._monitoring_paused_by_disconnect = True
+                self.parent._stop_monitoring()
+                QMessageBox.warning(
+                    self.parent,
+                    "Monitoring Stopped",
+                    "Monitoring was stopped after repeated Modbus failures. ModbusLens will keep trying to "
+                    "reconnect in the background and resume monitoring automatically once it succeeds. If it "
+                    "doesn't recover, check write tag type, address, unit ID, and server status.",
+                )
+                return
+        else:
+            self._monitoring_failure_count = 0
+
+        if self.parent.monitoring_active:
+            self.parent.write_poll_timer.start(1000)
+
+    def stop_write_poll_worker(self, wait=False):
+        """Write-mode counterpart of stop_poll_worker -- see its docstring for the full
+        reasoning (non-blocking by default so a still-running worker can finish its
+        current tag in the background; wait=True, or wait_for_idle() below, for a hard
+        guarantee nothing is still touching self.modbus)."""
+        worker = self._write_poll_worker
+        self._write_poll_worker = None
+        if worker is None:
+            return
+
+        worker.stop()
+        for signal, slot in (
+            (worker.tag_result, self._on_write_tag_poll_result),
+            (worker.cycle_complete, self._on_write_poll_cycle_complete),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+
+        if wait:
+            worker.wait(10000)
+        elif worker.isRunning():
+            self._retiring_poll_workers.add(worker)
+            worker.finished.connect(lambda w=worker: self._retiring_poll_workers.discard(w))
 
     def stop_poll_worker(self, wait=False):
         """Stop the in-flight poll worker, if any. Non-blocking by default (Stop
@@ -460,13 +617,15 @@ class MonitoringManager:
             worker.finished.connect(lambda w=worker: self._retiring_poll_workers.discard(w))
 
     def wait_for_idle(self, timeout_ms=10000):
-        """Block until every poll worker this manager knows about -- the current one, if
-        any, plus any still-retiring ones from an earlier non-blocking stop_poll_worker
-        call -- has actually finished touching self.modbus. Needed before anything that
-        tears down or replaces the shared client (disconnect) or starts a second thread
-        against it with no interlock of its own (Register Scanner, which relies entirely
-        on everything else being truly stopped first, not on the range interlock)."""
+        """Block until every poll worker this manager knows about -- the current
+        read-mode and write-mode workers, if any, plus any still-retiring ones from an
+        earlier non-blocking stop -- has actually finished touching self.modbus. Needed
+        before anything that tears down or replaces the shared client (disconnect) or
+        starts a second thread against it with no interlock of its own (Register Scanner,
+        which relies entirely on everything else being truly stopped first, not on the
+        range interlock)."""
         self.stop_poll_worker(wait=False)
+        self.stop_write_poll_worker(wait=False)
         for worker in list(self._retiring_poll_workers):
             worker.wait(timeout_ms)
 
