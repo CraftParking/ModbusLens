@@ -420,21 +420,42 @@ section h2 {
 .doc-sidebar {
   position: sticky;
   top: 88px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
   max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
 }
 
 .doc-search {
-  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--panel-raised);
-  padding: 4px 6px 4px 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  padding: 9px 8px 9px 12px;
+  margin-bottom: 14px;
+}
+
+.doc-search-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.doc-search-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .doc-search input {
@@ -444,7 +465,7 @@ section h2 {
   background: transparent;
   color: var(--ink);
   font-family: var(--font-body);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   outline: none;
 }
 
@@ -454,21 +475,29 @@ section h2 {
 
 .doc-search-count {
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   color: var(--muted);
   white-space: nowrap;
-  min-width: 3.2em;
+  min-width: 2.6em;
   text-align: right;
 }
 
+.doc-search-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 4px;
+  border-left: 1px solid var(--line);
+}
+
 .doc-search button {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -477,17 +506,17 @@ section h2 {
 
 .doc-search button:hover:not(:disabled) {
   background: var(--grid-line);
-  color: var(--ink);
+  color: var(--accent);
 }
 
 .doc-search button:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: default;
 }
 
 .doc-search button svg {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
@@ -499,9 +528,6 @@ section h2 {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  overflow-y: auto;
-  padding-right: 8px;
-  min-height: 0;
 }
 
 .doc-nav a {
@@ -828,13 +854,16 @@ footer {
   .doc-sidebar {
     position: static;
     max-height: none;
+    overflow: visible;
+  }
+
+  .doc-search {
+    position: static;
   }
 
   .doc-nav {
     flex-direction: row;
     flex-wrap: wrap;
-    max-height: none;
-    overflow-y: visible;
   }
 }
 

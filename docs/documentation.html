@@ -42,14 +42,17 @@ into the app itself (Help &gt; Documentation), kept in sync with it.</p>
 <div class="doc-layout">
 <div class="doc-sidebar">
 <div class="doc-search">
-<input type="text" id="doc-search-input" placeholder="Search..." aria-label="Search documentation" autocomplete="off">
+<span class="doc-search-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+<input type="text" id="doc-search-input" placeholder="Search docs..." aria-label="Search documentation" autocomplete="off">
 <span class="doc-search-count" id="doc-search-count"></span>
+<span class="doc-search-controls">
 <button type="button" id="doc-search-prev" aria-label="Previous match" disabled>
 <svg viewBox="0 0 24 24"><path d="M18 15l-6-6-6 6"/></svg>
 </button>
 <button type="button" id="doc-search-next" aria-label="Next match" disabled>
 <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
 </button>
+</span>
 </div>
 <nav class="doc-nav" aria-label="Documentation topics">
 <a href="#getting-started" data-doc-nav>Getting Started</a>
