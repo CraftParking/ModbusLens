@@ -82,13 +82,13 @@ FEATURES_HTML = """
 <ul>
 <li>One row per Modbus transaction: time, operation, raw value in decimal and hex, Success/Failed status, and round-trip latency</li>
 <li>TX/RX Bytes - the literal bytes sent and received on the wire for that transaction, one level more raw than the decoded register values</li>
-<li>Exception column distinguishing a device-returned error (e.g. Illegal Data Address) from a plain communications timeout</li>
+<li>Exception column distinguishing a device-returned error (e.g. Illegal Data Address) from a plain communications timeout, with a tooltip explaining the exception's plain-English meaning and likely causes</li>
 <li>Color-coded status (green success, red failure) at a glance</li>
 <li>Filter by tag name/address/value, and by Success/Failed status, live as new rows arrive</li>
 <li>Show Statistics - total requests, success/failure counts, and average/min/max response times across everything logged</li>
 <li>Export CSV, and right-click (or Ctrl+C) to copy selected rows as text or as raw TX/RX hex bytes</li>
 <li>Capped at 1000 rows so it can't grow unbounded; oldest rows fall off automatically</li>
-<li>Integrated Frame Viewer decodes the selected row's TX/RX Modbus frames (MBAP/Unit ID/CRC/LRC, function code, data, exception) side by side, updating as you click or arrow-key through rows, with the table auto-scrolling to keep the selection in view; collapsible via a Hide/Show Frame Viewer button</li>
+<li>Integrated Frame Viewer decodes the selected row's TX/RX Modbus frames (MBAP/Unit ID/CRC/LRC, function code, data, exception) side by side, updating as you click or arrow-key through rows, with the table auto-scrolling to keep the selection in view; collapsible via a Hide/Show Frame Viewer button; every field and the raw hex footer can be selected and copied (right-click or Ctrl+C)</li>
 </ul>
 
 <h4>Trend</h4>
@@ -143,6 +143,13 @@ FEATURES_HTML = """
 <li>One dialog covering all of them under Diagnostics > Modbus Diagnostic Functions - pick a function, fill in the couple of parameters it needs, Run</li>
 </ul>
 
+<h4>Data Decoder</h4>
+<ul>
+<li>Diagnostics > Decode Registers - paste/type raw hex and see every interpretation at once: U16, S16, U32, S32, U64, S64, F32, F64, HEX, binary, ASCII (where printable), BCD (where valid), and individual register bits</li>
+<li>All four byte/word orderings (ABCD/BADC/CDAB/DCBA), switchable live with no re-typing</li>
+<li>No Modbus connection needed; stays open (modeless) alongside the Raw Data tab or an external datasheet instead of blocking the main window like every other dialog</li>
+</ul>
+
 <h4>Scanner</h4>
 <ul>
 <li>Auto-discovers which addresses respond for a chosen function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range</li>
@@ -183,7 +190,9 @@ CHANGELOG_HTML = """
 <li>Fast LAN Mode (Connection Settings, TCP) - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off</li>
 <li>Tags table: drag-to-reorder columns, a show/hide column picker, per-tag enable/disable, Delete key and Ctrl+C copy</li>
 <li>Raw Data: an Exception column distinguishing a device-returned error from a plain timeout, CSV export, and copy-as-text/hex-bytes</li>
-<li>Raw Data gained an integrated Frame Viewer: select any transaction (click or arrow keys) to see its TX/RX Modbus frames decoded side by side - MBAP/Unit ID/CRC/LRC, function code, data, and any exception - with the table auto-scrolling to follow the selection, and a Hide/Show Frame Viewer button to reclaim the tab's full height</li>
+<li>Raw Data's Exception column now shows a tooltip on hover with the exception's plain-English meaning and a short list of likely causes, not just its name</li>
+<li>Raw Data gained an integrated Frame Viewer: select any transaction (click or arrow keys) to see its TX/RX Modbus frames decoded side by side - MBAP/Unit ID/CRC/LRC, function code, data, and any exception - with the table auto-scrolling to follow the selection, and a Hide/Show Frame Viewer button to reclaim the tab's full height; every field and the raw hex footer can be selected and copied</li>
+<li>Diagnostics > Decode Registers: a standalone hex decoder (U16 through F64, HEX, binary, ASCII, BCD, individual bits, all four byte/word orderings) - no connection needed, and stays open alongside other work instead of blocking the window</li>
 <li>Address Table: a register display format (U16/S16/U32/S32/F32) instead of only plain values</li>
 <li>Trend reworked around a tag picker: pen index, custom label, and a Raw/Scaled/Auto mode per pen, alongside the existing detach and engineering-scaling support</li>
 <li>Show Statistics gained a failure-cause breakdown (connection/timeout/device-exception/rejected)</li>
@@ -199,6 +208,7 @@ CHANGELOG_HTML = """
 <li>Start Monitoring button lost its "running" visual state after switching tabs away and back, even though monitoring was still active underneath</li>
 <li>Recent Connections dropdown bugs, and various connection/monitoring/CSV import edge cases</li>
 <li>Tag Monitoring's polling moved off the GUI thread, and Address Table/Trend/Script reads now share one interlock with it, closing several races where a scan, a script, and live polling could touch the connection at the same time</li>
+<li>Write-mode Tags polling (the current-value readback for tags you're about to write to) also moved off the GUI thread, closing the same freeze-on-an-unreachable-device gap the read-mode fix above closed for read-mode tags</li>
 </ul>
 
 <h3>v2.1.0</h3>

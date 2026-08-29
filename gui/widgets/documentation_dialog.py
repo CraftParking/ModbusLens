@@ -99,6 +99,8 @@ read/write: Read Exception Status, Diagnostics (Loopback, Restart Communications
 Register, Clear Counters), Get Comm Event Counter/Log, Report Server ID, Read/Write File Record,
 Mask Write Register, Read FIFO Queue, and Read Device Information. See the
 <b>Diagnostic Functions</b> topic.</li>
+<li><b>Decode Registers</b> - opens a standalone hex decoder, no connection required. See the
+<b>Data Decoder</b> topic.</li>
 <li><b>System Logs</b> - opens a dialog with the full, scrollable System Logs history (the same
 color-coded write/connect/error log shown live in the app). Handy when you need to scroll back
 further than fits on screen. <b>Ctrl+scroll wheel</b> zooms its text size in and out.</li>
@@ -348,7 +350,11 @@ with no response at all.</li>
 <li><b>Exception</b> - the decoded Modbus exception description (e.g. "Illegal Data Address")
 when the device itself replied but refused the request. Left blank for a plain communications
 failure (timeout, no response at all), so you can tell "the device rejected this" apart from
-"nothing answered" at a glance instead of both just showing Failed.</li>
+"nothing answered" at a glance instead of both just showing Failed. Hover over an Exception
+cell for a tooltip with the exception's plain-English meaning and a short list of likely
+causes (e.g. for Illegal Data Address: wrong start address, a 0/1-based addressing mismatch,
+the wrong register space) - a starting point for what to check next, not just a name to go
+look up.</li>
 <li><b>Latency (ms)</b> - how long that specific request took round-trip. A device that's
 technically working but degrading usually shows up here first, before it starts failing outright.</li>
 </ul>
@@ -393,6 +399,11 @@ row visible even while new transactions keep arriving underneath you.</p>
 <p>The <b>Hide Frame Viewer</b> button (next to Export CSV) collapses the panel so the table gets
 the tab's full height when you just want to scan through transactions - click it again
 (<b>Show Frame Viewer</b>) to bring it back; the last decoded frame is still there, not cleared.</p>
+<p>Every part of the decoded frame can be selected and copied: right-click (or <b>Ctrl+C</b> on a
+selection) either the TX or RX field table for <b>Copy Row(s)</b> - tab-separated, ready to paste
+into a spreadsheet. The raw hex line along the bottom can be click-dragged to select and copied
+directly (Ctrl+C or right-click) like any selectable text, for pasting straight into a hex viewer
+or a bug report.</p>
 """),
 
     ("Trend", """
@@ -764,6 +775,33 @@ to." <b>Read Code</b> selects Basic, Regular, Extended, or a single specific obj
 <p>Every function here goes through the same connection as everything else in ModbusLens (Address
 Table, Tags, Scanner) - you need to already be connected, and a run briefly uses the connection
 like any other read/write.</p>
+"""),
+
+    ("Data Decoder", """
+<h2>Data Decoder</h2>
+<p><b>Diagnostics &gt; Decode Registers</b> opens a standalone "paste hex, see every
+interpretation" tool - no connection required, and no live Tag involved. Useful when you have a
+raw value from somewhere (the Raw Data tab, a device's datasheet, a captured frame) and don't
+know how to interpret it, without creating a Tags-tab row and guessing a Format against a live
+device.</p>
+<p>Type or paste the raw hex bytes - spaces, commas, and <code>0x</code> prefixes are all fine
+(<code>41 48 00 00</code>, <code>0x41,0x48,0x00,0x00</code>, and <code>41480000</code> all work
+the same). The results table updates live as you type: <b>U16</b>, <b>S16</b>, <b>HEX</b>, and
+<b>Binary</b> per register, plus <b>U32</b>/<b>S32</b>/<b>F32</b> once there are at least 2
+registers and <b>U64</b>/<b>S64</b>/<b>F64</b> once there are at least 4, <b>ASCII</b> (only
+shown when every byte is printable text) and <b>BCD</b> (only shown when every nibble is a valid
+0-9 decimal digit), and each register's individual bits as a 16-character binary string.</p>
+<p>The <b>Byte/word order</b> dropdown covers all four standard orderings - <b>ABCD</b> (plain
+big-endian Modbus, the default), <b>BADC</b> (the two bytes within each register swapped),
+<b>CDAB</b> (register order reversed - the same idea as the Tags table's <code>_SWAP</code>
+formats), and <b>DCBA</b> (both). Switching it re-decodes the same bytes immediately, no
+re-typing needed - useful for eyeballing which ordering actually makes a device's value make
+sense (e.g. a plausible-looking float vs. an implausible one). ASCII and BCD are always read in
+the order you typed them, independent of this dropdown, since reordering bytes doesn't make
+sense for text or packed-decimal data the way it does for a number.</p>
+<p>Unlike every other dialog in ModbusLens, this one stays open when you click elsewhere - it's
+meant to sit alongside the Raw Data tab or an external datasheet while you work, not block the
+main window.</p>
 """),
 
     ("Multiple Windows", """

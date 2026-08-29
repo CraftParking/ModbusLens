@@ -49,6 +49,7 @@
 - Scanner: auto-discover which addresses actually respond on a connected device (TCP or serial)
 - Modbus Diagnostic Functions: FC07/08/11/12/17/20/21/22/24/43 - exception status, diagnostics, comm event counter/log, report server ID, file record read/write, mask write register, FIFO queue, and device identification
 - Save/Load Session: connection settings, Tags, Address Table range, and write bounds together in one file
+- Data Decoder: paste raw hex, see it decoded as U16 through F64/HEX/binary/ASCII/BCD/bits, in all four byte/word orderings - no connection needed
 
 ---
 
@@ -163,13 +164,13 @@
 ### Raw Data
 - One row per Modbus transaction: time, operation, raw value in decimal and hex, Success/Failed status, and round-trip latency  
 - TX/RX Bytes - the literal bytes sent and received on the wire for that transaction (captured via pymodbus's trace hook), one level more raw than the decoded register values  
-- Exception column - the decoded Modbus exception (e.g. "Illegal Data Address") when the device itself refused the request, left blank for a plain communications timeout, so the two don't just blur into the same red Failed status  
+- Exception column - the decoded Modbus exception (e.g. "Illegal Data Address") when the device itself refused the request, left blank for a plain communications timeout, so the two don't just blur into the same red Failed status. Hover for a tooltip with the exception's plain-English meaning and a short list of likely causes  
 - Color-coded status (green success, red failure) at a glance, same coloring as the other logs  
 - Filter by tag name/address/value, and by Success/Failed status, live as new rows arrive  
 - Show Statistics - total requests, success/failure counts, average/min/max response times, and a failure-cause breakdown (Connection, Timeout, Device-returned Exception, Rejected locally, Other) across everything logged, not just what's currently visible  
 - Export CSV of whatever's currently visible (respects the active filter); right-click a row (or Ctrl+C) to copy selected rows as text or as raw TX/RX hex bytes  
 - Capped at 1000 rows so it can't grow unbounded; oldest rows fall off automatically  
-- **Frame Viewer** - an integrated panel below the table that decodes the selected transaction's TX/RX frames side by side: the MBAP header for TCP or Unit ID + CRC/LRC for RTU/ASCII, then function code, data bytes, and any exception code, plus the raw hex for both directions. Select a row by clicking or with the arrow keys/Home/End/Page Up/Page Down - either way the panel updates immediately and the table auto-scrolls to keep the selection in view, even while new transactions keep arriving. A **Hide Frame Viewer** button collapses it to give the table the full tab height without losing the last decoded frame.  
+- **Frame Viewer** - an integrated panel below the table that decodes the selected transaction's TX/RX frames side by side: the MBAP header for TCP or Unit ID + CRC/LRC for RTU/ASCII, then function code, data bytes, and any exception code, plus the raw hex for both directions. Select a row by clicking or with the arrow keys/Home/End/Page Up/Page Down - either way the panel updates immediately and the table auto-scrolls to keep the selection in view, even while new transactions keep arriving. A **Hide Frame Viewer** button collapses it to give the table the full tab height without losing the last decoded frame. Every decoded field and the raw hex footer can be selected and copied - right-click or Ctrl+C.  
 
 ### Trend
 - Up to 20 pens, each picked straight from your Tags list (no retyping type/address/format) - only Holding/Input Register tags with a numeric format show up, since a trend line is for continuously varying values, not on/off state  
@@ -216,6 +217,12 @@
 ### Diagnostic Functions
 - Diagnostics menu tool covering the Modbus function codes beyond basic read/write, in one function-picker dialog: FC07 Read Exception Status, FC08 Diagnostics (Loopback/Query Data, Restart Communications, Read Diagnostic Register, Clear Counters), FC11/12 Get Comm Event Counter/Log, FC17 Report Server ID, FC20/21 Read/Write File Record, FC22 Mask Write Register, FC24 Read FIFO Queue, and FC43 Read Device Information  
 - Niche next to everyday polling, but a real gap for compliance/interop testing - each function needs at most a few parameters, filled in right in the dialog  
+
+### Data Decoder
+- Diagnostics > Decode Registers - a standalone "paste hex, see every interpretation" tool, no connection or live tag needed  
+- Type or paste raw hex (spaces, commas, and `0x` prefixes all fine) and see it live as U16, S16, U32, S32, U64, S64, F32, F64, HEX, binary, ASCII (only shown when every byte is printable), BCD (only shown when every nibble is a valid decimal digit), and each register's individual bits  
+- All four byte/word orderings - ABCD, BADC, CDAB, DCBA - switchable live with no re-typing, for figuring out which ordering makes an unfamiliar device's data actually make sense  
+- Modeless, unlike every other dialog in ModbusLens - stays open alongside the Raw Data tab or an external datasheet instead of blocking the main window  
 
 ### Scanner
 - Auto-discovers which addresses respond for a chosen function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range - works the same way whether the current connection is TCP or serial  
