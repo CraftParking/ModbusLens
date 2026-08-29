@@ -402,6 +402,116 @@ section h2 {
   margin-bottom: 8px;
 }
 
+/* ---------------- Documentation ---------------- */
+
+.doc-intro {
+  color: var(--muted);
+  max-width: 60ch;
+  margin: -12px 0 40px 0;
+}
+
+.doc-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 40px;
+  align-items: start;
+}
+
+.doc-nav {
+  position: sticky;
+  top: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.doc-nav a {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  text-decoration: none;
+  color: var(--muted);
+}
+
+.doc-nav a:hover {
+  color: var(--ink);
+  background: var(--grid-line);
+}
+
+.doc-content {
+  min-width: 0;
+}
+
+.doc-section {
+  padding: 32px 0;
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 88px;
+}
+
+.doc-section:last-child {
+  border-bottom: none;
+}
+
+.doc-section h2 {
+  font-size: 1.6rem;
+  margin: 0 0 16px 0;
+}
+
+.doc-section h3 {
+  font-size: 1.1rem;
+  margin: 24px 0 10px 0;
+}
+
+.doc-section p,
+.doc-section li {
+  color: var(--muted);
+}
+
+.doc-section ul,
+.doc-section ol {
+  padding-left: 22px;
+}
+
+.doc-section li {
+  margin-bottom: 6px;
+}
+
+.doc-section code {
+  font-family: var(--font-mono);
+  background: var(--grid-line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.92em;
+  color: var(--ink);
+}
+
+.doc-section pre {
+  font-family: var(--font-mono);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.doc-section table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+}
+
+.doc-section td {
+  border: 1px solid var(--line);
+  padding: 6px 12px;
+  vertical-align: top;
+  color: var(--muted);
+}
+
 /* ---------------- Screenshots ---------------- */
 
 .shot-stack {
@@ -613,6 +723,18 @@ footer {
   .topbar nav {
     gap: 16px;
     font-size: 0.85rem;
+  }
+
+  .doc-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .doc-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: none;
+    overflow-y: visible;
   }
 }
 
