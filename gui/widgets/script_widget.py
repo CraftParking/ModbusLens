@@ -8,7 +8,7 @@ except ImportError:
     psutil = None
 
 from PySide6.QtCore import Qt, QTimer, QSettings
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit,
     QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox, QLabel, QComboBox,
@@ -34,7 +34,7 @@ REVERSE_TYPE_ALIASES = {full: short for short, full in TYPE_ALIASES.items()}
 MIN_ADDRESS, MAX_ADDRESS = 0, 65535
 
 TAG_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-SCRIPT_KEYWORDS = {"WRITE", "READ", "WAIT", "LOG", "LET", "REPEAT", "UNTIL", "END", "IF", "THEN", "ON", "OFF", "TRUE", "FALSE"}
+SCRIPT_KEYWORDS = {"WRITE", "READ", "WAIT", "LOG", "LET", "REPEAT", "UNTIL", "END", "IF", "THEN", "ON", "OFF", "TRUE", "FALSE", "ASSERT"}
 RESERVED_TAG_NAMES = (
     SCRIPT_KEYWORDS
     | set(TYPE_ALIASES.keys())
@@ -55,6 +55,13 @@ def validate_tag_name(name):
     if name.upper() in RESERVED_TAG_NAMES:
         return f"'{name}' is a reserved word and can't be used as a tag name."
     return None
+
+# Mirrors status_indicator.py's connected/error/connecting palette so ASSERT results read
+# consistently with the rest of the app's status coloring in both themes.
+ASSERT_STATUS_COLORS = {
+    False: {"PASS": "#2E7D32", "FAIL": "#C62828", "ERROR": "#E65100"},
+    True: {"PASS": "#81C784", "FAIL": "#EF5350", "ERROR": "#FFB74D"},
+}
 
 COMPARATORS = {
     "==": lambda a, b: a == b,
@@ -89,6 +96,11 @@ DEFAULT_SCRIPT_HELP = """# ModbusLens script - one command per line, # or // sta
 #       ...
 #   END
 #   IF <expr> <op> <expr> THEN <command>   (op: == != > < >= <=)
+#   ASSERT <expr> <op> <expr>              (op: == != > < >= <=)
+#
+#   ASSERT records a PASS or FAIL in the Results panel and keeps going either way --
+#   it's a check, not a stop condition. A genuine error while evaluating it (e.g. a
+#   read failure) still stops the script, same as any other command.
 #
 #   <expr> can mix numbers, variables, "strings", + - * / ( ), and
 #   inline reads (HR 0, or the equivalent READ HR 0). LOG concatenates
@@ -114,6 +126,7 @@ DEFAULT_SCRIPT_HELP = """# ModbusLens script - one command per line, # or // sta
 #     WAIT 200
 # END
 # LOG "HR0 reached 100"
+# ASSERT HR 0 == 100
 """
 
 
@@ -370,6 +383,9 @@ def _parse_line(line):
     if upper.startswith("IF "):
         return _parse_if(line[3:].strip())
 
+    if upper.startswith("ASSERT "):
+        return _parse_assert(line[7:].strip())
+
     raise ScriptError(f"unrecognized command: {line}")
 
 
@@ -447,6 +463,12 @@ def _parse_condition(text):
     return {"left": left_expr, "op": op, "right": right_expr}
 
 
+def _parse_assert(rest):
+    if not rest:
+        raise ScriptError("ASSERT requires '<expr> <op> <expr>'")
+    return Instruction("ASSERT", {**_parse_condition(rest), "text": rest})
+
+
 def _parse_if(rest):
     if " THEN " not in f" {rest.upper()} ":
         raise ScriptError("IF requires '<expr> <op> <expr> THEN <command>'")
@@ -469,13 +491,16 @@ class ScriptRunner:
     """Drives a compiled script one instruction at a time; WAIT hands control back instead of blocking."""
 
     def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None,
-                 tags_getter=None, reserve_range=None, release_range=None):
+                 tags_getter=None, reserve_range=None, release_range=None, result_callback=None):
         self.modbus_getter = modbus_getter
         self.server_getter = server_getter
         self.target_mode = target_mode  # "client" or "server"
         self.tags_getter = tags_getter or (lambda: [])
         self.log = log_callback
         self.raw_data_callback = raw_data_callback
+        # Fires once per ASSERT with (status, assertion_text, detail) -- "PASS"/"FAIL"/"ERROR".
+        # Default no-op keeps ScriptRunner usable standalone (e.g. in tests) with no UI behind it.
+        self.result_callback = result_callback or (lambda status, text, detail: None)
         # Join the same busy/overlap interlock Tags-table writes and reads use
         # (main_window._reserve_range/_release_range) -- a script's step_timer lets
         # the Qt event loop run other timers (Tags Monitoring, Trend) between steps,
@@ -592,7 +617,28 @@ class ScriptRunner:
                 return self._execute(instr.args["then"])
             return None
 
+        if instr.op == "ASSERT":
+            self._execute_assert(instr.args)
+            return None
+
         raise ScriptError(f"unknown instruction {instr.op}")
+
+    def _execute_assert(self, args):
+        text = args["text"]
+        try:
+            left = self._eval(args["left"])
+            right = self._eval(args["right"])
+        except ScriptError as e:
+            self.log(f"ASSERT ERROR: {text} -- {e}")
+            self.result_callback("ERROR", text, str(e))
+            raise
+        detail = f"{left} {args['op']} {right}"
+        if COMPARATORS[args["op"]](left, right):
+            self.log(f"ASSERT PASS: {text}")
+            self.result_callback("PASS", text, detail)
+        else:
+            self.log(f"ASSERT FAIL: {text} ({detail})")
+            self.result_callback("FAIL", text, detail)
 
     def _eval_condition(self, cond):
         left = self._eval(cond["left"])
@@ -889,7 +935,11 @@ class ScriptWidget(QWidget):
         editor_splitter.setSizes([420, 150])
         main_splitter.addWidget(editor_splitter)
 
-        main_splitter.addWidget(self._build_variables_panel())
+        side_splitter = QSplitter(Qt.Vertical)
+        side_splitter.addWidget(self._build_variables_panel())
+        side_splitter.addWidget(self._build_results_panel())
+        side_splitter.setSizes([220, 220])
+        main_splitter.addWidget(side_splitter)
         main_splitter.setSizes([700, 220])
         layout.addWidget(main_splitter, 1)
 
@@ -912,6 +962,40 @@ class ScriptWidget(QWidget):
         self.variables_table.setStyleSheet(self._table_style())
         panel_layout.addWidget(self.variables_table)
         return panel
+
+    def _build_results_panel(self):
+        """Structured PASS/FAIL/ERROR outcomes from ASSERT steps, as a scannable table
+        alongside the console log rather than mixed in with every other log line."""
+        panel = QWidget()
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setSpacing(4)
+        panel_layout.addWidget(QLabel("Assertion Results"))
+
+        self.results_table = QTableWidget(0, 3)
+        self.results_table.setHorizontalHeaderLabels(["Assertion", "Status", "Detail"])
+        self.results_table.verticalHeader().setVisible(False)
+        self.results_table.horizontalHeader().setStretchLastSection(True)
+        self.results_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.results_table.setSelectionMode(QTableWidget.NoSelection)
+        self.results_table.setStyleSheet(self._table_style())
+        panel_layout.addWidget(self.results_table)
+        return panel
+
+    def _reset_results_panel(self):
+        self.results_table.setRowCount(0)
+
+    def _record_assert_result(self, status, text, detail):
+        table = self.results_table
+        row = table.rowCount()
+        table.insertRow(row)
+        table.setItem(row, 0, QTableWidgetItem(text))
+        status_item = QTableWidgetItem(status)
+        is_dark = getattr(self.parent_window, "_theme_mode", "light") == "dark"
+        status_item.setForeground(QColor(ASSERT_STATUS_COLORS[is_dark][status]))
+        table.setItem(row, 1, status_item)
+        table.setItem(row, 2, QTableWidgetItem(detail))
+        table.scrollToBottom()
 
     def _table_style(self):
         if self.parent_window is not None and hasattr(self.parent_window, "_get_table_style"):
@@ -1055,6 +1139,7 @@ class ScriptWidget(QWidget):
             return
 
         self._reset_variables_panel(collect_variable_names(instructions))
+        self._reset_results_panel()
         self._log_console(f"Compiled OK - {len(instructions)} instruction(s)")
         QMessageBox.information(self, "Compile", f"Script compiled successfully ({len(instructions)} instruction(s)).")
 
@@ -1117,9 +1202,11 @@ class ScriptWidget(QWidget):
             getattr(self.parent_window, "_get_monitoring_tags", None),
             getattr(self.parent_window, "_reserve_range", None),
             getattr(self.parent_window, "_release_range", None),
+            self._record_assert_result,
         )
         self.runner.load(instructions)
         self._reset_variables_panel(collect_variable_names(instructions))
+        self._reset_results_panel()
         self.running = True
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)

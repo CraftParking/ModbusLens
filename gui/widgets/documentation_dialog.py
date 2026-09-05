@@ -530,6 +530,11 @@ checks you'd otherwise click through by hand every time.</p>
 <td>Loop until a condition becomes true, checked before each pass.</td></tr>
 <tr><td><code>IF &lt;expr&gt; &lt;op&gt; &lt;expr&gt; THEN &lt;command&gt;</code></td>
 <td>Run one command conditionally. op is <code>== != &gt; &lt; &gt;= &lt;=</code>.</td></tr>
+<tr><td><code>ASSERT &lt;expr&gt; &lt;op&gt; &lt;expr&gt;</code></td>
+<td>Check a condition and record PASS/FAIL in the Results panel. A FAIL is logged and
+recorded but does <b>not</b> stop the script - it's a check, not a stop condition. A
+genuine error while evaluating it (e.g. a failed read) still stops the script, same as
+any other command.</td></tr>
 </table>
 
 <h3>Expressions</h3>
@@ -561,6 +566,14 @@ live as the script runs - no need to sprinkle <code>LOG</code> lines everywhere 
 variable currently holds. It populates as soon as you <b>Compile</b> (values blank until the script
 actually runs), keeps updating on every step while running, and holds the last values after the
 script finishes or is stopped, so you can still read them afterward.</p>
+
+<h3>Assertion Results panel</h3>
+<p>Below the Variables panel, this table logs every <code>ASSERT</code> outcome as the script
+runs: the assertion text, a color-coded <b>PASS</b>/<b>FAIL</b>/<b>ERROR</b> status, and the actual
+values compared. Unlike a failed read or write, a failed assertion doesn't stop the script - so a
+single run can report every check's outcome, not just the first failure - which makes
+<code>ASSERT</code> the right tool for a repeatable acceptance test where you want a full pass/fail
+summary at the end. It's cleared each time you Compile or Run.</p>
 
 <h3>Other tools in the editor</h3>
 <ul>
@@ -664,6 +677,16 @@ WRITE Pump_Enable = ON</pre>
 (Coil) tag already exist on the Tags tab - use <b>Insert Tag</b> to drop the name in without
 retyping it. Reads a tag name exactly like <code>HR 0</code>/<code>COIL 0</code> would, but stays
 correct if that tag's address ever changes, since the script only cares about the name.</p>
+
+<h4>9. Acceptance test with ASSERT</h4>
+<pre>WRITE HR 0 = 100
+WAIT 200
+ASSERT HR 0 == 100
+ASSERT COIL 0 == ON
+LOG "Acceptance test complete - see Results panel"</pre>
+<p>Writes a value, then checks it and a coil's state landed as expected. Both checks are recorded
+in the Results panel with PASS/FAIL - a FAIL doesn't abort the script, so every assertion below it
+still runs and reports, giving you a complete pass/fail summary in one run.</p>
 
 <h3>Limits</h3>
 <p>To keep a typo from hanging the app or running forever: a loop with no WAIT still hands

@@ -111,10 +111,11 @@ FEATURES_HTML = """
 <h4>Scripting</h4>
 <ul>
 <li>A small, purpose-built test-sequence language instead of embedded Python - no imports, no client objects, no exception handling to write, just e.g. WRITE HR 1 = 100</li>
-<li>WRITE, READ, WAIT, LOG, LET, REPEAT...END, REPEAT UNTIL...END, IF...THEN</li>
+<li>WRITE, READ, WAIT, LOG, LET, REPEAT...END, REPEAT UNTIL...END, IF...THEN, ASSERT</li>
 <li>Runs step by step without freezing the UI, with a console showing what ran</li>
 <li>Target either a live connected device (Client-target) or ModbusLens's own Server simulator (Server-target)</li>
 <li>Live Variables panel next to the editor shows every LET variable's current value while the script runs</li>
+<li>Assertion Results panel logs every ASSERT as PASS/FAIL/ERROR - a FAIL doesn't stop the script, so one run reports every check</li>
 <li>Insert Tag menu drops a reference to any tag from your Tags list straight into the script</li>
 <li>Live CPU usage indicator, useful for spotting a runaway loop</li>
 <li>Steps never run faster than a 20ms floor, even if a script uses WAIT 0 or skips WAIT entirely</li>
@@ -188,6 +189,7 @@ CHANGELOG_HTML = """
 <li>Raw Data gained an Exception column (now with a hover tooltip explaining likely causes) and an integrated Frame Viewer decoding TX/RX frames side by side - every field and the raw hex can be selected and copied</li>
 <li>Diagnostics > Decode Registers: a standalone hex decoder (U16 through F64, HEX, binary, ASCII, BCD, individual bits, all four byte/word orderings) - no connection needed, stays open alongside other work</li>
 <li>A shared read cache and coalesced adjacent tag reads cut duplicate traffic between Tags/Trend/Address Table on the same poll cycle</li>
+<li>Script engine gained ASSERT and an Assertion Results panel - checks are logged as PASS/FAIL/ERROR without stopping the script on a FAIL, so one run reports every check</li>
 </ul>
 <p><u>Fixed</u></p>
 <ul>

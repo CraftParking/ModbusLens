@@ -193,10 +193,11 @@
 
 ### Scripting
 - A small, purpose-built test-sequence language instead of embedded Python - built so a controls/automation engineer can write a test sequence without knowing how to program: no imports, no client objects, no exception handling to write, just `WRITE HR 1 = 100`. The tradeoff is deliberate - it can only do Modbus reads/writes/waits/logging/arithmetic, never arbitrary code, which is also what makes the safety limits below possible in the first place  
-- `WRITE`, `READ`, `WAIT`, `LOG`, `LET`, `REPEAT...END`, `REPEAT UNTIL...END`, `IF...THEN`  
+- `WRITE`, `READ`, `WAIT`, `LOG`, `LET`, `REPEAT...END`, `REPEAT UNTIL...END`, `IF...THEN`, `ASSERT`  
 - Runs step by step without freezing the UI, with a console showing what ran  
 - Target either a live connected device (Client-target) or ModbusLens's own Server simulator (Server-target), so you can dry-run a script safely before pointing it at real hardware  
 - Live Variables panel next to the editor shows every `LET` variable's current value while the script runs, no extra `LOG` lines needed just to watch state  
+- Assertion Results panel logs every `ASSERT` as PASS/FAIL/ERROR with the compared values - a FAIL is recorded and logged but doesn't stop the script, so a single run can report every check's outcome, not just the first failure; a genuine evaluation error (e.g. a failed read) still stops the script like any other command  
 - Insert Tag menu drops a tag's name straight into the script - `WRITE <tag name> = <value>` and `READ <tag name>` (and bare tag names in expressions, e.g. `LET x = Boiler_Temp + 1`) resolve against whatever that tag is currently configured as, instead of only accepting a fixed type+address  
 - An Add Tag button on the Script tab opens a popup listing every tag (any type), and picking one drops its name in at the cursor - if the tag doesn't exist yet, the popup's own Add Tag... button jumps to the Tags tab to create one  
 - Live CPU usage indicator, useful for spotting a runaway loop  
