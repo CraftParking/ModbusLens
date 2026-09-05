@@ -7,7 +7,7 @@ try:
 except ImportError:
     psutil = None
 
-from PySide6.QtCore import Qt, QTimer, QSettings
+from PySide6.QtCore import Qt, QTimer, QSettings, QEvent
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit,
@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 
 from log_format import format_log_html
 from modbus_meta import function_code_for
-from theme import apply_dropdown_delegate
+from theme import apply_dropdown_delegate, get_colors
 from widgets.trend_widget import TagPickerDialog
 
 HIDE_RUN_WARNING_KEY = "hide_script_run_warning"
@@ -833,6 +833,15 @@ class ScriptWidget(QWidget):
 
         self._setup_ui()
 
+        # Qt's real placeholder text (setPlaceholderText) doesn't scroll -- its scrollbar
+        # range comes from the (empty) document, not the placeholder overlay, so a
+        # placeholder this long just gets clipped to the visible viewport with no way to
+        # see the rest. Showing it as real, scrollable document text instead (grey until
+        # the user actually starts editing) fixes that.
+        self.editor.installEventFilter(self)
+        self._help_visible = False
+        self._show_help_placeholder()
+
         self._psutil_available = psutil is not None
         if self._psutil_available:
             psutil.cpu_percent(interval=None)  # first call just primes the baseline
@@ -921,7 +930,6 @@ class ScriptWidget(QWidget):
 
         self.editor = QPlainTextEdit()
         self.editor.setFont(QFont("Consolas", 10))
-        self.editor.setPlaceholderText(DEFAULT_SCRIPT_HELP)
         self.editor.setContextMenuPolicy(Qt.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self._show_editor_context_menu)
         editor_splitter.addWidget(self.editor)
@@ -996,6 +1004,42 @@ class ScriptWidget(QWidget):
         table.setItem(row, 1, status_item)
         table.setItem(row, 2, QTableWidgetItem(detail))
         table.scrollToBottom()
+
+    # Keys that don't modify the document -- pure navigation/modifier presses, used to
+    # click or scroll around the help text (including to read/copy it) without erasing it.
+    _NAV_ONLY_KEYS = {
+        Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
+        Qt.Key_Home, Qt.Key_End, Qt.Key_PageUp, Qt.Key_PageDown,
+        Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta,
+        Qt.Key_CapsLock, Qt.Key_NumLock, Qt.Key_ScrollLock, Qt.Key_Escape,
+    }
+
+    def _key_event_modifies_text(self, event):
+        """True for a keystroke that would actually change the document -- typing,
+        Enter/Tab/Backspace/Delete, or Ctrl+V paste. False for pure navigation/selection
+        keys and clipboard/select-all shortcuts (Ctrl+C, Ctrl+A, ...), so a user can
+        click into the help text to scroll it, or select and copy an example out of it,
+        without that being mistaken for "starting to write a script"."""
+        if event.modifiers() & (Qt.ControlModifier | Qt.MetaModifier):
+            return event.key() == Qt.Key_V
+        return event.key() not in self._NAV_ONLY_KEYS
+
+    def _apply_help_styling(self, active):
+        self._help_visible = active
+        self.editor.setStyleSheet(f"color: {self._theme_colors()['text_disabled']};" if active else "")
+
+    def _show_help_placeholder(self):
+        self.editor.setPlainText(DEFAULT_SCRIPT_HELP)
+        self._apply_help_styling(True)
+
+    def eventFilter(self, obj, event):
+        if obj is self.editor:
+            if event.type() == QEvent.KeyPress and self._help_visible and self._key_event_modifies_text(event):
+                self.editor.clear()
+                self._apply_help_styling(False)
+            elif event.type() == QEvent.FocusOut and not self.editor.toPlainText().strip():
+                self._show_help_placeholder()
+        return super().eventFilter(obj, event)
 
     def _table_style(self):
         if self.parent_window is not None and hasattr(self.parent_window, "_get_table_style"):
@@ -1143,13 +1187,20 @@ class ScriptWidget(QWidget):
         self._log_console(f"Compiled OK - {len(instructions)} instruction(s)")
         QMessageBox.information(self, "Compile", f"Script compiled successfully ({len(instructions)} instruction(s)).")
 
+    def _theme_colors(self):
+        return get_colors(getattr(self.parent_window, "_theme_mode", "light"))
+
     def _confirm_run_on_live_system(self):
         settings = QSettings("ModbusLens", "ModbusLens")
         if settings.value(HIDE_RUN_WARNING_KEY, False, type=bool):
             return True
 
+        c = self._theme_colors()
         box = QMessageBox(self)
-        box.setIcon(QMessageBox.Warning)
+        # NoIcon, not the stock Warning glyph: that stock triangle is a saturated,
+        # platform-drawn yellow/orange that ignores the app's theme entirely and
+        # looks out of place against its otherwise muted, flat palette.
+        box.setIcon(QMessageBox.NoIcon)
         box.setWindowTitle("Run Script")
         box.setText(
             "This script can WRITE to a live Modbus device.\n\n"
@@ -1157,11 +1208,23 @@ class ScriptWidget(QWidget):
             "or coils unexpectedly. Review the script and make sure you understand what "
             "it does before running it against live equipment."
         )
+        box.setStyleSheet(f"""
+            QMessageBox {{
+                background-color: {c["surface"]};
+            }}
+            QMessageBox QLabel {{
+                color: {c["text"]};
+            }}
+        """)
         remember_checkbox = QCheckBox("Don't remind me again")
         box.setCheckBox(remember_checkbox)
-        box.addButton("Run", QMessageBox.AcceptRole)
+        run_btn = box.addButton("Run", QMessageBox.AcceptRole)
         cancel_btn = box.addButton("Cancel", QMessageBox.RejectRole)
         box.setDefaultButton(cancel_btn)
+        button_style = self._button_style()
+        if button_style:
+            run_btn.setStyleSheet(button_style)
+            cancel_btn.setStyleSheet(button_style)
         box.exec()
 
         if remember_checkbox.isChecked():
@@ -1258,6 +1321,7 @@ class ScriptWidget(QWidget):
         try:
             with open(file_path, encoding="utf-8") as f:
                 self.editor.setPlainText(f.read())
+            self._apply_help_styling(False)
         except OSError as e:
             QMessageBox.warning(self, "Open Failed", str(e))
 

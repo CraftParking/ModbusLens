@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton
 )
 from PySide6.QtCore import Qt, QTimer, QEvent
-from PySide6.QtGui import QColor, QIcon, QActionGroup, QShortcut, QKeySequence
+from PySide6.QtGui import QIcon, QActionGroup, QShortcut, QKeySequence
 
 # Add the gui directory to the path for relative imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -1711,7 +1711,7 @@ class ModbusGUI(QMainWindow):
             dialog = QMessageBox(self)
             dialog.setIcon(QMessageBox.Warning)
             dialog.setWindowTitle("Connection Failed")
-            dialog.setText(f"Failed to connect to Modbus server")
+            dialog.setText("Failed to connect to Modbus server")
             dialog.setInformativeText(f"""
 <strong>Connection Details:</strong><br>
 Target: {target_description}<br>
@@ -2270,7 +2270,7 @@ Unit ID: {unit_id}<br><br>
             )
         return True, self._format_written_value(tag, desired_registers), "Write verified"
 
-    def _read_tag_value(self, tag, is_one_based=None, modbus=None):
+    def _read_tag_value(self, tag, modbus=None):
         """modbus defaults to self.modbus, but a caller running off the GUI thread (the
         Write-mode Tags poll worker) must pass its own snapshot explicitly instead --
         self.modbus can be swapped out by a disconnect/reconnect on the GUI thread while
@@ -2372,7 +2372,6 @@ Unit ID: {unit_id}<br><br>
                     num = float(token)
                     if not math.isfinite(num):
                         raise ValueError(f"{base_format} must be a finite number")
-                    byte_len = word_width * 2
                     struct_fmt = ">f" if base_format == "F32" else ">d"
                     raw_int = int.from_bytes(struct.pack(struct_fmt, num), "big", signed=False)
                 else:
@@ -2748,10 +2747,6 @@ Unit ID: {unit_id}<br><br>
             return values
 
         return [int(r) & 0xFFFF for r in registers]
-
-    def _add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex=""):
-        """Add or update a tag row in the integrated Tags table."""
-        self.monitoring_manager.add_monitoring_row(tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex)
 
     def _check_connection(self):
         """Check if connected to Modbus server."""
@@ -3787,9 +3782,18 @@ class ConnectionSettingsDialog(QDialog):
     def _populate_history_combo(self):
         """Show every saved history entry regardless of which connection type is currently
         selected -- each label already says TCP or serial on its face (see
-        _friendly_history_label), and selecting one now switches the radio to match."""
+        _friendly_history_label), and selecting one now switches the radio to match.
+
+        Leads with a data-less placeholder rather than the most-recent entry: Qt always
+        lands a freshly (re)populated combo on index 0, and if that were the top history
+        entry itself, clicking that same already-"selected" entry in the dropdown -- the
+        single most likely thing a user picks -- fires no currentIndexChanged (the index
+        doesn't actually change), so nothing gets applied. With the placeholder at index 0,
+        every real entry sits at index 1+, so picking any of them, including the most
+        recent one, always changes the index and always fires the signal."""
         self.hist_combo.blockSignals(True)
         self.hist_combo.clear()
+        self.hist_combo.addItem("Select a recent connection...", None)
         for entry in self.history:
             self.hist_combo.addItem(self._friendly_history_label(entry), entry)
         self.hist_combo.blockSignals(False)
