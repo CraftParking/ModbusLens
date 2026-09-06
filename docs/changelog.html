@@ -46,13 +46,26 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <h3>v2.3.0 <span class="version-tag is-upcoming">Upcoming</span></h3>
 <p class="changelog-sub">New</p>
 <ul>
+<li>Modbus Diagnostic Functions dialog - exception status, diagnostics, comm event log, report server ID, file records, mask write, FIFO queue, and device identification</li>
+<li>Save/Load Session - connection settings, Tags, Address Table range, and write bounds together in one file</li>
+<li>U64/S64/F64 numeric formats, alongside the existing U32/S32/F32</li>
+<li>Fast LAN Mode - instant unreachable-device detection instead of retrying every tag</li>
+<li>Tags table: drag-to-reorder columns, a show/hide column picker, per-tag enable/disable</li>
+<li>Raw Data gained an Exception column and an integrated Frame Viewer decoding TX/RX frames side by side</li>
 <li>Diagnostics &gt; Decode Registers - a standalone hex decoder (U16 through F64, HEX, binary, ASCII, BCD, individual bits, all four byte/word orderings), no connection needed</li>
-<li>Raw Data's Exception column now explains what a device's error actually means and likely causes, not just its name</li>
-<li>Raw Data's Frame Viewer: every decoded field and the raw hex bytes can now be selected and copied</li>
+<li>A shared read cache and coalesced adjacent reads cut duplicate traffic on the wire</li>
+<li>Script engine gained ASSERT and an Assertion Results panel - checks log PASS/FAIL/ERROR without stopping the script on a failure</li>
+<li>In-app documentation gained a "Full search" option across every topic at once</li>
+<li>Network Discovery gained a "Scan Unit IDs (1-247)" option - sweeps every Unit ID on each confirmed Modbus host to report which ones respond</li>
 </ul>
 <p class="changelog-sub">Fixed</p>
 <ul>
-<li>Write-mode tag polling no longer freezes the window when a device is unreachable</li>
+<li>Tag Monitoring's polling (read-mode and write-mode) moved off the GUI thread - a single unreachable device no longer freezes the whole window</li>
+<li>Write-mode tags with a signed format showed the raw unsigned value instead of the signed one</li>
+<li>Tags table selection was invisible, with a related write-safety gap around deselected rows</li>
+<li>Script tab's example/help text is now real, scrollable content instead of clipped placeholder text</li>
+<li>Run Script's live-system safety warning dialog now follows the app's theme</li>
+<li>Connection Settings: selecting a Recent Connections entry - including the most recent one - now actually applies it</li>
 </ul>
 </article>
 

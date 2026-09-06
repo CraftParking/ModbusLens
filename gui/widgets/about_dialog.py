@@ -190,12 +190,17 @@ CHANGELOG_HTML = """
 <li>Diagnostics > Decode Registers: a standalone hex decoder (U16 through F64, HEX, binary, ASCII, BCD, individual bits, all four byte/word orderings) - no connection needed, stays open alongside other work</li>
 <li>A shared read cache and coalesced adjacent tag reads cut duplicate traffic between Tags/Trend/Address Table on the same poll cycle</li>
 <li>Script engine gained ASSERT and an Assertion Results panel - checks are logged as PASS/FAIL/ERROR without stopping the script on a FAIL, so one run reports every check</li>
+<li>In-app documentation gained a "Full search" option - search every topic at once instead of just the one currently open</li>
+<li>Network Discovery gained a "Scan Unit IDs (1-247)" option - sweeps every Unit ID on each confirmed Modbus host to report which ones respond</li>
 </ul>
 <p><u>Fixed</u></p>
 <ul>
 <li>Tag Monitoring's polling (both read-mode and write-mode) moved off the GUI thread - a single unreachable device no longer freezes the whole window</li>
 <li>Write-mode tags with a signed format (S16/S32) showed the raw unsigned register instead of the signed value in Read Value</li>
 <li>Tags table selection was invisible, with a related write-safety gap where a row could stay logically "selected" after being visually deselected</li>
+<li>Script tab's grey example/help text is now real, scrollable document content instead of clipped placeholder text</li>
+<li>Run Script's live-system safety warning dialog now follows the app's theme instead of a stock system dialog</li>
+<li>Connection Settings: selecting a Recent Connections entry - including the most recent one - now actually applies it</li>
 </ul>
 
 <h3>v2.1.0</h3>
