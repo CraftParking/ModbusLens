@@ -47,6 +47,7 @@ from diagnostics.data_decoder import DataDecoderDialog
 from monitoring.monitoring_manager import MonitoringManager
 from monitoring.shared_read_cache import SharedReadCache
 from network.network_diagnostics import NetworkDiagnosticsDialog
+from network.find_devices import FindDevicesDialog
 
 from core.modbus_client import ModbusClient
 from app_paths import resource_path, app_data_dir
@@ -232,6 +233,7 @@ class ModbusGUI(QMainWindow):
         self.monitoring_manager = MonitoringManager(self)
         self.network_diagnostics = NetworkDiagnosticsDialog(self)
         self.serial_discovery = SerialDiscoveryDialog(self)
+        self.find_devices = FindDevicesDialog(self)
         
         self._updating_tag_table = False
         self._modbus_busy = False
@@ -340,6 +342,7 @@ class ModbusGUI(QMainWindow):
 
         # Diagnostics menu
         diagnostics_menu = menubar.addMenu("&Diagnostics")
+        diagnostics_menu.addAction("Find Devices", self._find_devices)
         diagnostics_menu.addAction("Network Discovery & Diagnostics", self._network_diagnostics)
         diagnostics_menu.addAction("Serial Discovery", self._serial_discovery)
         diagnostics_menu.addAction("Modbus Diagnostic Functions", self._show_diagnostic_functions)
@@ -1543,9 +1546,12 @@ class ModbusGUI(QMainWindow):
         self.fast_lan_mode = vals['fast_lan_mode']
         self.interface_ip = vals['interface_ip']
 
-    def _show_connection_settings(self, serial_overrides=None):
+    def _show_connection_settings(self, serial_overrides=None, tcp_overrides=None):
         """Show the connection settings dialog."""
-        dialog = ConnectionSettingsDialog(self, self.connection_history, self, serial_overrides=serial_overrides)
+        dialog = ConnectionSettingsDialog(
+            self, self.connection_history, self,
+            serial_overrides=serial_overrides, tcp_overrides=tcp_overrides,
+        )
         if dialog.exec() == QDialog.Accepted:
             vals = dialog.get_values()
             self._apply_connection_settings(vals)
@@ -1553,10 +1559,8 @@ class ModbusGUI(QMainWindow):
             self._record_connection_history()
             self._update_connection_info()
             self._save_settings()
-        elif dialog.scan_requested_port is not None:
-            self._serial_discovery(dialog.scan_requested_port)
-        elif dialog.network_discovery_requested:
-            self._network_diagnostics()
+        elif dialog.find_devices_requested_mode is not None:
+            self._find_devices(dialog.find_devices_requested_mode)
 
     def _connect(self):
         """Connect to Modbus server."""
@@ -3114,6 +3118,15 @@ Unit ID: {unit_id}<br><br>
         """Show the Serial Discovery dialog, optionally pre-filled with a COM port."""
         self.serial_discovery.show_discovery(initial_port or self.serial_port)
 
+    def _find_devices(self, initial_mode=None):
+        """Show the unified Find Devices dialog (TCP scan + serial sweep, one shared
+        results table), pre-filled with whichever transport is currently active."""
+        mode = initial_mode or getattr(self, "connection_mode", "tcp")
+        self.find_devices.show_dialog(
+            initial_ip=self.target_ip, initial_port=self.target_port,
+            initial_com_port=self.serial_port, initial_mode=mode,
+        )
+
     def _show_diagnostic_functions(self):
         """Show the FC07/08/11/12/17/20/21/22/24/43 diagnostic functions dialog."""
         dialog = DiagnosticFunctionsDialog(self)
@@ -3497,15 +3510,15 @@ class ConnectionSettingsDialog(QDialog):
     STOP_BITS = [1, 2]
     BYTE_SIZES = [7, 8]
 
-    def __init__(self, parent, history, current, serial_overrides=None):
+    def __init__(self, parent, history, current, serial_overrides=None, tcp_overrides=None):
         super().__init__(parent)
         self.setWindowTitle("Connection Settings")
         self.setMinimumWidth(450)
         self.history = history[:]
-        # Set by _open_serial_scan() -- the caller checks this after exec() to decide
-        # whether to open Serial Discovery once this dialog has closed.
-        self.scan_requested_port = None
-        self.network_discovery_requested = False
+        # Set by _open_find_devices() -- the caller checks this after exec() to decide
+        # whether to open Find Devices, pre-selected to whichever transport was active
+        # here, once this dialog has closed.
+        self.find_devices_requested_mode = None
 
         layout = QVBoxLayout(self)
         layout.setSpacing(16)
@@ -3552,8 +3565,8 @@ class ConnectionSettingsDialog(QDialog):
         self.fast_lan_checkbox.setChecked(getattr(current, "fast_lan_mode", False))
         grid.addWidget(self.fast_lan_checkbox, 3, 0, 1, 2)
 
-        net_scan_btn = QPushButton("Network Discovery...")
-        net_scan_btn.clicked.connect(self._open_network_discovery)
+        net_scan_btn = QPushButton("Find Devices...")
+        net_scan_btn.clicked.connect(self._open_find_devices)
         net_scan_btn.setToolTip("Scan the local network for Modbus devices, verify they speak Modbus, and identify them.")
         grid.addWidget(net_scan_btn, 4, 0, 1, 2)
         layout.addWidget(self.tcp_group)
@@ -3647,8 +3660,8 @@ class ConnectionSettingsDialog(QDialog):
         self.serial_unit_input = self._make_unit_input(parent, current.target_unit_id)
         serial_grid.addWidget(self.serial_unit_input, 6, 1)
 
-        scan_btn = QPushButton("Scan for Connection Parameters...")
-        scan_btn.clicked.connect(self._open_serial_scan)
+        scan_btn = QPushButton("Find Devices...")
+        scan_btn.clicked.connect(self._open_find_devices)
         serial_grid.addWidget(scan_btn, 7, 0, 1, 2)
         layout.addWidget(self.serial_group)
 
@@ -3679,8 +3692,8 @@ class ConnectionSettingsDialog(QDialog):
         btns.addWidget(cancel_btn)
         layout.addLayout(btns)
 
-        # Pre-fill from a Serial Discovery match (see SerialDiscoveryDialog._apply_selected_match)
-        # -- applied after every field above already exists, but Save Settings is still the
+        # Pre-fill from a Find Devices match (see FindDevicesDialog._apply_selected) --
+        # applied after every field above already exists, but Save Settings is still the
         # action that actually commits it, same as picking a Recent Connections entry.
         if serial_overrides:
             self.serial_radio.setChecked(True)
@@ -3696,6 +3709,10 @@ class ConnectionSettingsDialog(QDialog):
             self.unit_input.setValue(serial_overrides["unit_id"])
             self.serial_unit_input.setValue(serial_overrides["unit_id"])
             self.framer_combo.setCurrentIndex(1 if serial_overrides.get("framer") == "ascii" else 0)
+        elif tcp_overrides:
+            self.tcp_radio.setChecked(True)
+            self.ip_input.setText(tcp_overrides["ip"])
+            self.port_input.setValue(tcp_overrides["port"])
 
         self._update_mode_visibility()
 
@@ -3710,15 +3727,10 @@ class ConnectionSettingsDialog(QDialog):
             pass
         return ConnectionSettingsDialog.SERIAL_PORTS_HINT
 
-    def _open_serial_scan(self):
-        """Close this dialog without saving and let the caller open Serial Discovery,
-        pre-filled with whichever COM port is currently selected here."""
-        self.scan_requested_port = self.serial_port_combo.currentText().strip()
-        self.reject()
-
-    def _open_network_discovery(self):
-        """Close this dialog (which is modal) and let the caller open Network Discovery."""
-        self.network_discovery_requested = True
+    def _open_find_devices(self):
+        """Close this dialog without saving and let the caller open Find Devices,
+        pre-selected to whichever transport is currently active here."""
+        self.find_devices_requested_mode = "serial" if self.serial_radio.isChecked() else "tcp"
         self.reject()
 
     def _update_mode_visibility(self):
