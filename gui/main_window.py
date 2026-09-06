@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Import extracted components
 from widgets.status_indicator import StatusIndicator
 from widgets.address_table import AddressTableWidget
+from widgets.device_profiles import DeviceProfilesPanel
 from widgets.trend_widget import TrendWidget
 from widgets.server_widget import ServerWidget
 from widgets.script_widget import ScriptWidget, validate_tag_name
@@ -526,32 +527,14 @@ class ModbusGUI(QMainWindow):
         self.tab_widget.addTab(self.address_table_widget, "Address Table")
 
     def _setup_profiles_tab(self):
-        """Setup Profiles tab -- placeholder for the Device Profile system (roadmap
-        phase 3): a named, reusable template of Address Table ranges + Tags for a
-        specific device model, applied to a new connection in one step instead of
-        rebuilding it by hand. Community-shared profiles are planned as a later phase
-        on top of this. Placed between Address Table and Tags since a profile covers
-        both together."""
-        profiles_widget = QWidget()
-        layout = QVBoxLayout(profiles_widget)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setAlignment(Qt.AlignTop)
-
-        group = QGroupBox("Device Profiles")
-        group.setStyleSheet(self._get_groupbox_style())
-        group_layout = QVBoxLayout(group)
-        info_label = QLabel(
-            "Coming soon: save a named profile of Address Table ranges and Tags for a "
-            "specific device model, then apply it to any connection in one step instead "
-            "of rebuilding it by hand. Community-shared profiles are planned as a later "
-            "phase on top of this."
-        )
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet(f"color: {self._c['text_secondary']}; font-size: 13px;")
-        group_layout.addWidget(info_label)
-        layout.addWidget(group)
-
-        self.tab_widget.addTab(profiles_widget, "Profiles")
+        """Setup Profiles tab: Device Profiles (roadmap phase 3) -- a named, reusable
+        template of Address Table ranges + Tags for a specific device model, applied
+        to any connection in one step instead of rebuilding it by hand. Local profiles
+        are a real save/apply/rename/delete flow stored on disk; Community-shared
+        profiles are a later phase, still a placeholder. Placed between Address Table
+        and Tags since a profile covers both together."""
+        self.device_profiles_widget = DeviceProfilesPanel(self)
+        self.tab_widget.addTab(self.device_profiles_widget, "Profiles")
 
     def _setup_trend_tab(self):
         """Setup Trend tab with live/historical multi-pen graphing."""
@@ -2938,13 +2921,40 @@ Unit ID: {unit_id}<br><br>
 
     SESSION_FILE_VERSION = 1
 
+    def _build_address_table_data(self):
+        """Address Table's current range config as a plain dict -- shared by Save
+        Session and Device Profiles so the two can never drift out of sync."""
+        at = self.address_table_widget
+        return {
+            "function": at.function_combo.currentText(),
+            "start_address": at.address_input.value(),
+            "count": at.count_input.value(),
+            "one_based": at.range_is_one_based,
+        }
+
+    def _apply_address_table_data(self, at_data):
+        """Reverse of _build_address_table_data. Shared by Load Session and Device
+        Profiles. Order matters: one-based toggles the Address spinbox's own min/max
+        range, and function affects whether Count is editable at all -- both need to
+        land before start_address/count are set, or they can get clamped/ignored."""
+        if not at_data:
+            return
+        at = self.address_table_widget
+        if "one_based" in at_data:
+            at.offset_checkbox.setChecked(not at_data["one_based"])
+        if "function" in at_data:
+            at.function_combo.setCurrentText(at_data["function"])
+        if "start_address" in at_data:
+            at.address_input.setValue(at_data["start_address"])
+        if "count" in at_data:
+            at.count_input.setValue(at_data["count"])
+
     def _build_session_data(self):
         """Bundle everything needed to reproduce this session in a fresh window: connection
         settings, the Tags list (+ scaling), Address Table's current range config, and any
         write bounds set on the live connection. Previously only Tags round-tripped at all
         (via their own separate CSV export/import) -- connection settings, Address Table
         config, and write bounds never traveled together with them."""
-        at = self.address_table_widget
         return {
             "version": self.SESSION_FILE_VERSION,
             "connection": {
@@ -2962,12 +2972,7 @@ Unit ID: {unit_id}<br><br>
                 "interface_ip": self.interface_ip,
             },
             "tags": self._build_tag_export_rows(),
-            "address_table": {
-                "function": at.function_combo.currentText(),
-                "start_address": at.address_input.value(),
-                "count": at.count_input.value(),
-                "one_based": at.range_is_one_based,
-            },
+            "address_table": self._build_address_table_data(),
             # Write bounds only ever exist on the live ModbusClient instance (see
             # ModbusClient.write_bounds) -- nothing to save if there's no connection.
             "write_bounds": (
@@ -2990,20 +2995,7 @@ Unit ID: {unit_id}<br><br>
         if tags is not None:
             self._apply_imported_tag_rows(tags)
 
-        at_data = data.get("address_table")
-        if at_data:
-            at = self.address_table_widget
-            # Order matters: one-based toggles the Address spinbox's own min/max range,
-            # and function affects whether Count is editable at all -- both need to land
-            # before start_address/count are set, or they can get clamped/ignored.
-            if "one_based" in at_data:
-                at.offset_checkbox.setChecked(not at_data["one_based"])
-            if "function" in at_data:
-                at.function_combo.setCurrentText(at_data["function"])
-            if "start_address" in at_data:
-                at.address_input.setValue(at_data["start_address"])
-            if "count" in at_data:
-                at.count_input.setValue(at_data["count"])
+        self._apply_address_table_data(data.get("address_table"))
 
         self._pending_write_bounds = [tuple(entry) for entry in (data.get("write_bounds") or [])]
         self._apply_pending_write_bounds()
