@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QHBoxLayout, QT
 
 from theme import apply_dropdown_delegate
 from gui.network.device_identification import DeviceIdentificationWorker
+from gui.network.unit_id_sweep import UnitIdSweepWorker
 
 NPCAP_DOWNLOAD_URL = "https://npcap.com/#download"
 
@@ -111,19 +112,19 @@ def is_ip_in_subnet(ip, subnet_info):
         return True  # Assume in subnet on error
 
 
-def probe_modbus_device(ip, port=502, timeout=1.0):
+def probe_modbus_device(ip, port=502, timeout=1.0, unit_id=1):
     """Probe a device to check if it's a Modbus device."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
         result = sock.connect_ex((ip, port))
         sock.close()
-        
+
         if result == 0:
             # Connection successful, try a safe read to validate Modbus
             try:
                 from core.modbus_client import ModbusClient
-                modbus = ModbusClient(ip, port, 1, timeout=timeout)
+                modbus = ModbusClient(ip, port, unit_id, timeout=timeout)
                 if modbus.connect():
                     # Try to read a holding register (safe operation)
                     try:
@@ -192,7 +193,7 @@ class ModbusProbeWorker(QThread):
                 try:
                     status = future.result()
                     self.probe_complete.emit(ip, status)
-                except Exception as e:
+                except Exception:
                     self.probe_complete.emit(ip, "TIMEOUT")
         
         self.all_probes_complete.emit()
@@ -239,7 +240,7 @@ def detect_packet_capture_capability():
             except Exception:
                 # If get_if_list fails, pcap is not actually available
                 pcap_available = False
-    except Exception as e:
+    except Exception:
         scapy_available = False
         pcap_available = False
 
@@ -1213,6 +1214,10 @@ class NetworkDiagnosticsDialog:
         self.identifying_devices = {}  # ip -> DeviceIdentificationWorker
         self.identify_progress = 0  # count of devices currently being identified
         self.device_identities = {}  # ip -> (manufacturer, product, version)
+        # Unit ID sweep (phase 1, item 3).
+        self.unit_sweep_workers = {}  # ip -> UnitIdSweepWorker
+        self.unit_sweep_progress = 0  # count of hosts currently being swept
+        self.unit_ids_found = {}  # ip -> sorted list of responding unit ids
 
     def show_diagnostics(self, host, port, unit_id):
         """Show network diagnostics dialog."""
@@ -1415,6 +1420,14 @@ class NetworkDiagnosticsDialog:
             self.modbus_filter_checkbox.stateChanged.connect(self.on_modbus_filter_changed)
             button_layout.addWidget(self.modbus_filter_checkbox)
 
+            # Unit ID sweep checkbox -- when checked, every confirmed Modbus host found
+            # during Discover Devices is also swept across Unit IDs 1-247 in the background.
+            self.unit_sweep_checkbox = QCheckBox("Scan Unit IDs (1-247)")
+            self.unit_sweep_checkbox.setToolTip(
+                "For each discovered Modbus device, also probe Unit IDs 1-247 to report which ones respond"
+            )
+            button_layout.addWidget(self.unit_sweep_checkbox)
+
             # Clear Results button
             self.clear_results_btn = QPushButton("Clear Results")
             self.clear_results_btn.setStyleSheet(self.parent._get_button_style())
@@ -1518,6 +1531,12 @@ class NetworkDiagnosticsDialog:
             self.identify_progress = 0
             self.device_identities.clear()
 
+            # Stop any in-flight unit ID sweep workers too, same reasoning.
+            for ip in list(self.unit_sweep_workers):
+                self._stop_worker(self.unit_sweep_workers.pop(ip), "Unit ID sweep")
+            self.unit_sweep_workers.clear()
+            self.unit_sweep_progress = 0
+
             # Disable Modbus filter
             self.disable_modbus_filter()
             
@@ -1535,7 +1554,7 @@ class NetworkDiagnosticsDialog:
             self.discover_btn.setText("Discover Devices")
             self.stop_btn.setEnabled(False)
             
-        except Exception as e:
+        except Exception:
             # Log error but don't prevent close
             pass
     
@@ -1668,7 +1687,7 @@ class NetworkDiagnosticsDialog:
             self.update_install_npcap_button_state()
             
             # Log detection results for debugging
-            self.output_text.append(f"Packet capture capability check:")
+            self.output_text.append("Packet capture capability check:")
             self.output_text.append(f"  - Scapy available: {self.capture_capability.get('scapy_available')}")
             self.output_text.append(f"  - pcap backend available: {self.capture_capability.get('pcap_available')}")
             self.output_text.append(f"  - Interfaces available: {self.capture_capability.get('interfaces_available')}")
@@ -1805,6 +1824,13 @@ class NetworkDiagnosticsDialog:
         self.identifying_devices.clear()
         self.identify_progress = 0
         self.device_identities.clear()
+
+        # Clear any in-flight unit ID sweep workers from the previous scan.
+        for ip in list(self.unit_sweep_workers):
+            self._stop_unit_sweep(ip)
+        self.unit_sweep_workers.clear()
+        self.unit_sweep_progress = 0
+        self.unit_ids_found.clear()
         
         # Check packet capture capability and show popup if needed
         self.capture_capability = detect_packet_capture_capability()
@@ -1879,6 +1905,8 @@ class NetworkDiagnosticsDialog:
         if status == "YES":
             self.output_text.append(f"  → Modbus device confirmed: {ip}")
             self._start_identify(ip, port)
+            if hasattr(self, "unit_sweep_checkbox") and self.unit_sweep_checkbox.isChecked():
+                self._start_unit_sweep(ip, port)
         elif status == "NO":
             self.output_text.append(f"  → Not a Modbus device: {ip}")
 
@@ -1936,10 +1964,57 @@ class NetworkDiagnosticsDialog:
                 parts.append(version)
             label = " | ".join(parts) if parts else ""
         self.output_text.append(f"  IDENT {ip}: {label or '(no ID returned)'}")
-        if self.identify_progress <= 0:
-            # All identify workers done; update progress bar format back to idle.
+        self._update_progress_format_idle()
+
+    def _update_progress_format_idle(self):
+        """Once every background per-device worker (identify, unit ID sweep) has
+        finished, put the progress bar's text back to idle."""
+        if self.identify_progress <= 0 and self.unit_sweep_progress <= 0:
             self.progress_bar.setFormat("Scanning... done")
-    
+
+    def _start_unit_sweep(self, ip, port):
+        """Fire off a background Unit ID 1-247 sweep for this host (one at a time per IP)."""
+        if ip in self.unit_sweep_workers:
+            return
+        w = UnitIdSweepWorker(ip, port, timeout=1.0)
+        w.unit_found.connect(self._on_unit_found)
+        w.finished.connect(self._on_unit_sweep_finished)
+        w.start()
+        self.unit_sweep_workers[ip] = w
+        self.unit_sweep_progress += 1
+        self.output_text.append(f"  → Scanning Unit IDs 1-247 on {ip}...")
+
+    def _stop_unit_sweep(self, ip):
+        """Cancel a pending unit ID sweep worker (called when a new scan starts)."""
+        w = self.unit_sweep_workers.pop(ip, None)
+        if w is not None:
+            w.stop()
+            if not w.wait(1000):
+                # Worker may be blocked in a native connect() call; terminate rather
+                # than leave a live thread dangling, which would abort the app on
+                # destruction.
+                w.terminate()
+                w.wait(2000)
+            self.unit_sweep_progress = max(0, self.unit_sweep_progress - 1)
+
+    def _on_unit_found(self, ip, unit_id):
+        """A Unit ID answered as Modbus during the sweep -- report it immediately."""
+        self.unit_ids_found.setdefault(ip, []).append(unit_id)
+        self.output_text.append(f"  UNIT ID {unit_id} responds at {ip}")
+
+    def _on_unit_sweep_finished(self, ip, found_unit_ids):
+        """When the sweep for a host completes, record the result and update the display."""
+        w = self.unit_sweep_workers.pop(ip, None)
+        if w is not None:
+            w.wait(200)
+        self.unit_sweep_progress = max(0, self.unit_sweep_progress - 1)
+        if found_unit_ids:
+            ids_text = ", ".join(str(u) for u in found_unit_ids)
+            self.output_text.append(f"  → Unit ID sweep {ip}: responding IDs: {ids_text}")
+        else:
+            self.output_text.append(f"  → Unit ID sweep {ip}: no Unit IDs responded")
+        self._update_progress_format_idle()
+
     def on_scan_progress(self, percentage, ip=""):
         """Update scan progress."""
         self.progress_bar.setValue(percentage)
@@ -1948,6 +2023,8 @@ class NetworkDiagnosticsDialog:
             parts.append(f"({ip})")
         if self.identify_progress:
             parts.append(f"identifying {self.identify_progress}")
+        if self.unit_sweep_progress:
+            parts.append(f"sweeping unit IDs {self.unit_sweep_progress}")
         self.progress_bar.setFormat(" ".join(parts))
     
     def on_scan_complete(self, device_count):
@@ -1959,7 +2036,7 @@ class NetworkDiagnosticsDialog:
         self.stop_btn.setEnabled(False)  # Disable stop button when complete
         
         if device_count > 0:
-            self.output_text.append(f"\n=== DISCOVERED DEVICES ===")
+            self.output_text.append("\n=== DISCOVERED DEVICES ===")
             for ip, port, status in self.discovered_devices:
                 self.output_text.append(f"• {ip}:{port} - {status}")
                 
@@ -1967,7 +2044,7 @@ class NetworkDiagnosticsDialog:
             first_device = self.discovered_devices[0]
             self.ip_input.setText(first_device[0])
             self.port_input.setValue(int(first_device[1]))
-            self.output_text.append(f"\nAuto-filled IP and port with first discovered device")
+            self.output_text.append("\nAuto-filled IP and port with first discovered device")
     
     def capture_packets(self):
         """Start packet capture for network analysis."""
