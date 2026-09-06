@@ -19,6 +19,7 @@
 <a class="wordmark" href="#top"><img src="assets/favicon.ico" alt="" width="28" height="28">ModbusLens</a>
 <nav>
 <a href="#features">Features</a>
+<a href="#compare">Compare</a>
 <a href="changelog.html">Changelog</a>
 <a href="documentation.html">Documentation</a>
 <a href="#screenshots">Screenshots</a>
@@ -183,6 +184,41 @@ and network diagnostics - in one tool.</p>
 </ul>
 </article>
 </div>
+</section>
+
+<section id="compare">
+<h2 class="reveal">How it compares</h2>
+<p class="changelog-intro reveal">Most classic Modbus tools split the job across separate
+master/slave apps with no discovery, scripting, or trending built in. ModbusLens keeps it
+one tool. Feature availability shown for other tools reflects their publicly documented
+capabilities as of this writing - always verify against their current release before
+relying on it.</p>
+<div class="compare-table-wrap reveal">
+<table class="compare-table">
+<thead>
+<tr>
+<th>Feature</th>
+<th class="compare-highlight">ModbusLens</th>
+<th>Modbus Poll + Slave</th>
+<th>ModScan</th>
+<th>Simply Modbus</th>
+<th>QModMaster</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>Modbus Client (Master)</td><td class="compare-highlight">✔</td><td>✔</td><td>✔</td><td>✔</td><td>✔</td></tr>
+<tr><td>Modbus Server (Slave), same app</td><td class="compare-highlight">✔ built-in</td><td>⚠ separate app</td><td>⚠ separate app</td><td>⚠ separate app</td><td>✖</td></tr>
+<tr><td>Raw Data / Frame Viewer (wire bytes, exception decode)</td><td class="compare-highlight">✔</td><td>⚠ basic log</td><td>✖</td><td>✖</td><td>✖</td></tr>
+<tr><td>Trend Graphing &amp; Record/Replay</td><td class="compare-highlight">✔ advanced</td><td>⚠ basic</td><td>✖</td><td>✖</td><td>✖</td></tr>
+<tr><td>Built-in Test Scripting (WRITE/READ/WAIT/IF/REPEAT/ASSERT)</td><td class="compare-highlight">✔</td><td>✖</td><td>✖</td><td>✖</td><td>✖</td></tr>
+<tr><td>Network + Serial Device Discovery</td><td class="compare-highlight">✔</td><td>✖</td><td>✖</td><td>✖</td><td>✖</td></tr>
+<tr><td>Full Session Save/Load (connection, tags, ranges, write bounds)</td><td class="compare-highlight">✔</td><td>⚠ partial</td><td>✖</td><td>⚠ partial</td><td>✖</td></tr>
+<tr><td>Free &amp; Open Source</td><td class="compare-highlight">✔</td><td>✖ paid</td><td>✖ paid</td><td>✖ paid</td><td>✔</td></tr>
+<tr><td>Unified Single Application</td><td class="compare-highlight">✔</td><td>✖</td><td>✖</td><td>✖</td><td>⚠ master only</td></tr>
+</tbody>
+</table>
+</div>
+<p class="compare-legend reveal">✔ full support &middot; ⚠ partial/limited &middot; ✖ not available</p>
 </section>
 
 <section id="screenshots">

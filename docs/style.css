@@ -334,6 +334,64 @@ section h2 {
   margin-bottom: 8px;
 }
 
+/* ---------------- Compare ---------------- */
+
+.compare-table-wrap {
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.compare-table th,
+.compare-table td {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.compare-table th:first-child,
+.compare-table td:first-child {
+  text-align: left;
+  white-space: normal;
+  color: var(--ink);
+}
+
+.compare-table thead th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.compare-table tbody td {
+  color: var(--muted);
+}
+
+.compare-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.compare-table .compare-highlight {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.compare-legend {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 12px 0 0 0;
+}
+
 /* ---------------- Changelog ---------------- */
 
 .changelog-intro {
