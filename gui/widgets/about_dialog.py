@@ -192,6 +192,7 @@ CHANGELOG_HTML = """
 <li>Script engine gained ASSERT and an Assertion Results panel - checks are logged as PASS/FAIL/ERROR without stopping the script on a FAIL, so one run reports every check</li>
 <li>In-app documentation gained a "Full search" option - search every topic at once instead of just the one currently open</li>
 <li>Network Discovery gained a "Scan Unit IDs (1-247)" option - sweeps every Unit ID on each confirmed Modbus host to report which ones respond</li>
+<li>New "Find Devices" dialog - TCP network scan and serial parameter sweep in one shared results table, with a single Apply to Connection Settings for either</li>
 </ul>
 <p><u>Fixed</u></p>
 <ul>
