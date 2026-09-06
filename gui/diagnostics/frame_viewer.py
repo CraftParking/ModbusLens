@@ -174,7 +174,6 @@ class FrameViewerPanel(QWidget):
         super().__init__(parent)
         self._main_window = parent
         self._colors = parent._colors() if hasattr(parent, "_colors") else {}
-        self._transport = "tcp"
         self._setup_ui()
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -351,7 +350,6 @@ class FrameViewerPanel(QWidget):
         """Decode and display the TX/RX frames for the given raw data table row."""
         if table is None or row < 0 or row >= table.rowCount():
             return
-        self._transport = transport
         self._status_label.setText(f"Transport: {transport.upper()}")
 
         tx_text = table.item(row, 4).text() if table.item(row, 4) else ""

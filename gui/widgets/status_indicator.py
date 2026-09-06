@@ -25,7 +25,6 @@ class StatusIndicator(QWidget):
         self.animation_timer.timeout.connect(self.animate_pulse)
         self.pulse_value = 0
         self.pulse_direction = 1
-        self.is_animating = False
         self.setToolTip("Not connected")
 
         # Animation Properties (Initial Disconnected State)
@@ -102,10 +101,8 @@ class StatusIndicator(QWidget):
         self.setToolTip(tooltips.get(status, ""))
 
         if status == "connecting":
-            self.is_animating = True
             self.animation_timer.start(60)
         else:
-            self.is_animating = False
             self.animation_timer.stop()
             self.pulse_value = 0
 

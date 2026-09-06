@@ -14,7 +14,6 @@ during a slow network.
 """
 import logging
 from PySide6.QtCore import QThread, Signal
-from PySide6.QtWidgets import QApplication
 
 logger = logging.getLogger(__name__)
 
