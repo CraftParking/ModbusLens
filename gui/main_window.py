@@ -333,7 +333,6 @@ class ModbusGUI(QMainWindow):
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
         tools_menu.addAction("Connection Settings", self._show_connection_settings)
-        tools_menu.addAction("Connection Profiles", self._manage_profiles)
         tools_menu.addAction("Data Templates", self._manage_templates)
         tools_menu.addSeparator()
         tools_menu.addAction("IP Configuration", self._show_ip_config)
@@ -492,6 +491,10 @@ class ModbusGUI(QMainWindow):
         # Address Table tab (ModScan-like interface)
         self._setup_address_table_tab()
 
+        # Profiles tab (Device Profile system, roadmap phase 3) -- sits between Address
+        # Table and Tags since a profile is a saved template of both together.
+        self._setup_profiles_tab()
+
         # Monitoring tab
         self._setup_monitoring_tab()
 
@@ -521,6 +524,34 @@ class ModbusGUI(QMainWindow):
         # Create the address table widget
         self.address_table_widget = AddressTableWidget(self)
         self.tab_widget.addTab(self.address_table_widget, "Address Table")
+
+    def _setup_profiles_tab(self):
+        """Setup Profiles tab -- placeholder for the Device Profile system (roadmap
+        phase 3): a named, reusable template of Address Table ranges + Tags for a
+        specific device model, applied to a new connection in one step instead of
+        rebuilding it by hand. Community-shared profiles are planned as a later phase
+        on top of this. Placed between Address Table and Tags since a profile covers
+        both together."""
+        profiles_widget = QWidget()
+        layout = QVBoxLayout(profiles_widget)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setAlignment(Qt.AlignTop)
+
+        group = QGroupBox("Device Profiles")
+        group.setStyleSheet(self._get_groupbox_style())
+        group_layout = QVBoxLayout(group)
+        info_label = QLabel(
+            "Coming soon: save a named profile of Address Table ranges and Tags for a "
+            "specific device model, then apply it to any connection in one step instead "
+            "of rebuilding it by hand. Community-shared profiles are planned as a later "
+            "phase on top of this."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet(f"color: {self._c['text_secondary']}; font-size: 13px;")
+        group_layout.addWidget(info_label)
+        layout.addWidget(group)
+
+        self.tab_widget.addTab(profiles_widget, "Profiles")
 
     def _setup_trend_tab(self):
         """Setup Trend tab with live/historical multi-pen graphing."""
@@ -3037,10 +3068,6 @@ Unit ID: {unit_id}<br><br>
     def _export_data(self):
         """Export monitoring data."""
         QMessageBox.information(self, "Export Data", "Data export will be implemented in the next update!")
-
-    def _manage_profiles(self):
-        """Manage connection profiles."""
-        QMessageBox.information(self, "Connection Profiles", "Profile management will be implemented in the next update!")
 
     def _manage_templates(self):
         """Manage data templates."""
