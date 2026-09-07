@@ -12,7 +12,7 @@ from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QPlainTextEdit,
     QTextEdit, QFileDialog, QMessageBox, QSplitter, QCheckBox, QLabel, QComboBox,
-    QTableWidget, QTableWidgetItem, QDialog
+    QTableWidget, QTableWidgetItem, QDialog, QGroupBox
 )
 
 from log_format import format_log_html
@@ -864,7 +864,8 @@ class ScriptWidget(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        toolbar = QHBoxLayout()
+        control_group = QGroupBox("Script Controls")
+        toolbar = QHBoxLayout(control_group)
 
         toolbar.addWidget(QLabel("Target:"))
         self.target_combo = QComboBox()
@@ -922,7 +923,7 @@ class ScriptWidget(QWidget):
         self.cpu_label.setToolTip("System-wide CPU usage, useful for spotting a script loop that's running hot")
         toolbar.addWidget(self.cpu_label)
 
-        layout.addLayout(toolbar)
+        layout.addWidget(control_group)
 
         main_splitter = QSplitter(Qt.Horizontal)
 

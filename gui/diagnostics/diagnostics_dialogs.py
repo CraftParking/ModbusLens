@@ -4,7 +4,7 @@ import time
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit, QComboBox, QMenu, QApplication,
-    QFileDialog, QMessageBox,
+    QFileDialog, QMessageBox, QGroupBox,
 )
 from PySide6.QtGui import QColor, QShortcut, QKeySequence
 from PySide6.QtCore import Qt, QTimer
@@ -201,7 +201,8 @@ class DiagnosticsDialogs:
         layout.addLayout(header_layout)
 
         # Filter row: text search (matches tag name/address in Operation and Value) + status
-        filter_layout = QHBoxLayout()
+        filter_group = QGroupBox("Filter")
+        filter_layout = QHBoxLayout(filter_group)
         filter_layout.addWidget(QLabel("Filter:"))
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText("Filter by tag name or address...")
@@ -217,7 +218,7 @@ class DiagnosticsDialogs:
         self.filter_status_combo.currentTextChanged.connect(self._on_filter_changed)
         filter_layout.addWidget(self.filter_status_combo)
         apply_dropdown_delegate(self.filter_status_combo, getattr(self.parent, "_theme_mode", "light"))
-        layout.addLayout(filter_layout)
+        layout.addWidget(filter_group)
 
         # Use the pre-initialized raw data table
         if not hasattr(self.parent, 'raw_data_table'):

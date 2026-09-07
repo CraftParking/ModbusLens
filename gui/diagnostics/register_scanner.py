@@ -3,7 +3,7 @@ from collections import deque
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QWidget,
-    QComboBox, QSpinBox, QProgressBar,
+    QComboBox, QSpinBox, QProgressBar, QGroupBox,
 )
 
 from theme import apply_dropdown_delegate
@@ -219,6 +219,9 @@ class RegisterScannerWidget(QWidget):
         self.status_label.setStyleSheet(f"color: {c['text_secondary']};")
         layout.addWidget(self.status_label)
 
+        control_group = QGroupBox("Scan Configuration")
+        control_layout = QVBoxLayout(control_group)
+
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("Function:"))
         self.addr_function_combo = QComboBox()
@@ -241,7 +244,7 @@ class RegisterScannerWidget(QWidget):
         self.addr_end_input.setRange(0, 65535)
         self.addr_end_input.setValue(999)
         row1.addWidget(self.addr_end_input)
-        layout.addLayout(row1)
+        control_layout.addLayout(row1)
 
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("Probe timeout (ms):"))
@@ -268,7 +271,8 @@ class RegisterScannerWidget(QWidget):
         self.clear_results_btn.setToolTip("Clear the scanner output log and any found ranges.")
         self.clear_results_btn.clicked.connect(self._clear_results)
         row2.addWidget(self.clear_results_btn)
-        layout.addLayout(row2)
+        control_layout.addLayout(row2)
+        layout.addWidget(control_group)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)

@@ -494,7 +494,8 @@ class TrendWidget(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        toolbar = QHBoxLayout()
+        control_group = QGroupBox("Trend Controls")
+        toolbar = QHBoxLayout(control_group)
 
         self.add_pen_btn = QPushButton("Add Pen")
         self.add_pen_btn.setStyleSheet(self._button_style())
@@ -548,7 +549,7 @@ class TrendWidget(QWidget):
         self.print_btn.clicked.connect(self._print_graph)
         toolbar.addWidget(self.print_btn)
 
-        layout.addLayout(toolbar)
+        layout.addWidget(control_group)
 
         self.chart = QChart()
         self.chart.legend().setVisible(True)
@@ -587,6 +588,9 @@ class TrendWidget(QWidget):
         self.history_scrollbar.valueChanged.connect(self._on_scrollbar_moved)
         layout.addWidget(self.history_scrollbar)
 
+        view_range_group = QGroupBox("View Range")
+        view_range_layout = QVBoxLayout(view_range_group)
+
         bottom = QHBoxLayout()
         bottom.addWidget(QLabel("Time Window:"))
         self.window_combo = QComboBox()
@@ -610,7 +614,7 @@ class TrendWidget(QWidget):
         self.zoom_out_btn.clicked.connect(lambda: self._zoom(2.0))
         bottom.addWidget(self.zoom_out_btn)
 
-        layout.addLayout(bottom)
+        view_range_layout.addLayout(bottom)
 
         history_row = QHBoxLayout()
         history_row.addWidget(QLabel("From:"))
@@ -633,7 +637,8 @@ class TrendWidget(QWidget):
         history_row.addWidget(self.go_to_range_btn)
         history_row.addStretch()
 
-        layout.addLayout(history_row)
+        view_range_layout.addLayout(history_row)
+        layout.addWidget(view_range_group)
 
         stats_header_row = QHBoxLayout()
         stats_header_row.addStretch()

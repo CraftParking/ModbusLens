@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QSpinBox, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QAbstractItemView, QSizePolicy
+    QMessageBox, QAbstractItemView, QSizePolicy, QGroupBox
 )
 
 from pymodbus.datastore import ModbusSimulatorContext, ModbusServerContext
@@ -66,7 +66,8 @@ class ServerWidget(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        toolbar = QHBoxLayout()
+        control_group = QGroupBox("Server Configuration")
+        toolbar = QHBoxLayout(control_group)
         toolbar.addWidget(QLabel("Server Address:"))
         self.host_input = QLineEdit("0.0.0.0")
         self.host_input.setStyleSheet(self._input_style())
@@ -105,9 +106,10 @@ class ServerWidget(QWidget):
         toolbar.addWidget(self.status_label)
 
         toolbar.addStretch()
-        layout.addLayout(toolbar)
+        layout.addWidget(control_group)
 
-        view_row = QHBoxLayout()
+        view_group = QGroupBox("Data Space View")
+        view_row = QHBoxLayout(view_group)
         view_row.addWidget(QLabel("Data Space:"))
         self.space_combo = QComboBox()
         self.space_combo.addItems([label for label, _ in SPACES])
@@ -136,7 +138,7 @@ class ServerWidget(QWidget):
         view_row.addWidget(self.load_view_btn)
 
         view_row.addStretch()
-        layout.addLayout(view_row)
+        layout.addWidget(view_group)
 
         self.table = QTableWidget()
         self.table.setColumnCount(2)
