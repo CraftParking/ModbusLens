@@ -82,8 +82,9 @@ def unique_profile_path(name, exclude=None):
 class ProfileCard(QFrame):
     """One saved profile shown as a card: name big and prominent at top, then
     Manufacturer/Type at normal size, then tag count and creation date centered
-    underneath in smaller, muted text. Click to select it (for the Apply/Edit/
-    Delete buttons below the grid); double-click applies it immediately."""
+    underneath in smaller, muted text. Click to select it (for the Edit/Delete
+    buttons below the grid); double-click opens a read-only view of it with a
+    per-tag import picker (see DeviceProfilesPanel._open_view_profile_dialog)."""
 
     clicked = Signal()
     double_clicked = Signal()
@@ -160,6 +161,40 @@ class ProfileCard(QFrame):
         self.double_clicked.emit()
 
 
+# View Profile's per-tag/group status dots: red means a profile tag that isn't in the
+# live Tags tab at all (importing it adds a new tag), green means it's already there
+# (nothing to import), yellow is group-header-only and means that group is a mix of both.
+_STATUS_COLORS = {"red": "#e53935", "green": "#43a047", "yellow": "#fbc02d"}
+_STATUS_LABELS = {"red": "Only in this profile", "green": "Already in Tags", "yellow": "Mixed"}
+
+
+def _status_dot(status):
+    dot = QLabel()
+    dot.setFixedSize(10, 10)
+    dot.setStyleSheet(f"background-color: {_STATUS_COLORS[status]}; border-radius: 5px;")
+    dot.setToolTip(_STATUS_LABELS[status])
+    return dot
+
+
+def _group_status(tag_names, live_tag_names):
+    """Aggregate status for a group header from its member tags' individual statuses --
+    green if every one is already live, red if none are, yellow if it's a mix."""
+    statuses = {"green" if name in live_tag_names else "red" for name in tag_names}
+    return statuses.pop() if len(statuses) == 1 else "yellow"
+
+
+class _GroupSelectCheckBox(QCheckBox):
+    """A group header's "select all in this group" checkbox. Tristate so it can *display*
+    PartiallyChecked when only some of the group's tags are checked, but a user click
+    always resolves straight to Checked/Unchecked -- Qt's default tristate click-cycle
+    (Unchecked -> PartiallyChecked -> Checked -> Unchecked) would otherwise let a click
+    land the header itself on PartiallyChecked, which doesn't mean anything as a click
+    target."""
+
+    def nextCheckState(self):
+        self.setCheckState(Qt.Unchecked if self.checkState() == Qt.Checked else Qt.Checked)
+
+
 class CreateProfileDialog(QDialog):
     """Create/Edit Profile: a left-hand page navigator (Profile Info / Tags /
     Datasheet) that switches the dialog's right-hand content, instead of one flat
@@ -170,22 +205,65 @@ class CreateProfileDialog(QDialog):
     of those to actually import into the profile, rather than always capturing
     every current tag. `preset` (an existing profile dict) switches the dialog into
     Edit mode: title/button say "Edit"/"Save" instead of "Create", Profile Info
-    starts filled in, and any live tag whose name matches one already in the
-    profile starts checked."""
+    starts filled in, and the Tags page is seeded with the profile's own saved tags
+    (checked) plus any live tag not already in the profile (unchecked) -- NOT just
+    whatever happens to be live right now. The profile's tags are very often not the
+    live Tags tab's tags at all (e.g. right after reopening the app, or after
+    connecting to a different device), and building the Tags page from live tags
+    alone meant Edit would show an empty list and, if saved, silently wipe out the
+    profile's real tags entirely.
+
+    `view_only=True` is a third mode, used by the Profiles tab's card popup: Profile
+    Info becomes read-only (nothing here is being changed), the title/button say "View
+    Profile"/"Apply", and the Tags page shows only the profile's own saved tags (never
+    merged with extra live ones -- there's nothing to add TO the profile here) each
+    marked with a red/green status dot against `live_tag_names` (the current Tags tab's
+    tag names) so the user can see at a glance which tags would actually be new. Accept
+    returns the checked subset via selected_tags() for the caller to import alongside
+    whatever's already live, same as Edit/Create."""
 
     PAGES = ["Profile Info", "Tags", "Datasheet"]
 
-    def __init__(self, colors, button_style, available_tags=None, preset=None, parent=None):
+    def __init__(self, colors, button_style, available_tags=None, preset=None, parent=None,
+                 view_only=False, live_tag_names=None):
         super().__init__(parent)
         self.colors = colors
         self.button_style = button_style
-        self.available_tags = available_tags or []
+        self.view_only = view_only
+        self.live_tag_names = live_tag_names or set()
+        if view_only:
+            self.available_tags = list((preset or {}).get("tags") or [])
+        else:
+            self.available_tags = self._merge_preset_tags(available_tags or [], preset)
         self.preset = preset
         self.is_edit = preset is not None
-        self.setWindowTitle("Edit Profile" if self.is_edit else "Create New Profile")
+        if view_only:
+            self.setWindowTitle("View Profile")
+        elif self.is_edit:
+            self.setWindowTitle("Edit Profile")
+        else:
+            self.setWindowTitle("Create New Profile")
         self.setMinimumSize(560, 420)
         self._tag_checkboxes = []
+        self._group_checkboxes = {}  # group key -> its header QCheckBox
+        self._group_tag_checkboxes = {}  # group key -> list of member tag QCheckBoxes
+        self._updating_group_checkbox = False  # reentrancy guard, see _on_group_checkbox_changed
         self._build_ui()
+
+    @staticmethod
+    def _merge_preset_tags(live_tags, preset):
+        """The profile's own saved tags first (in their own saved order/data), then any
+        live tag not already in the profile appended after -- so Edit always shows the
+        real contents of the profile being edited, never just whatever's live right now.
+        A tag present in both is only listed once, using the profile's saved copy (this
+        is a snapshot of the profile, not a live re-sync of that tag's current address/
+        format from the Tags tab)."""
+        if preset is None:
+            return list(live_tags)
+        preset_tags = preset.get("tags") or []
+        preset_names = {str(t.get("Tag Name", "")) for t in preset_tags}
+        extra_live = [t for t in live_tags if str(t.get("Tag Name", "")) not in preset_names]
+        return list(preset_tags) + extra_live
 
     def _build_ui(self):
         c = self.colors
@@ -221,7 +299,8 @@ class CreateProfileDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        self.accept_btn = QPushButton("Save" if self.is_edit else "Create")
+        accept_text = "Apply" if self.view_only else ("Save" if self.is_edit else "Create")
+        self.accept_btn = QPushButton(accept_text)
         self.accept_btn.setStyleSheet(self.button_style)
         self.accept_btn.clicked.connect(self._on_accept)
         btn_row.addWidget(self.accept_btn)
@@ -257,17 +336,24 @@ class CreateProfileDialog(QDialog):
         self.type_input.setPlaceholderText("e.g. VFD, PLC, Sensor")
         layout.addWidget(self.type_input)
 
+        if self.view_only:
+            for field in (self.name_input, self.manufacturer_input, self.type_input):
+                field.setReadOnly(True)
+
         layout.addStretch()
         return page
 
     def _build_tags_page(self):
-        """Checkbox list of every tag currently in the live Tags tab, clustered under
+        """Checkbox list of every tag in self.available_tags (already merged with the
+        profile's own saved tags in Edit mode -- see _merge_preset_tags), clustered under
         collapsible group headers matching the Tags tab's own Groups (an ungrouped
         section too, for tags with no group) -- checked by default when creating a new
         profile (matches the old "capture everything" behavior unless the user opts
         out), or checked only where the name matches one already in the profile being
-        edited. Group order is derived from first-appearance in available_tags, which
-        already matches the live Tags tab's own visual cluster order."""
+        edited. Group order is derived from first-appearance in available_tags: when
+        creating, that matches the live Tags tab's own visual cluster order; when
+        editing, the profile's own saved tags come first (see _merge_preset_tags), so any
+        of its groups appear in the order they were originally saved."""
         preset_tag_names = None
         if self.preset is not None:
             preset_tag_names = {
@@ -281,6 +367,7 @@ class CreateProfileDialog(QDialog):
 
         if not self.available_tags:
             label = QLabel(
+                "This profile has no saved tags." if self.view_only else
                 "No tags currently configured in the Tags tab. Add tags there first, "
                 "then reopen this to include them in the profile."
             )
@@ -290,7 +377,7 @@ class CreateProfileDialog(QDialog):
             return page
 
         select_row = QHBoxLayout()
-        select_row.addWidget(QLabel("Select which tags to include:"))
+        select_row.addWidget(QLabel("Select which tags to import:" if self.view_only else "Select which tags to include:"))
         select_row.addStretch()
         select_all_btn = QPushButton("Select All")
         select_all_btn.setStyleSheet(self.button_style)
@@ -301,6 +388,17 @@ class CreateProfileDialog(QDialog):
         select_none_btn.clicked.connect(lambda: self._set_all_tags_checked(False))
         select_row.addWidget(select_none_btn)
         layout.addLayout(select_row)
+
+        if self.view_only:
+            legend_row = QHBoxLayout()
+            legend_row.setSpacing(16)
+            for status in ("red", "green", "yellow"):
+                legend_row.addWidget(_status_dot(status))
+                legend_label = QLabel(_STATUS_LABELS[status])
+                legend_label.setStyleSheet(f"color: {self.colors.get('text_secondary', '#666')}; font-size: 11px;")
+                legend_row.addWidget(legend_label)
+            legend_row.addStretch()
+            layout.addLayout(legend_row)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -326,31 +424,66 @@ class CreateProfileDialog(QDialog):
             groups[key].append(tag)
 
         self._tag_checkboxes = []
+        self._group_checkboxes = {}
+        self._group_tag_checkboxes = {}
         for key in groups_order:
             tags_in_group = groups[key]
             display_name = key or "(Ungrouped)"
+
+            header_row = QWidget()
+            header_layout = QHBoxLayout(header_row)
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.setSpacing(4)
+
+            if self.view_only:
+                tag_names_in_group = [str(t.get("Tag Name", "")) for t in tags_in_group]
+                header_layout.addWidget(_status_dot(_group_status(tag_names_in_group, self.live_tag_names)))
+
+            group_checkbox = _GroupSelectCheckBox()
+            group_checkbox.setTristate(True)
+            group_checkbox.setToolTip(f"Select/deselect every tag in {display_name}")
+            header_layout.addWidget(group_checkbox)
 
             toggle_btn = QPushButton(f"▼  {display_name} ({len(tags_in_group)} tags)")
             toggle_btn.setStyleSheet(
                 f"text-align: left; font-weight: 600; color: {self.colors.get('text', '#000')}; "
                 f"background: transparent; border: none; padding: 4px;"
             )
-            container_layout.addWidget(toggle_btn)
+            header_layout.addWidget(toggle_btn, 1)
+            container_layout.addWidget(header_row)
 
             body = QWidget()
             body_layout = QVBoxLayout(body)
             body_layout.setContentsMargins(24, 0, 0, 4)
             body_layout.setSpacing(2)
 
+            member_checkboxes = []
             for tag in tags_in_group:
                 name = str(tag.get("Tag Name", ""))
                 detail = f"{tag.get('Type', '')} @ {tag.get('Address', '')} ({tag.get('Format', '')})"
                 checkbox = QCheckBox(f"{name}  —  {detail}")
                 checkbox.setChecked(name in preset_tag_names if preset_tag_names is not None else True)
-                body_layout.addWidget(checkbox)
+                checkbox.toggled.connect(lambda _checked=False, gk=key: self._update_group_checkbox_state(gk))
+                if self.view_only:
+                    tag_row = QWidget()
+                    tag_row_layout = QHBoxLayout(tag_row)
+                    tag_row_layout.setContentsMargins(0, 0, 0, 0)
+                    tag_row_layout.setSpacing(6)
+                    status = "green" if name in self.live_tag_names else "red"
+                    tag_row_layout.addWidget(_status_dot(status))
+                    tag_row_layout.addWidget(checkbox, 1)
+                    body_layout.addWidget(tag_row)
+                else:
+                    body_layout.addWidget(checkbox)
                 self._tag_checkboxes.append((checkbox, tag))
+                member_checkboxes.append(checkbox)
 
             container_layout.addWidget(body)
+            self._group_tag_checkboxes[key] = member_checkboxes
+            self._group_checkboxes[key] = group_checkbox
+            self._update_group_checkbox_state(key)
+            group_checkbox.stateChanged.connect(lambda state, gk=key: self._on_group_checkbox_changed(gk, state))
+
             toggle_btn.clicked.connect(
                 lambda _checked=False, b=body, btn=toggle_btn, n=display_name, c=len(tags_in_group):
                     self._toggle_profile_group_section(b, btn, n, c)
@@ -371,6 +504,46 @@ class CreateProfileDialog(QDialog):
         body.setVisible(not collapsing)
         arrow = "▶" if collapsing else "▼"
         toggle_btn.setText(f"{arrow}  {display_name} ({tag_count} tags)")
+
+    def _on_group_checkbox_changed(self, group_key, state):
+        """A group's own header checkbox was clicked -- fan the change out to every tag
+        checkbox in that group. Guarded by _updating_group_checkbox so the member
+        checkboxes' own toggled->_update_group_checkbox_state calls (fired as a side
+        effect of setChecked below) don't fight this method over the header's tri-state,
+        which _update_group_checkbox_state would otherwise immediately recompute back to
+        Qt.PartiallyChecked mid-update."""
+        if self._updating_group_checkbox:
+            return
+        checked = Qt.CheckState(state) != Qt.Unchecked
+        self._updating_group_checkbox = True
+        try:
+            for checkbox in self._group_tag_checkboxes.get(group_key, []):
+                checkbox.setChecked(checked)
+        finally:
+            self._updating_group_checkbox = False
+
+    def _update_group_checkbox_state(self, group_key):
+        """Recompute one group's header checkbox (checked/unchecked/partial) from its
+        member tags' current state -- called after any member checkbox toggles, so the
+        header always reflects reality even when a member was (un)checked individually
+        rather than via the header."""
+        if self._updating_group_checkbox:
+            return
+        checkboxes = self._group_tag_checkboxes.get(group_key)
+        group_checkbox = self._group_checkboxes.get(group_key)
+        if not checkboxes or group_checkbox is None:
+            return
+        checked_count = sum(1 for c in checkboxes if c.isChecked())
+        self._updating_group_checkbox = True
+        try:
+            if checked_count == 0:
+                group_checkbox.setCheckState(Qt.Unchecked)
+            elif checked_count == len(checkboxes):
+                group_checkbox.setCheckState(Qt.Checked)
+            else:
+                group_checkbox.setCheckState(Qt.PartiallyChecked)
+        finally:
+            self._updating_group_checkbox = False
 
     def _set_all_tags_checked(self, checked):
         for checkbox, _tag in self._tag_checkboxes:
@@ -410,7 +583,7 @@ class CreateProfileDialog(QDialog):
 
 class DeviceProfilesPanel(QWidget):
     """The Profiles tab's content: a Local/Community toggle over a stacked panel.
-    Local is a real, working save/apply/edit/delete flow for on-disk profiles.
+    Local is a real, working save/import/edit/delete flow for on-disk profiles.
     Community is a placeholder -- scope and format for shared profiles are still
     being decided."""
 
@@ -497,6 +670,10 @@ class DeviceProfilesPanel(QWidget):
         self._cards = []
         self._selected_path = None
 
+        hint_label = QLabel("Double-click a profile to view it and choose which tags to import.")
+        hint_label.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-size: 11px;")
+        layout.addWidget(hint_label)
+
         btn_row = QHBoxLayout()
         self.save_btn = QPushButton("Create New Profile")
         self.save_btn.setStyleSheet(self._button_style())
@@ -507,11 +684,6 @@ class DeviceProfilesPanel(QWidget):
         self.edit_btn.setStyleSheet(self._button_style())
         self.edit_btn.clicked.connect(self._edit_selected)
         btn_row.addWidget(self.edit_btn)
-
-        self.apply_btn = QPushButton("Apply")
-        self.apply_btn.setStyleSheet(self._button_style())
-        self.apply_btn.clicked.connect(self._apply_selected)
-        btn_row.addWidget(self.apply_btn)
 
         self.delete_btn = QPushButton("Delete")
         self.delete_btn.setStyleSheet(self._button_style())
@@ -569,7 +741,7 @@ class DeviceProfilesPanel(QWidget):
         for i, profile in enumerate(self._profiles):
             card = ProfileCard(profile, colors)
             card.clicked.connect(lambda p=profile["_path"]: self._select_path(p))
-            card.double_clicked.connect(lambda p=profile["_path"]: self._apply_path(p))
+            card.double_clicked.connect(lambda p=profile["_path"]: self._open_view_profile_dialog(p))
             row, col = divmod(i, CARD_COLUMNS)
             self.cards_grid.addWidget(card, row, col)
             self._cards.append(card)
@@ -585,14 +757,35 @@ class DeviceProfilesPanel(QWidget):
             card.set_selected(card.profile["_path"] == path)
         self._update_button_states()
 
-    def _apply_path(self, path):
-        """Double-clicking a card selects it and applies it in one action."""
+    def _open_view_profile_dialog(self, path):
+        """Double-clicking a card selects it and opens a read-only view of it, with a
+        per-tag import picker -- replaces the old instant "double-click applies
+        everything" behavior. Tags already in the live Tags tab are marked green (see
+        _status_dot/_group_status), so the user can tell at a glance which of the
+        profile's tags would actually be new before choosing what to bring in."""
         self._select_path(path)
-        self._apply_selected()
+        profile = self._selected_profile()
+        mw = self.parent_window
+        if profile is None or mw is None:
+            return
+        live_tag_names = {t.get("Tag Name", "") for t in mw._build_tag_export_rows()}
+        dialog = CreateProfileDialog(
+            self._colors(), self._button_style(), preset=profile, parent=self,
+            view_only=True, live_tag_names=live_tag_names,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        selected_tags = dialog.selected_tags()
+        imported_count, skipped_count = mw._import_additional_tag_rows(selected_tags)
+        mw._apply_address_table_data(profile.get("address_table"))
+        if hasattr(mw, "_log"):
+            message = f"Imported {imported_count} tag(s) from profile '{profile.get('name', '')}'"
+            if skipped_count:
+                message += f" ({skipped_count} already present, skipped)"
+            mw._log(message)
 
     def _update_button_states(self):
         has_selection = self._selected_profile() is not None
-        self.apply_btn.setEnabled(has_selection)
         self.edit_btn.setEnabled(has_selection)
         self.delete_btn.setEnabled(has_selection)
 
@@ -638,21 +831,6 @@ class DeviceProfilesPanel(QWidget):
             QMessageBox.critical(self, "Save Profile Failed", f"Could not write profile file: {e}")
             return
         self.refresh_local_profiles(reselect_path=path)
-
-    def _apply_selected(self):
-        """Replace the current Tags list and Address Table range with the selected
-        profile's -- same "clear and repopulate" contract Load Session already uses,
-        so behavior stays consistent between the two entry points."""
-        profile = self._selected_profile()
-        mw = self.parent_window
-        if profile is None or mw is None:
-            return
-        tags = profile.get("tags")
-        if tags is not None:
-            mw._apply_imported_tag_rows(tags)
-        mw._apply_address_table_data(profile.get("address_table"))
-        if hasattr(mw, "_log"):
-            mw._log(f"Applied device profile '{profile.get('name', '')}'")
 
     def _edit_selected(self):
         """Reopen the same page-navigated dialog Create uses, pre-filled from the

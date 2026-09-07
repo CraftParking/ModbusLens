@@ -2135,6 +2135,90 @@ Unit ID: {unit_id}<br><br>
 
         return imported_count
 
+    def _import_additional_tag_rows(self, rows):
+        """Add `rows` (the same per-tag dict shape _build_tag_export_rows produces) as
+        NEW tags alongside whatever's already in the Tags table, instead of
+        _apply_imported_tag_rows' clear-and-repopulate -- used by the Profiles tab's
+        per-tag import picker, where the user is choosing which of a profile's tags to
+        bring in alongside their current ones, not replacing the table outright. A row
+        whose Tag Name already matches a live tag is skipped rather than added as a
+        duplicate -- it's already present, there's nothing to import. Returns
+        (imported_count, skipped_count)."""
+        # Selection affects where _add_monitoring_tag(insert_row=None) inserts (below the
+        # last selected row) -- clear it first so every row in this batch lands at the end,
+        # in order, regardless of whatever happened to be selected before this ran.
+        self.monitoring_tag_table.clearSelection()
+        existing_names = {t['name'] for t in self.monitoring_manager.get_monitoring_tags()}
+
+        imported_count = 0
+        skipped_count = 0
+        for row in rows:
+            name = row.get('Tag Name', '').strip()
+            if name and name in existing_names:
+                skipped_count += 1
+                continue
+
+            new_row = self.monitoring_tag_table.rowCount()
+            try:
+                group = row.get('Group', '').strip()
+                if group and group not in self.tag_group_names:
+                    self.tag_group_names.append(group)
+                self._add_monitoring_tag(
+                    tag_name=name,
+                    mode=row.get('Mode', 'Read').strip(),
+                    tag_type=row.get('Type', 'Coil').strip(),
+                    address=int(row.get('Address', 0)),
+                    count=int(row.get('Count', 1)),
+                    value_format=row.get('Format', 'U16').strip(),
+                    comment=row.get('Comment', '').strip(),
+                    enabled=str(row.get('Enabled', 'True')).strip().lower() in ('true', '1', 'yes'),
+                    group=group,
+                )
+                existing_names.add(name)
+                imported_count += 1
+            except (ValueError, KeyError) as e:
+                self._log(f"Skipping invalid row: {e}")
+                continue
+
+            scale_enabled = str(row.get('Scale Enabled', '')).strip().lower() in ('true', '1', 'yes')
+            if not scale_enabled:
+                continue
+            scale_mode = (row.get('Scale Mode', '') or 'linear').strip().lower()
+            try:
+                if scale_mode == 'multiply':
+                    scaling = {
+                        'enabled': True,
+                        'mode': 'multiply',
+                        'factor': float(row.get('Factor', 1) or 1),
+                        'value_type': row.get('Value Type', '').strip() or 'Real',
+                    }
+                else:
+                    scaling = {
+                        'enabled': True,
+                        'mode': 'linear',
+                        'raw_min': float(row.get('Raw Min', 0) or 0),
+                        'raw_max': float(row.get('Raw Max', 0) or 0),
+                        'scaled_min': float(row.get('Scaled Min', 0) or 0),
+                        'scaled_max': float(row.get('Scaled Max', 0) or 0),
+                        'value_type': row.get('Value Type', '').strip() or 'Real',
+                    }
+            except (ValueError, TypeError) as e:
+                self._log(f"Skipping invalid scaling config on imported row: {e}")
+                continue
+            self.monitoring_manager.tag_scaling[new_row] = scaling
+            scale_widget = self.monitoring_tag_table.cellWidget(new_row, 13)
+            if scale_widget:
+                try:
+                    self._updating_tag_table = True
+                    scale_widget.checkbox.setChecked(True)
+                finally:
+                    self._updating_tag_table = False
+
+        if self.tag_group_names:
+            self._rebuild_tag_table_grouped()
+
+        return imported_count, skipped_count
+
     def _export_tags_csv(self):
         """Export tags to CSV file."""
         try:
