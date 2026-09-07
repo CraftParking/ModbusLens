@@ -23,3 +23,37 @@ def app_data_dir(app_name: str = "ModbusLens") -> Path:
     xdg_data_home = os.getenv("XDG_DATA_HOME")
     base_dir = Path(xdg_data_home) if xdg_data_home else Path.home() / ".local" / "share"
     return base_dir / app_name
+
+
+def documents_dir() -> Path:
+    """Return the user's real Documents folder, honoring OS-level redirection where
+    it's reasonably easy to detect, falling back to ~/Documents everywhere else."""
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders",
+            ) as key:
+                value, _ = winreg.QueryValueEx(key, "Personal")
+            if value:
+                return Path(os.path.expandvars(value))
+        except OSError:
+            pass
+        return Path.home() / "Documents"
+
+    if sys.platform == "darwin":
+        return Path.home() / "Documents"
+
+    # Linux: honor the XDG user-dirs config if present -- Documents can be renamed
+    # (localized, e.g. "Dokumente") or moved to a different mount entirely.
+    config_file = Path(os.getenv("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "user-dirs.dirs"
+    try:
+        for line in config_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("XDG_DOCUMENTS_DIR="):
+                raw = line.split("=", 1)[1].strip().strip('"').replace("$HOME", str(Path.home()))
+                return Path(raw)
+    except OSError:
+        pass
+    return Path.home() / "Documents"

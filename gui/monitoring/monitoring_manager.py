@@ -24,6 +24,8 @@ class MonitoringManager:
         self._write_poll_in_progress = False
         self.tag_alarms = {}  # row index -> alarm config dict
         self.tag_scaling = {}  # row index -> engineering-unit scaling config dict
+        self.tag_groups = {}  # row index -> group name ("" = ungrouped)
+        self.group_header_rows = {}  # row index -> group name, for a group's own header row
         self._log_file = None
         self._log_writer = None
         self._poll_worker = None  # the in-flight TagPollWorker, if a poll cycle is running
@@ -68,16 +70,24 @@ class MonitoringManager:
         self._log_file.flush()
 
     def handle_row_inserted(self, row):
-        """Keep tag_alarms/tag_scaling aligned with table rows after a new row is inserted at `row`."""
+        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows aligned with table
+        rows after a new row is inserted at `row`."""
         self.tag_alarms = {(r + 1 if r >= row else r): cfg for r, cfg in self.tag_alarms.items()}
         self.tag_scaling = {(r + 1 if r >= row else r): cfg for r, cfg in self.tag_scaling.items()}
+        self.tag_groups = {(r + 1 if r >= row else r): g for r, g in self.tag_groups.items()}
+        self.group_header_rows = {(r + 1 if r >= row else r): g for r, g in self.group_header_rows.items()}
 
     def handle_row_removed(self, row):
-        """Keep tag_alarms/tag_scaling aligned with table rows after the row at `row` is removed."""
+        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows aligned with table
+        rows after the row at `row` is removed."""
         self.tag_alarms.pop(row, None)
         self.tag_alarms = {(r - 1 if r > row else r): cfg for r, cfg in self.tag_alarms.items()}
         self.tag_scaling.pop(row, None)
         self.tag_scaling = {(r - 1 if r > row else r): cfg for r, cfg in self.tag_scaling.items()}
+        self.tag_groups.pop(row, None)
+        self.tag_groups = {(r - 1 if r > row else r): g for r, g in self.tag_groups.items()}
+        self.group_header_rows.pop(row, None)
+        self.group_header_rows = {(r - 1 if r > row else r): g for r, g in self.group_header_rows.items()}
 
     def check_alarm(self, tag, value):
         """Return True if this tag's current value violates its configured alarm."""
@@ -120,16 +130,16 @@ class MonitoringManager:
         tags = []
         for row in range(self.parent.monitoring_tag_table.rowCount()):
             name_widget = self.parent.monitoring_tag_table.cellWidget(row, 0)
-            mode_widget = self.parent.monitoring_tag_table.cellWidget(row, 1)
-            type_widget = self.parent.monitoring_tag_table.cellWidget(row, 2)
-            address_widget = self.parent.monitoring_tag_table.cellWidget(row, 3)
-            count_widget = self.parent.monitoring_tag_table.cellWidget(row, 4)
-            format_widget = self.parent.monitoring_tag_table.cellWidget(row, 5)
-            read_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 6)
-            raw_hex_widget = self.parent.monitoring_tag_table.cellWidget(row, 7)
-            write_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 8)
-            comment_widget = self.parent.monitoring_tag_table.cellWidget(row, 9)
-            enabled_widget = self.parent.monitoring_tag_table.cellWidget(row, 13)
+            mode_widget = self.parent.monitoring_tag_table.cellWidget(row, 2)
+            type_widget = self.parent.monitoring_tag_table.cellWidget(row, 3)
+            address_widget = self.parent.monitoring_tag_table.cellWidget(row, 4)
+            count_widget = self.parent.monitoring_tag_table.cellWidget(row, 5)
+            format_widget = self.parent.monitoring_tag_table.cellWidget(row, 6)
+            read_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 7)
+            raw_hex_widget = self.parent.monitoring_tag_table.cellWidget(row, 8)
+            write_value_widget = self.parent.monitoring_tag_table.cellWidget(row, 9)
+            comment_widget = self.parent.monitoring_tag_table.cellWidget(row, 10)
+            enabled_widget = self.parent.monitoring_tag_table.cellWidget(row, 14)
 
             if not all((name_widget, mode_widget, type_widget, address_widget, count_widget, format_widget, read_value_widget, raw_hex_widget, write_value_widget, comment_widget)):
                 continue
@@ -160,6 +170,7 @@ class MonitoringManager:
                 "format": value_format,
                 "comment": comment,
                 "enabled": enabled_widget.checkbox.isChecked() if enabled_widget else True,
+                "group": self.tag_groups.get(row, ""),
             })
         return tags
 
@@ -185,9 +196,9 @@ class MonitoringManager:
         for row in range(target_table.rowCount()):
             name_widget = target_table.cellWidget(row, 0)
             if name_widget and name_widget.text().strip() == tag_name:
-                type_widget = target_table.cellWidget(row, 2)
-                address_widget = target_table.cellWidget(row, 3)
-                if (type_widget and type_widget.currentText() == data_type and 
+                type_widget = target_table.cellWidget(row, 3)
+                address_widget = target_table.cellWidget(row, 4)
+                if (type_widget and type_widget.currentText() == data_type and
                     address_widget and address_widget.value() == address):
                     target_row = row
                     break
@@ -196,32 +207,32 @@ class MonitoringManager:
             return  # Tag not found in table
 
         if read_value:
-            read_value_widget = target_table.cellWidget(target_row, 6)
+            read_value_widget = target_table.cellWidget(target_row, 7)
             if read_value_widget:
                 read_value_widget.setText(read_value)
                 self._apply_alarm_style(read_value_widget, in_alarm)
 
         if raw_hex:
-            raw_hex_widget = target_table.cellWidget(target_row, 7)
+            raw_hex_widget = target_table.cellWidget(target_row, 8)
             if raw_hex_widget:
                 raw_hex_widget.setText(raw_hex)
 
-        eng_value_widget = target_table.cellWidget(target_row, 11)
+        eng_value_widget = target_table.cellWidget(target_row, 12)
         if eng_value_widget:
             eng_value_widget.setText(engineering_value)
 
         # Only touch the write column if we have something meaningful to show,
         # so polling doesn't stomp on a value the user is currently typing.
         if write_value:
-            write_value_widget = target_table.cellWidget(target_row, 8)
+            write_value_widget = target_table.cellWidget(target_row, 9)
             if write_value_widget:
                 write_value_widget.setText(write_value)
         elif initial_write_value:
-            write_value_widget = target_table.cellWidget(target_row, 8)
+            write_value_widget = target_table.cellWidget(target_row, 9)
             if write_value_widget and not write_value_widget.text():
                 write_value_widget.setText(initial_write_value)
 
-        timestamp_widget = target_table.cellWidget(target_row, 10)
+        timestamp_widget = target_table.cellWidget(target_row, 11)
         if timestamp_widget:
             timestamp_widget.setText(timestamp)
 

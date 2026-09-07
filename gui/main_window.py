@@ -22,9 +22,9 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QComboBox, QSpinBox, QDoubleSpinBox, QTabWidget, QGroupBox,
     QApplication, QMessageBox, QDialog, QCheckBox,
-    QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton
+    QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton, QInputDialog
 )
-from PySide6.QtCore import Qt, QTimer, QEvent
+from PySide6.QtCore import Qt, QTimer, QEvent, Signal
 from PySide6.QtGui import QIcon, QActionGroup, QShortcut, QKeySequence
 
 # Add the gui directory to the path for relative imports
@@ -62,6 +62,11 @@ logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 
 
 apply_theme = theme.apply_theme  # kept as a module-level name other code may reference
+
+# Tags table Group column: the sentinel entry that opens the "new group" popup, and the
+# label shown for a tag with no group assigned (stored internally as "").
+ADD_GROUP_SENTINEL = "+ Add Group..."
+UNGROUPED_LABEL = "(Ungrouped)"
 
 
 class TagTableWidget(QTableWidget):
@@ -177,6 +182,41 @@ class CheckboxCell(QWidget):
         layout.setAlignment(checkbox, Qt.AlignCenter)
 
 
+class GroupHeaderWidget(QWidget):
+    """A Tags-table row's group header, spanning every column via setSpan(). Shows a
+    collapse/expand arrow plus the group name and its current tag count; clicking anywhere
+    on it toggles collapsed state. Purely a rendering/interaction widget -- it holds no
+    tag data itself, and _rebuild_tag_table_grouped() is the only place that creates one."""
+
+    clicked = Signal(str)  # group_name
+
+    def __init__(self, group_name, tag_count, collapsed, colors, parent=None):
+        super().__init__(parent)
+        self.group_name = group_name
+        self.setCursor(Qt.PointingHandCursor)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 8, 2)
+        self.label = QLabel()
+        self.label.setStyleSheet(f"font-weight: 600; color: {colors.get('text', '#000')};")
+        layout.addWidget(self.label)
+        layout.addStretch()
+        self.set_state(group_name, tag_count, collapsed)
+
+    def set_state(self, group_name, tag_count, collapsed):
+        """`group_name` is the canonical key ("" for Ungrouped) -- displayed as
+        UNGROUPED_LABEL, but kept as "" on self.group_name so the click signal and every
+        lookup against tag_groups/collapsed_groups/group_header_rows stays consistent."""
+        self.group_name = group_name
+        arrow = "▶" if collapsed else "▼"  # ▶ / ▼
+        plural = "" if tag_count == 1 else "s"
+        display_name = group_name or UNGROUPED_LABEL
+        self.label.setText(f"{arrow}  {display_name}  ({tag_count} tag{plural})")
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.clicked.emit(self.group_name)
+
+
 class ModbusGUI(QMainWindow):
     _open_windows = []  # keeps extra connection windows alive (see _new_connection_window)
 
@@ -222,6 +262,13 @@ class ModbusGUI(QMainWindow):
         # the interface to bind the TCP socket to, e.g. so a VPN + Ethernet + Wi-Fi machine
         # actually goes out the NIC the user picked instead of whatever the OS defaults to.
         self.interface_ip = None
+
+        # Tags table Groups: ordered list of every group name created so far (feature is
+        # fully inert -- no header rows rendered at all -- while this stays empty), and
+        # which of those groups are currently collapsed. Must exist before the Tags table
+        # itself is built below, since its Group column combo reads tag_group_names.
+        self.tag_group_names = []
+        self.collapsed_groups = set()
 
         # Shared between Tag Monitoring's poll worker and Trend's own poll timer so the
         # exact same register range configured in both doesn't cost two wire round-trips
@@ -636,11 +683,11 @@ class ModbusGUI(QMainWindow):
         tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
 
         self.monitoring_tag_table = TagTableWidget(self)
-        self.monitoring_tag_table.setColumnCount(14)
-        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale", "Enabled"])
+        self.monitoring_tag_table.setColumnCount(15)
+        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Group", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale", "Enabled"])
         self._update_tag_address_header()
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
-        self.monitoring_tag_table.setColumnWidth(11, 130)
+        self.monitoring_tag_table.setColumnWidth(12, 130)
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
         # Every cell here is a setCellWidget() covering the row, so the only click surface
         # Qt's own selection model ever sees is the row-number header (see TagTableWidget's
@@ -720,7 +767,7 @@ class ModbusGUI(QMainWindow):
         layout.addWidget(tag_group)
 
         self.monitoring_tag_table.itemSelectionChanged.connect(self._update_tag_buttons_state)
-        self.add_tag_btn.clicked.connect(self._add_monitoring_tag)
+        self.add_tag_btn.clicked.connect(self._on_add_tag_clicked)
         self.remove_tag_btn.clicked.connect(self._remove_monitoring_tag)
         self.remove_all_tags_btn.clicked.connect(self._remove_all_monitoring_tags)
         
@@ -942,6 +989,14 @@ class ModbusGUI(QMainWindow):
             w.addItems(["Coil", "Discrete Input", "Holding Register", "Input Register"])
             if value:
                 w.setCurrentText(value)
+        elif widget_type == "group_combo":
+            w = QComboBox()
+            w.addItem(UNGROUPED_LABEL, "")
+            for name in self.tag_group_names:
+                w.addItem(name, name)
+            w.addItem(ADD_GROUP_SENTINEL, ADD_GROUP_SENTINEL)
+            index = w.findData(value or "")
+            w.setCurrentIndex(index if index >= 0 else 0)
         elif widget_type == "format_combo":
             w = QComboBox()
             w.addItems([
@@ -968,9 +1023,18 @@ class ModbusGUI(QMainWindow):
                 theme.apply_dropdown_delegate(w, self._theme_mode)
         return w
  
+    def _on_add_tag_clicked(self):
+        """Add Tag button -- a thin wrapper around _add_monitoring_tag (which is also
+        called internally by _move_tag_row/_rebuild_tag_table_grouped/session-import,
+        none of which should trigger a nested regroup) so a brand-new tag always lands
+        in its correct (Ungrouped) visual position while grouping is in use."""
+        self._add_monitoring_tag()
+        if self.tag_group_names:
+            self._rebuild_tag_table_grouped()
+
     def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None,
                              comment="", insert_row=None, read_value="", raw_hex="", write_value="", timestamp="",
-                             engineering_value="", enabled=True):
+                             engineering_value="", enabled=True, group=""):
         # An explicit insert_row is used when rebuilding a row that's being dragged to a new
         # position (see _move_tag_row) -- otherwise fall back to the normal Add Tag behavior.
         if insert_row is None:
@@ -990,36 +1054,42 @@ class ModbusGUI(QMainWindow):
 
         name_widget = self._create_monitoring_tag_widget("lineedit", tag_name)
         self.monitoring_tag_table.setCellWidget(insert_row, 0, name_widget)
-        self.monitoring_tag_table.setCellWidget(insert_row, 1, self._create_monitoring_tag_widget("mode_combo", mode))
+
+        group_widget = self._create_monitoring_tag_widget("group_combo", group)
+        self.monitoring_tag_table.setCellWidget(insert_row, 1, group_widget)
+        self.monitoring_manager.tag_groups[insert_row] = group
+        group_widget.currentTextChanged.connect(self._on_monitoring_tag_group_changed)
+
+        self.monitoring_tag_table.setCellWidget(insert_row, 2, self._create_monitoring_tag_widget("mode_combo", mode))
         type_widget = self._create_monitoring_tag_widget("type_combo", tag_type)
-        self.monitoring_tag_table.setCellWidget(insert_row, 2, type_widget)
+        self.monitoring_tag_table.setCellWidget(insert_row, 3, type_widget)
 
         address_widget = self._create_monitoring_tag_widget("spinbox", address)
-        self.monitoring_tag_table.setCellWidget(insert_row, 3, address_widget)
+        self.monitoring_tag_table.setCellWidget(insert_row, 4, address_widget)
 
         count_widget = self._create_monitoring_tag_widget("spinbox", count)
         count_widget.setRange(1, 125)
-        self.monitoring_tag_table.setCellWidget(insert_row, 4, count_widget)
+        self.monitoring_tag_table.setCellWidget(insert_row, 5, count_widget)
 
         format_widget = self._create_monitoring_tag_widget("format_combo", value_format)
-        self.monitoring_tag_table.setCellWidget(insert_row, 5, format_widget)
-        self.monitoring_tag_table.setCellWidget(insert_row, 6, self._create_monitoring_tag_widget("lineedit", read_value))  # Read Value
+        self.monitoring_tag_table.setCellWidget(insert_row, 6, format_widget)
+        self.monitoring_tag_table.setCellWidget(insert_row, 7, self._create_monitoring_tag_widget("lineedit", read_value))  # Read Value
         raw_hex_widget = self._create_monitoring_tag_widget("lineedit", raw_hex)
         raw_hex_widget.setReadOnly(True)
-        self.monitoring_tag_table.setCellWidget(insert_row, 7, raw_hex_widget)  # Raw (Hex)
+        self.monitoring_tag_table.setCellWidget(insert_row, 8, raw_hex_widget)  # Raw (Hex)
         write_value_widget = self._create_monitoring_tag_widget("lineedit", write_value)
-        self.monitoring_tag_table.setCellWidget(insert_row, 8, write_value_widget)  # Write Value
+        self.monitoring_tag_table.setCellWidget(insert_row, 9, write_value_widget)  # Write Value
         write_value_widget.returnPressed.connect(self._on_write_value_enter)
-        self.monitoring_tag_table.setCellWidget(insert_row, 9, self._create_monitoring_tag_widget("lineedit", comment))  # Comment
-        self.monitoring_tag_table.setCellWidget(insert_row, 10, self._create_monitoring_tag_widget("lineedit", timestamp))  # Timestamp
+        self.monitoring_tag_table.setCellWidget(insert_row, 10, self._create_monitoring_tag_widget("lineedit", comment))  # Comment
+        self.monitoring_tag_table.setCellWidget(insert_row, 11, self._create_monitoring_tag_widget("lineedit", timestamp))  # Timestamp
 
         eng_value_widget = self._create_monitoring_tag_widget("lineedit", engineering_value)
         eng_value_widget.setReadOnly(True)
-        self.monitoring_tag_table.setCellWidget(insert_row, 11, eng_value_widget)  # Engineering Value
+        self.monitoring_tag_table.setCellWidget(insert_row, 12, eng_value_widget)  # Engineering Value
 
         scale_widget = QCheckBox()
         scale_widget.setToolTip("Enable engineering-unit scaling for this tag")
-        self.monitoring_tag_table.setCellWidget(insert_row, 12, CheckboxCell(scale_widget))  # Scale
+        self.monitoring_tag_table.setCellWidget(insert_row, 13, CheckboxCell(scale_widget))  # Scale
         scale_widget.toggled.connect(self._on_scale_checkbox_toggled)
 
         enabled_widget = QCheckBox()
@@ -1029,7 +1099,7 @@ class ModbusGUI(QMainWindow):
             "cycle and the write-mode value refresh) without deleting the row. Manual actions "
             "(Write Selected, one-shot write via Enter) still work regardless of this."
         )
-        self.monitoring_tag_table.setCellWidget(insert_row, 13, CheckboxCell(enabled_widget))  # Enabled
+        self.monitoring_tag_table.setCellWidget(insert_row, 14, CheckboxCell(enabled_widget))  # Enabled
 
         # Keep "count" valid for 32-bit formats (U32/S32/F32 require even register count).
         if hasattr(format_widget, "currentTextChanged"):
@@ -1045,7 +1115,7 @@ class ModbusGUI(QMainWindow):
 
         self._coerce_monitoring_tag_count(insert_row)
         self._ensure_unique_monitoring_tag_address(insert_row)
-        
+
         # Auto-select the newly inserted row
         self.monitoring_tag_table.selectRow(insert_row)
         self.monitoring_tag_table.setCurrentCell(insert_row, 0)
@@ -1057,15 +1127,16 @@ class ModbusGUI(QMainWindow):
         def widget_at(column):
             return self.monitoring_tag_table.cellWidget(row, column)
 
-        name_widget, mode_widget, type_widget = widget_at(0), widget_at(1), widget_at(2)
-        address_widget, count_widget, format_widget = widget_at(3), widget_at(4), widget_at(5)
-        read_value_widget, raw_hex_widget = widget_at(6), widget_at(7)
-        write_value_widget, comment_widget, timestamp_widget = widget_at(8), widget_at(9), widget_at(10)
-        eng_value_widget = widget_at(11)
-        enabled_widget = widget_at(13)
+        name_widget, mode_widget, type_widget = widget_at(0), widget_at(2), widget_at(3)
+        address_widget, count_widget, format_widget = widget_at(4), widget_at(5), widget_at(6)
+        read_value_widget, raw_hex_widget = widget_at(7), widget_at(8)
+        write_value_widget, comment_widget, timestamp_widget = widget_at(9), widget_at(10), widget_at(11)
+        eng_value_widget = widget_at(12)
+        enabled_widget = widget_at(14)
 
         return {
             "tag_name": name_widget.text() if name_widget else "",
+            "group": self.monitoring_manager.tag_groups.get(row, ""),
             "mode": mode_widget.currentText() if mode_widget else "Read",
             "tag_type": type_widget.currentText() if type_widget else "Coil",
             "address": address_widget.value() if address_widget else 1,
@@ -1090,6 +1161,14 @@ class ModbusGUI(QMainWindow):
         which is exactly what QTableWidget.insertRow(target_row) does too. No off-by-one
         adjustment is needed here; target_row is used as-is.
         """
+        if self.tag_group_names:
+            # Row order is derived entirely from Group membership while grouping is in
+            # use (see _rebuild_tag_table_grouped) -- a manual drag would just get
+            # visually undone by the next regroup, so it's disabled outright instead of
+            # silently not sticking. Move a tag between groups via its Group dropdown.
+            self._log("Drag-reorder is disabled while Tag Groups are in use.")
+            return
+
         row_count = self.monitoring_tag_table.rowCount()
         if source_row == target_row or not (0 <= source_row < row_count) or not (0 <= target_row < row_count):
             return
@@ -1111,7 +1190,7 @@ class ModbusGUI(QMainWindow):
 
         if scaling:
             self.monitoring_manager.tag_scaling[target_row] = scaling
-            scale_widget = self.monitoring_tag_table.cellWidget(target_row, 12)
+            scale_widget = self.monitoring_tag_table.cellWidget(target_row, 13)
             if scale_widget:
                 try:
                     self._updating_tag_table = True
@@ -1120,6 +1199,113 @@ class ModbusGUI(QMainWindow):
                     self._updating_tag_table = False
 
         self._log(f"Moved tag '{data['tag_name']}' to row {target_row + 1}")
+
+    def _rebuild_tag_table_grouped(self):
+        """The single choke point that lays the Tags table out in grouped, collapsible
+        order: Ungrouped's tags first, then each named group in tag_group_names (creation)
+        order, each behind its own header row. A no-op while tag_group_names is empty --
+        the feature stays fully inert and the table looks exactly like it always did until
+        the user actually creates a group.
+
+        Mirrors the existing full-wipe-and-rebuild _apply_imported_tag_rows already uses
+        for bulk changes, generalized to preserve alarm/scaling config across the rebuild
+        exactly the way _move_tag_row already does for a single row. Called after any
+        tag/group mutation while grouping is in use (Add/Remove Tag, group reassignment,
+        CSV/Session/Profile import) -- NOT after collapse/expand, which is a cheap
+        setRowHidden pass instead (see _toggle_tag_group_collapsed)."""
+        if not self.tag_group_names:
+            return
+
+        table = self.monitoring_tag_table
+        header_rows = set(self.monitoring_manager.group_header_rows)
+
+        # Snapshot every current tag row (skip existing header rows) plus its alarm/
+        # scaling config, in existing relative order -- preserves any prior within-group
+        # ordering across the rebuild.
+        captured = []
+        for row in range(table.rowCount()):
+            if row in header_rows:
+                continue
+            data = self._capture_tag_row(row)
+            alarm = self.monitoring_manager.tag_alarms.get(row)
+            scaling = self.monitoring_manager.tag_scaling.get(row)
+            captured.append((data, alarm, scaling))
+
+        # Cluster: Ungrouped ("") first, then each named group. A named group with 0
+        # tags right now just gets no header -- it still exists in every Group combo's
+        # dropdown via tag_group_names.
+        clusters = [("", [c for c in captured if not c[0]["group"]])]
+        for name in self.tag_group_names:
+            clusters.append((name, [c for c in captured if c[0]["group"] == name]))
+
+        table.setRowCount(0)
+        self.monitoring_manager.tag_alarms.clear()
+        self.monitoring_manager.tag_scaling.clear()
+        self.monitoring_manager.tag_groups.clear()
+        self.monitoring_manager.group_header_rows.clear()
+        self._highlighted_tag_rows.clear()
+
+        colors = self._colors()
+        for group_key, entries in clusters:
+            if not entries:
+                continue
+            header_row = table.rowCount()
+            table.insertRow(header_row)
+            table.setSpan(header_row, 0, 1, table.columnCount())
+            collapsed = group_key in self.collapsed_groups
+            header_widget = GroupHeaderWidget(group_key, len(entries), collapsed, colors)
+            header_widget.clicked.connect(self._toggle_tag_group_collapsed)
+            table.setCellWidget(header_row, 0, header_widget)
+            self.monitoring_manager.group_header_rows[header_row] = group_key
+
+            for data, alarm, scaling in entries:
+                insert_row = table.rowCount()
+                self._add_monitoring_tag(insert_row=insert_row, **data)
+                if alarm:
+                    self.monitoring_manager.tag_alarms[insert_row] = alarm
+                if scaling:
+                    self.monitoring_manager.tag_scaling[insert_row] = scaling
+                    scale_widget = table.cellWidget(insert_row, 13)
+                    if scale_widget:
+                        try:
+                            self._updating_tag_table = True
+                            scale_widget.checkbox.setChecked(True)
+                        finally:
+                            self._updating_tag_table = False
+
+        for group_key in self.collapsed_groups:
+            self._set_group_rows_hidden(group_key, True)
+
+        # A drag would just get visually undone by the next regroup -- see _move_tag_row.
+        table.verticalHeader().setSectionsMovable(not self.tag_group_names and not self.monitoring_active)
+
+    def _set_group_rows_hidden(self, group_key, hidden):
+        """Hide/show every tag row currently belonging to group_key (its own header row
+        is untouched -- that one always stays visible so it can be clicked to expand
+        again)."""
+        for row, group in self.monitoring_manager.tag_groups.items():
+            if group == group_key:
+                self.monitoring_tag_table.setRowHidden(row, hidden)
+
+    def _toggle_tag_group_collapsed(self, group_key):
+        """A group header was clicked -- flip its collapsed state. Cheap: just a
+        setRowHidden pass over that one group's rows plus its own arrow glyph, no full
+        rebuild needed since no row indices change."""
+        collapsed = group_key not in self.collapsed_groups
+        if collapsed:
+            self.collapsed_groups.add(group_key)
+        else:
+            self.collapsed_groups.discard(group_key)
+
+        self._set_group_rows_hidden(group_key, collapsed)
+
+        tag_count = sum(1 for g in self.monitoring_manager.tag_groups.values() if g == group_key)
+        for row, header_group in self.monitoring_manager.group_header_rows.items():
+            if header_group == group_key:
+                header_widget = self.monitoring_tag_table.cellWidget(row, 0)
+                if isinstance(header_widget, GroupHeaderWidget):
+                    header_widget.set_state(group_key, tag_count, collapsed)
+                break
 
     def _on_tag_address_mode_changed(self, checked):
         """Toggle Tags between user-facing 1-based and protocol 0-based address input."""
@@ -1130,7 +1316,7 @@ class ModbusGUI(QMainWindow):
         try:
             self._updating_tag_table = True
             for row in range(self.monitoring_tag_table.rowCount()):
-                address_widget = self.monitoring_tag_table.cellWidget(row, 3)
+                address_widget = self.monitoring_tag_table.cellWidget(row, 4)
                 if not address_widget or not hasattr(address_widget, "setRange"):
                     continue
                 current = address_widget.value()
@@ -1152,7 +1338,7 @@ class ModbusGUI(QMainWindow):
             "1-based: address 1 is sent as protocol offset 0.\n"
             "0-based: address 0 is sent as protocol offset 0."
         )
-        self.monitoring_tag_table.setHorizontalHeaderItem(3, header_item)
+        self.monitoring_tag_table.setHorizontalHeaderItem(4, header_item)
 
     def _tag_user_address_to_offset(self, tag):
         """Convert a tag's user-facing address to the 0-based Modbus protocol offset."""
@@ -1177,7 +1363,7 @@ class ModbusGUI(QMainWindow):
         if self._updating_tag_table:
             return
         sender = self.sender()
-        row = self._find_monitoring_tag_row(sender, 5)
+        row = self._find_monitoring_tag_row(sender, 6)
         if row is None:
             return
         self._coerce_monitoring_tag_count(row)
@@ -1186,7 +1372,7 @@ class ModbusGUI(QMainWindow):
         if self._updating_tag_table:
             return
         sender = self.sender()
-        row = self._find_monitoring_tag_row(sender, 4)
+        row = self._find_monitoring_tag_row(sender, 5)
         if row is None:
             return
         self._coerce_monitoring_tag_count(row)
@@ -1236,7 +1422,7 @@ class ModbusGUI(QMainWindow):
         if self._updating_tag_table:
             return
         sender = self.sender()
-        row = self._find_monitoring_tag_row(sender, 3)
+        row = self._find_monitoring_tag_row(sender, 4)
         if row is None:
             return
         self._ensure_unique_monitoring_tag_address(row)
@@ -1245,18 +1431,87 @@ class ModbusGUI(QMainWindow):
         if self._updating_tag_table:
             return
         sender = self.sender()
-        row = self._find_monitoring_tag_row(sender, 3)
+        row = self._find_monitoring_tag_row(sender, 4)
         if row is None:
-            row = self._find_monitoring_tag_row(sender, 2)
+            row = self._find_monitoring_tag_row(sender, 3)
         if row is None:
             return
         self._coerce_monitoring_tag_count(row)
         self._ensure_unique_monitoring_tag_address(row)
 
+    def _on_monitoring_tag_group_changed(self, _value=None):
+        if self._updating_tag_table:
+            return
+        sender = self.sender()
+        row = self._find_monitoring_tag_row(sender, 1)
+        if row is None:
+            return
+        value = sender.currentData()
+        if value == ADD_GROUP_SENTINEL:
+            self._add_new_tag_group(sender, row)
+            return
+        self.monitoring_manager.tag_groups[row] = value or ""
+        if self.tag_group_names:
+            self._rebuild_tag_table_grouped()
+
+    def _add_new_tag_group(self, combo, row):
+        """"+ Add Group..." was picked in a tag's Group dropdown -- ask for a name, register
+        it everywhere, and assign it to the tag that triggered this. Reverts the combo back
+        to its previous selection on Cancel or an invalid/reserved name, instead of leaving
+        it sitting on the literal "+ Add Group..." placeholder entry."""
+        previous_value = self.monitoring_manager.tag_groups.get(row, "")
+        name, ok = QInputDialog.getText(self, "Add Group", "Group name:")
+        name = (name or "").strip()
+        if not ok or not name:
+            self._set_group_combo_value(combo, previous_value)
+            return
+        if name in (ADD_GROUP_SENTINEL, UNGROUPED_LABEL):
+            QMessageBox.warning(self, "Invalid Group Name", f'"{name}" is a reserved name -- pick another.')
+            self._set_group_combo_value(combo, previous_value)
+            return
+
+        if name not in self.tag_group_names:
+            self.tag_group_names.append(name)
+            self._refresh_all_group_combos()
+        self.monitoring_manager.tag_groups[row] = name
+        self._set_group_combo_value(combo, name)
+        self._rebuild_tag_table_grouped()
+
+    def _set_group_combo_value(self, combo, value):
+        """Select `value` (a real group name, or "" for Ungrouped) in a Group combo without
+        re-triggering _on_monitoring_tag_group_changed."""
+        try:
+            self._updating_tag_table = True
+            index = combo.findData(value or "")
+            combo.setCurrentIndex(index if index >= 0 else 0)
+        finally:
+            self._updating_tag_table = False
+
+    def _refresh_all_group_combos(self):
+        """After a new group name is registered, add it to every currently-rendered tag's
+        Group dropdown. Header rows have no cellWidget at column 1, so this naturally skips
+        them without needing to check group_header_rows explicitly."""
+        for row in range(self.monitoring_tag_table.rowCount()):
+            combo = self.monitoring_tag_table.cellWidget(row, 1)
+            if not isinstance(combo, QComboBox):
+                continue
+            current = combo.currentData()
+            try:
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItem(UNGROUPED_LABEL, "")
+                for name in self.tag_group_names:
+                    combo.addItem(name, name)
+                combo.addItem(ADD_GROUP_SENTINEL, ADD_GROUP_SENTINEL)
+                index = combo.findData(current or "")
+                combo.setCurrentIndex(index if index >= 0 else 0)
+            finally:
+                combo.blockSignals(False)
+
     def _coerce_monitoring_tag_count(self, row):
-        type_widget = self.monitoring_tag_table.cellWidget(row, 2)
-        count_widget = self.monitoring_tag_table.cellWidget(row, 4)
-        format_widget = self.monitoring_tag_table.cellWidget(row, 5)
+        type_widget = self.monitoring_tag_table.cellWidget(row, 3)
+        count_widget = self.monitoring_tag_table.cellWidget(row, 5)
+        format_widget = self.monitoring_tag_table.cellWidget(row, 6)
         if not (type_widget and count_widget and format_widget):
             return
 
@@ -1280,9 +1535,9 @@ class ModbusGUI(QMainWindow):
             self._updating_tag_table = False
 
     def _ensure_unique_monitoring_tag_address(self, row):
-        type_widget = self.monitoring_tag_table.cellWidget(row, 2)
-        address_widget = self.monitoring_tag_table.cellWidget(row, 3)
-        count_widget = self.monitoring_tag_table.cellWidget(row, 4)
+        type_widget = self.monitoring_tag_table.cellWidget(row, 3)
+        address_widget = self.monitoring_tag_table.cellWidget(row, 4)
+        count_widget = self.monitoring_tag_table.cellWidget(row, 5)
         if not (type_widget and address_widget and count_widget):
             return
 
@@ -1295,8 +1550,8 @@ class ModbusGUI(QMainWindow):
         for other_row in range(self.monitoring_tag_table.rowCount()):
             if other_row == row:
                 continue
-            other_type = self.monitoring_tag_table.cellWidget(other_row, 2)
-            other_addr = self.monitoring_tag_table.cellWidget(other_row, 3)
+            other_type = self.monitoring_tag_table.cellWidget(other_row, 3)
+            other_addr = self.monitoring_tag_table.cellWidget(other_row, 4)
             if not (other_type and other_addr):
                 continue
             if other_type.currentText() != tag_type:
@@ -1333,11 +1588,13 @@ class ModbusGUI(QMainWindow):
         # diff doesn't skip highlighting a row that reused a stale index.
         self._highlighted_tag_rows.clear()
         self._update_tag_buttons_state()
+        if self.tag_group_names:
+            self._rebuild_tag_table_grouped()
 
     def _show_tag_context_menu(self, pos):
         table = self.monitoring_tag_table
         row = table.rowAt(pos.y())
-        if row < 0:
+        if row < 0 or row in self.monitoring_manager.group_header_rows:
             return
         selected_rows = sorted(self._get_selected_tag_rows())
         if row not in selected_rows:
@@ -1415,13 +1672,13 @@ class ModbusGUI(QMainWindow):
         if self._updating_tag_table:
             return
         sender = self.sender()
-        row = self._find_monitoring_tag_row(sender, 12)
+        row = self._find_monitoring_tag_row(sender, 13)
         if row is None:
             return
 
         if not checked:
             self.monitoring_manager.tag_scaling.pop(row, None)
-            eng_widget = self.monitoring_tag_table.cellWidget(row, 11)
+            eng_widget = self.monitoring_tag_table.cellWidget(row, 12)
             if eng_widget:
                 eng_widget.clear()
             return
@@ -1449,6 +1706,11 @@ class ModbusGUI(QMainWindow):
         if reply == QMessageBox.Yes:
             self.monitoring_tag_table.setRowCount(0)
             self.monitoring_manager.tag_alarms.clear()
+            # Also clear tag_scaling/tag_groups/group_header_rows -- Remove All wipes
+            # every row, so nothing should be left pointing at now-nonexistent ones.
+            self.monitoring_manager.tag_scaling.clear()
+            self.monitoring_manager.tag_groups.clear()
+            self.monitoring_manager.group_header_rows.clear()
             self._update_tag_buttons_state()
             self._log("All tags removed")
 
@@ -1463,8 +1725,11 @@ class ModbusGUI(QMainWindow):
         NOT falling back to currentRow() when that set is empty. currentRow() stays
         put after clearSelection() (clicking empty space doesn't reset it), so that
         fallback used to leave a row silently counted as "selected" for Write
-        Selected / Remove Tag well after the user had visually deselected it."""
-        return {index.row() for index in self.monitoring_tag_table.selectedIndexes()}
+        Selected / Remove Tag well after the user had visually deselected it. Also
+        excludes group header rows -- those aren't tags, and selecting one shouldn't let
+        Remove Tag/Write Selected/Copy act on it."""
+        selected = {index.row() for index in self.monitoring_tag_table.selectedIndexes()}
+        return selected - set(self.monitoring_manager.group_header_rows)
 
     def _on_tag_table_selection_changed(self):
         """Every Tags-table cell is a setCellWidget() (QComboBox/QSpinBox/QLineEdit),
@@ -1757,7 +2022,7 @@ Unit ID: {unit_id}<br><br>
         """Get all monitoring tags from the table."""
         return self.monitoring_manager.get_monitoring_tags()
 
-    TAG_ROW_FIELDS = ['Tag Name', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment', 'Enabled',
+    TAG_ROW_FIELDS = ['Tag Name', 'Group', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment', 'Enabled',
                       'Scale Enabled', 'Scale Mode', 'Raw Min', 'Raw Max', 'Scaled Min',
                       'Scaled Max', 'Factor', 'Value Type']
 
@@ -1770,6 +2035,7 @@ Unit ID: {unit_id}<br><br>
             scaling = self.monitoring_manager.tag_scaling.get(tag['row'])
             rows.append({
                 'Tag Name': tag['name'],
+                'Group': tag.get('group', ''),
                 'Mode': tag['mode'],
                 'Type': tag['type'],
                 'Address': tag['address'],
@@ -1795,14 +2061,19 @@ Unit ID: {unit_id}<br><br>
         -friendly logic. Returns the number of tags actually imported."""
         self.monitoring_tag_table.setRowCount(0)
         self.monitoring_manager.tag_scaling.clear()
+        self.monitoring_manager.tag_groups.clear()
+        self.monitoring_manager.group_header_rows.clear()
 
         imported_count = 0
         for row in rows:
             try:
                 new_row = self.monitoring_tag_table.rowCount()
-                # Older exports have no "Enabled" column -- absent means every tag
-                # was implicitly enabled, since the concept didn't exist yet.
+                # Older exports have no "Enabled"/"Group" column -- absent means every tag
+                # was implicitly enabled/ungrouped, since neither concept existed yet.
                 enabled = str(row.get('Enabled', 'True')).strip().lower() in ('true', '1', 'yes')
+                group = row.get('Group', '').strip()
+                if group and group not in self.tag_group_names:
+                    self.tag_group_names.append(group)
                 self._add_monitoring_tag(
                     tag_name=row.get('Tag Name', '').strip(),
                     mode=row.get('Mode', 'Read').strip(),
@@ -1812,6 +2083,7 @@ Unit ID: {unit_id}<br><br>
                     value_format=row.get('Format', 'U16').strip(),
                     comment=row.get('Comment', '').strip(),
                     enabled=enabled,
+                    group=group,
                 )
                 imported_count += 1
             except (ValueError, KeyError) as e:
@@ -1848,13 +2120,18 @@ Unit ID: {unit_id}<br><br>
                 self._log(f"Skipping invalid scaling config on imported row: {e}")
                 continue
             self.monitoring_manager.tag_scaling[new_row] = scaling
-            scale_widget = self.monitoring_tag_table.cellWidget(new_row, 12)
+            scale_widget = self.monitoring_tag_table.cellWidget(new_row, 13)
             if scale_widget:
                 try:
                     self._updating_tag_table = True
                     scale_widget.checkbox.setChecked(True)
                 finally:
                     self._updating_tag_table = False
+
+        # Import order doesn't reflect group clustering -- lay it out properly in one
+        # pass now that every tag/group is in place, instead of per-row during the loop.
+        if self.tag_group_names:
+            self._rebuild_tag_table_grouped()
 
         return imported_count
 
@@ -2030,11 +2307,11 @@ Unit ID: {unit_id}<br><br>
         if self._updating_tag_table:
             return
         sender = self.sender()
-        row = self._find_monitoring_tag_row(sender, 8)
+        row = self._find_monitoring_tag_row(sender, 9)
         if row is None:
             return
         self.monitoring_tag_table.selectRow(row)
-        self.monitoring_tag_table.setCurrentCell(row, 8)
+        self.monitoring_tag_table.setCurrentCell(row, 9)
         self._write_selected_tags()
 
     def _write_selected_tags(self):
@@ -2070,30 +2347,30 @@ Unit ID: {unit_id}<br><br>
         row set the caller collected."""
         tags_to_write = []
         for row in rows:
-            mode_widget = self.monitoring_tag_table.cellWidget(row, 1)
-            write_value_widget = self.monitoring_tag_table.cellWidget(row, 8)
-            
+            mode_widget = self.monitoring_tag_table.cellWidget(row, 2)
+            write_value_widget = self.monitoring_tag_table.cellWidget(row, 9)
+
             if not mode_widget or not write_value_widget:
                 continue
-                
+
             mode = mode_widget.currentText()
             write_value = write_value_widget.text().strip()
-            
+
             if mode != "Write":
                 self._log(f"Skipped row {row + 1}: tag is in Read mode")
                 continue
-                
+
             if not write_value:
                 self._log(f"Skipped row {row + 1}: no write value specified")
                 continue
-                
+
             # Get tag details
             name_widget = self.monitoring_tag_table.cellWidget(row, 0)
-            type_widget = self.monitoring_tag_table.cellWidget(row, 2)
-            address_widget = self.monitoring_tag_table.cellWidget(row, 3)
-            count_widget = self.monitoring_tag_table.cellWidget(row, 4)
-            format_widget = self.monitoring_tag_table.cellWidget(row, 5)
-            comment_widget = self.monitoring_tag_table.cellWidget(row, 9)
+            type_widget = self.monitoring_tag_table.cellWidget(row, 3)
+            address_widget = self.monitoring_tag_table.cellWidget(row, 4)
+            count_widget = self.monitoring_tag_table.cellWidget(row, 5)
+            format_widget = self.monitoring_tag_table.cellWidget(row, 6)
+            comment_widget = self.monitoring_tag_table.cellWidget(row, 10)
 
             if not all([name_widget, type_widget, address_widget, count_widget, format_widget, comment_widget]):
                 continue
@@ -2151,12 +2428,12 @@ Unit ID: {unit_id}<br><br>
                         wrote_any = True
                         timestamp = time.strftime("%H:%M:%S")
                         # Update the Write Value column in the integrated table
-                        write_value_widget = self.monitoring_tag_table.cellWidget(tag["row"], 8)
+                        write_value_widget = self.monitoring_tag_table.cellWidget(tag["row"], 9)
                         if write_value_widget:
                             write_value_widget.setText(str(written_value))
 
                         # Update timestamp
-                        timestamp_widget = self.monitoring_tag_table.cellWidget(tag["row"], 10)
+                        timestamp_widget = self.monitoring_tag_table.cellWidget(tag["row"], 11)
                         if timestamp_widget:
                             timestamp_widget.setText(timestamp)
                             
@@ -2663,7 +2940,7 @@ Unit ID: {unit_id}<br><br>
         the table itself -- disabling the whole QTableWidget also blocked column resize and
         Write Value edits, even though writing while monitoring is a supported feature."""
         for row in range(self.monitoring_tag_table.rowCount()):
-            for column in range(6):  # Tag Name, Mode, Type, Address, Count, Format
+            for column in range(7):  # Tag Name, Group, Mode, Type, Address, Count, Format
                 widget = self.monitoring_tag_table.cellWidget(row, column)
                 if widget is not None:
                     widget.setEnabled(enabled)
@@ -2672,8 +2949,9 @@ Unit ID: {unit_id}<br><br>
         if hasattr(self, 'tag_offset_checkbox'):
             self.tag_offset_checkbox.setEnabled(enabled)
         # Row drag-to-reorder is a configuration action too -- keep it disabled while the
-        # poll loop is iterating rows by index, same as Add/Remove Tag.
-        self.monitoring_tag_table.verticalHeader().setSectionsMovable(enabled)
+        # poll loop is iterating rows by index, same as Add/Remove Tag. Also stays off
+        # whenever Tag Groups are in use, independent of monitoring state (see _move_tag_row).
+        self.monitoring_tag_table.verticalHeader().setSectionsMovable(enabled and not self.tag_group_names)
 
     def _restart_monitoring_timers(self, read_interval):
         tags = self._get_monitoring_tags()
