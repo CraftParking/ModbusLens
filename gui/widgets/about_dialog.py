@@ -78,6 +78,15 @@ FEATURES_HTML = """
 <li>CSV import/export</li>
 </ul>
 
+<h4>Device Profiles</h4>
+<ul>
+<li>Save a device's Address Table range and selected Tags as one named, reusable profile (Name/Manufacturer/Type/Author) - build it once per device model, apply it to any connection to that model</li>
+<li>View Profile marks each tag red/green (yellow on a Tag Group header for a mix) against your live Tags list, so you can tell at a glance which would actually be new before importing</li>
+<li>Apply imports the checked tags without closing the dialog, so you can adjust the selection and apply again</li>
+<li>Community: browse and download profiles shared by other users - no account needed; Apply and Download are independent, so you can import a profile's tags without ever saving it locally</li>
+<li>Share to Community submits a local profile for review in one click; a maintainer reviews every submission before it's published</li>
+</ul>
+
 <h4>Raw Data</h4>
 <ul>
 <li>One row per Modbus transaction: time, operation, raw value in decimal and hex, Success/Failed status, and round-trip latency</li>
@@ -94,7 +103,7 @@ FEATURES_HTML = """
 <h4>Trend</h4>
 <ul>
 <li>Up to 20 pens, each bound to a Holding/Input Register address and numeric format</li>
-<li>Live mode (follows the current time) or Historical mode (view stays put while data keeps recording)</li>
+<li>Auto Scroll checkbox: checked, it keeps following "now"; scrolling away, zooming, or a From/To jump unchecks it automatically, and checking it again jumps straight back to the live edge</li>
 <li>Adjustable time window, zoom in/out, and a From/To jump to a specific past range</li>
 <li>Graph Properties: axis titles, background/axis/grid colors, grid on/off, Y-axis auto or manual range</li>
 <li>Log plotted values to CSV</li>
@@ -178,9 +187,12 @@ FEATURES_HTML = """
 # Newest first. Older releases are summarized at a higher level than the current one -
 # see the git history/README for exact commit-level detail on those.
 CHANGELOG_HTML = """
-<h3>v2.3.0 <span style='color:#888;font-size:small;'>(upcoming)</span></h3>
+<h3>v2.3.0</h3>
 <p><u>New</u></p>
 <ul>
+<li>Device Profiles tab: save a device's Address Table range and Tags as a named, reusable profile (Name/Manufacturer/Type/Author) - View Profile shows which tags are already in your live list (red/green, yellow for a mixed Tag Group) before importing any, and Apply doesn't close the dialog so you can adjust and import again</li>
+<li>Community Profiles: browse and download profiles shared by other users, and share your own back for review - no account needed either way. Apply and Download are independent: import a profile's tags without ever saving it locally, or download without applying anything</li>
+<li>Trend gained an Auto Scroll checkbox: an explicit, visible control for live-following vs. viewing history, instead of an invisible heuristic - travels into the detached window too</li>
 <li>Modbus Diagnostic Functions dialog: FC07 Read Exception Status, FC08 Diagnostics, FC11/12 Get Comm Event Counter/Log, FC17 Report Server ID, FC20/21 Read/Write File Record, FC22 Mask Write Register, FC24 Read FIFO Queue, and FC43 Read Device Information</li>
 <li>Save/Load Session: connection settings, Tags (with scaling), Address Table range, and live write bounds together in one file, not just Tags on their own</li>
 <li>U64/S64/F64 numeric formats, alongside the existing U32/S32/F32</li>
@@ -202,6 +214,13 @@ CHANGELOG_HTML = """
 <li>Script tab's grey example/help text is now real, scrollable document content instead of clipped placeholder text</li>
 <li>Run Script's live-system safety warning dialog now follows the app's theme instead of a stock system dialog</li>
 <li>Connection Settings: selecting a Recent Connections entry - including the most recent one - now actually applies it</li>
+<li>Tag Monitoring could crash whenever Tag Groups were used, which also showed up as Read Values getting stuck blank; group headers were also unclickable (uncollapsible) while monitoring was active</li>
+<li>Typing into a tag's Read Value field while monitoring was running got overwritten by the next poll tick before you could act on it</li>
+<li>Raw Data's TX/RX byte columns could show one tag's bytes on a different tag's row during fast back-to-back polling</li>
+<li>A write cancelled at the confirmation prompt only appeared in the System Log - now also flashes a clear status bar message, since a reflexive second Enter (the same key that triggers the type-and-Enter write shortcut) lands on the dialog's No-default button and can cancel a write silently</li>
+<li>Script tab: right-clicking selected text to copy it collapsed the selection first, so Copy had nothing to act on</li>
+<li>Local/Community Profiles toggle buttons gave no visual indication of which one was currently selected</li>
+<li>Trend's Record/Replay feature could silently fail to log a tick due to a timestamp overflow in its internal signal</li>
 </ul>
 
 <h3>v2.1.0</h3>
