@@ -972,6 +972,15 @@ class ModbusGUI(QMainWindow):
                 color: {c["text_disabled"]};
                 border-color: {c["button_disabled_border"]};
             }}
+            QPushButton:checked {{
+                background-color: {c["selection_bg"]};
+                color: {c["selection_text"]};
+                border-color: {c["selection_bg"]};
+            }}
+            QPushButton:checked:hover {{
+                background-color: {c["selection_bg"]};
+                border-color: {c["selection_bg"]};
+            }}
         """
 
     def _create_monitoring_tag_widget(self, widget_type, value=None):
