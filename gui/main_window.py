@@ -2500,6 +2500,12 @@ Unit ID: {unit_id}<br><br>
 
         if not self._confirm_write(tags_to_write):
             self._log("Write cancelled by user")
+            # A reflexive second Enter (the same key that triggers Enter-in-cell
+            # writes) lands on this dialog's No-default button and cancels the
+            # write silently -- the System Log line above is easy to miss while
+            # watching physical equipment instead of the app, so also flash it
+            # somewhere visible without requiring another dismissal click.
+            self.status_bar.showMessage("Write cancelled -- no value was sent to the device", 5000)
             return
 
         wrote_any = False
