@@ -17,11 +17,9 @@ import json
 import re
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 
-from PySide6.QtCore import Qt, QThread, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QGroupBox, QMessageBox,
@@ -35,20 +33,25 @@ CARD_COLUMNS = 4
 PROFILE_FILE_VERSION = 1
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
-# Verified community profiles live as plain files in this repo (community-profiles/,
-# reviewed via GitHub Issues -- see DeviceProfilesPanel._build_share_url), with
-# index.json as a generated manifest (tools/build_community_index.py) the app reads
-# first to render cards without fetching every profile's full tag list up front.
+# Verified community profiles live as plain files in this repo (community-profiles/),
+# with index.json as a generated manifest (tools/build_community_index.py) the app
+# reads first to render cards without fetching every profile's full tag list up
+# front.
 COMMUNITY_REPO = "CraftParking/ModbusLens"
 COMMUNITY_BRANCH = "main"
 COMMUNITY_BASE_URL = f"https://raw.githubusercontent.com/{COMMUNITY_REPO}/{COMMUNITY_BRANCH}/community-profiles/"
 COMMUNITY_INDEX_URL = COMMUNITY_BASE_URL + "index.json"
-COMMUNITY_NEW_ISSUE_URL = f"https://github.com/{COMMUNITY_REPO}/issues/new"
 
-# A conservative cross-browser safety margin for a GET URL's total length -- past
-# this, a pre-filled title+body query string risks silently truncating or being
-# rejected outright by the browser/GitHub before the user ever sees the issue form.
-_MAX_PREFILL_URL_LENGTH = 6000
+# Submission (DeviceProfilesPanel._share_selected_to_community) goes straight to a
+# Formspree form's endpoint as a background JSON POST -- no browser, no mail
+# client, no server of our own to host. Formspree forwards each submission to the
+# maintainer's inbox for review; its form ID isn't a secret the way an API token
+# would be (leaking it only risks someone spamming that inbox through the form
+# itself, which Formspree's own free-tier rate-limiting/spam filtering already
+# guards against), unlike embedding a GitHub token or SMTP password in a public
+# client, which would let an attacker act as this app anywhere, not just here.
+# Replace YOUR_FORM_ID with the real one after creating the form at formspree.io.
+COMMUNITY_FORM_ENDPOINT = "https://formspree.io/f/xjyvadqr"
 
 
 def _slugify(name):
@@ -99,27 +102,42 @@ def unique_profile_path(name, exclude=None):
 
 
 class _HttpFetchWorker(QThread):
-    """Fetches one URL's raw body off the GUI thread. Both the community index and
-    a single profile's full JSON are quick one-shot GETs, not a continuous poll like
-    Tag Monitoring's pollers -- one generic worker parametrized by URL covers both
-    call sites instead of two near-identical classes. Kept alive via normal Qt
-    parent-child ownership (constructed with parent=<the panel>), not a Python
-    reference -- deleteLater on its own `finished` (QThread's built-in signal, once
-    run() returns) is what actually cleans it up."""
+    """Does one HTTP request's worth of work off the GUI thread -- the community
+    index fetch, a single profile's full-file download, and a Community
+    submission POST are all quick one-shot requests, not a continuous poll like
+    Tag Monitoring's pollers, so one generic worker covers all three instead of
+    near-identical classes. A GET when `data` is None (the default), a POST of
+    `data` (raw bytes) otherwise. Kept alive via normal Qt parent-child
+    ownership (constructed with parent=<the panel>), not a Python reference --
+    deleteLater on its own `finished` (QThread's built-in signal, once run()
+    returns) is what actually cleans it up."""
 
-    succeeded = Signal(str, bytes)  # url, body
+    succeeded = Signal(str, bytes)  # url, response body
     failed = Signal(str, str)  # url, error message
 
-    def __init__(self, url, timeout=8, parent=None):
+    def __init__(self, url, data=None, headers=None, timeout=8, parent=None):
         super().__init__(parent)
         self.url = url
+        self.data = data
+        self.headers = {"User-Agent": "ModbusLens", **(headers or {})}
         self.timeout = timeout
 
     def run(self):
         try:
-            request = urllib.request.Request(self.url, headers={"User-Agent": "ModbusLens"})
+            request = urllib.request.Request(self.url, data=self.data, headers=self.headers)
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 body = response.read()
+        except urllib.error.HTTPError as e:
+            # The server's own error body (e.g. Formspree's JSON {"errors": [...]}
+            # on a rejected/rate-limited submission) is far more useful to show the
+            # user than urllib's generic "HTTP Error 422: Unprocessable Entity".
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            self.failed.emit(self.url, detail or str(e))
+            return
         except (urllib.error.URLError, OSError, ValueError) as e:
             self.failed.emit(self.url, str(e))
             return
@@ -1259,60 +1277,57 @@ class DeviceProfilesPanel(QWidget):
         self.refresh_local_profiles()
 
     def _share_selected_to_community(self):
-        """Opens a pre-filled GitHub "New Issue" against this repo with the
-        profile's JSON in the body, for a maintainer to review before it's added
-        to community-profiles/ (see COMMUNITY_REPO/tools/build_community_index.py).
-        Deliberately no server, no embedded token: GitHub's own login handles
-        auth/spam, and the app never talks to anything but a public GET/browser
-        open."""
+        """Submits the profile directly to COMMUNITY_FORM_ENDPOINT (a Formspree
+        form) as a background JSON POST -- one click, no browser, no mail
+        client. Formspree emails the submission to the maintainer, who reviews
+        it before adding it to community-profiles/ (see
+        tools/build_community_index.py) by hand."""
         profile = self._selected_profile()
         if profile is None:
             return
 
         name = str(profile.get("name", "")).strip() or "Unnamed device"
         export = {k: v for k, v in profile.items() if not k.startswith("_")}
-        profile_json = json.dumps(export, indent=2)
+        payload = {
+            "_subject": f"ModbusLens profile submission: {name}",
+            "name": name,
+            "manufacturer": str(profile.get("manufacturer", "")).strip(),
+            "type": str(profile.get("type", "")).strip(),
+            "author": str(profile.get("author", "")).strip(),
+            "tag_count": len(export.get("tags") or []),
+            "profile_json": json.dumps(export, indent=2),
+        }
+        data = json.dumps(payload).encode("utf-8")
 
-        title = f"Profile submission: {name}"
-        body_lines = [
-            "<!-- Submitting a device profile for the Community list. A maintainer",
-            "     reviews this before adding it to community-profiles/. -->",
-            "",
-            f"**Device:** {name}",
-        ]
-        manufacturer = str(profile.get("manufacturer", "")).strip()
-        device_type = str(profile.get("type", "")).strip()
-        author = str(profile.get("author", "")).strip()
-        if manufacturer:
-            body_lines.append(f"**Manufacturer:** {manufacturer}")
-        if device_type:
-            body_lines.append(f"**Type:** {device_type}")
-        if author:
-            body_lines.append(f"**Author:** {author}")
-        body_lines.append(f"**Tags:** {len(export.get('tags') or [])}")
-        body_lines += ["", "```json", profile_json, "```"]
-        body = "\n".join(body_lines)
+        self.share_btn.setEnabled(False)
+        self.share_btn.setText("Submitting...")
 
-        query = urllib.parse.urlencode({"title": title, "body": body, "labels": "profile-submission"})
-        url = f"{COMMUNITY_NEW_ISSUE_URL}?{query}"
+        worker = _HttpFetchWorker(
+            COMMUNITY_FORM_ENDPOINT, data=data,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            parent=self,
+        )
+        worker.succeeded.connect(lambda u, body, name=name: self._on_share_submitted(name))
+        worker.failed.connect(self._on_share_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
-        if len(url) > _MAX_PREFILL_URL_LENGTH:
-            # A profile with many tags can make the pre-filled body too long for a
-            # GET URL to carry reliably across every browser -- fall back to
-            # copying the full submission text to the clipboard and only
-            # pre-filling the title, rather than silently truncating the JSON.
-            QGuiApplication.clipboard().setText(body)
-            QMessageBox.information(
-                self, "Profile Too Large to Pre-fill",
-                "This profile has too many tags to pre-fill the GitHub issue body "
-                "directly.\n\nThe full submission text (including the profile JSON) "
-                "has been copied to your clipboard -- paste it into the issue body "
-                "that opens next.",
-            )
-            query = urllib.parse.urlencode({"title": title, "labels": "profile-submission"})
-            url = f"{COMMUNITY_NEW_ISSUE_URL}?{query}"
-
-        QDesktopServices.openUrl(QUrl(url))
+    def _on_share_submitted(self, name):
+        self.share_btn.setEnabled(True)
+        self.share_btn.setText("Share to Community")
+        QMessageBox.information(
+            self, "Submitted",
+            f"\"{name}\" was submitted for review. A maintainer will add it to "
+            "the Community list if it's accepted.",
+        )
         mw = self.parent_window
         if mw is not None and hasattr(mw, "_log"):
-            mw._log(f"Opened a GitHub issue to submit profile '{name}' to the Community list")
+            mw._log(f"Submitted profile '{name}' to the Community list for review")
+
+    def _on_share_failed(self, url, error):
+        self.share_btn.setEnabled(True)
+        self.share_btn.setText("Share to Community")
+        QMessageBox.warning(
+            self, "Submission Failed",
+            f"Couldn't submit this profile ({error}). Check your connection and try again.",
+        )
