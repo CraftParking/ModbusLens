@@ -44,9 +44,12 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <div class="changelog-stack">
 
 <article class="panel-card changelog-card reveal">
-<h3>v2.3.0 <span class="version-tag is-upcoming">Upcoming</span></h3>
+<h3>v2.3.0 <span class="version-tag is-current">Current</span></h3>
 <p class="changelog-sub">New</p>
 <ul>
+<li>Device Profiles tab - save a device's Address Table range and Tags as a named, reusable profile (Name/Manufacturer/Type/Author); View Profile shows which tags are already in your live list (red/green, yellow for a mixed Tag Group) before importing any, and Apply doesn't close the dialog so you can adjust and import again</li>
+<li>Community Profiles - browse and download profiles shared by other users, and share your own back for review, no account needed either way. Apply and Download are independent: import a profile's tags without ever saving it locally, or download without applying anything</li>
+<li>Trend gained an Auto Scroll checkbox - an explicit, visible control for live-following vs. viewing history, travels into the detached window too</li>
 <li>Modbus Diagnostic Functions dialog - exception status, diagnostics, comm event log, report server ID, file records, mask write, FIFO queue, and device identification</li>
 <li>Save/Load Session - connection settings, Tags, Address Table range, and write bounds together in one file</li>
 <li>U64/S64/F64 numeric formats, alongside the existing U32/S32/F32</li>
@@ -68,11 +71,18 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <li>Script tab's example/help text is now real, scrollable content instead of clipped placeholder text</li>
 <li>Run Script's live-system safety warning dialog now follows the app's theme</li>
 <li>Connection Settings: selecting a Recent Connections entry - including the most recent one - now actually applies it</li>
+<li>Tag Monitoring could crash whenever Tag Groups were used, which also showed up as Read Values getting stuck blank; group headers were also unclickable while monitoring was active</li>
+<li>Typing into a tag's Read Value field while monitoring was running got overwritten by the next poll tick before you could act on it</li>
+<li>Raw Data's TX/RX byte columns could show one tag's bytes on a different tag's row during fast back-to-back polling</li>
+<li>A cancelled write now also flashes a clear status bar message, not just a log line - a reflexive second Enter could silently cancel a write via the confirmation dialog's No-default button</li>
+<li>Script tab: right-clicking selected text to copy it collapsed the selection first, so Copy had nothing to act on</li>
+<li>Local/Community Profiles toggle buttons gave no visual indication of which one was selected</li>
+<li>Trend's Record/Replay feature could silently fail to log a tick due to a timestamp overflow</li>
 </ul>
 </article>
 
 <article class="panel-card changelog-card reveal">
-<h3>v2.2.0 <span class="version-tag is-current">Current</span></h3>
+<h3>v2.2.0</h3>
 <p class="changelog-sub">New</p>
 <ul>
 <li>Modbus Diagnostic Functions dialog - the function codes beyond basic read/write (exception status, diagnostics, comm event log, report server ID, file records, mask write, FIFO queue, device identification)</li>

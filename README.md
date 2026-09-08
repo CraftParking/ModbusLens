@@ -50,6 +50,7 @@
 - Modbus Diagnostic Functions: FC07/08/11/12/17/20/21/22/24/43 - exception status, diagnostics, comm event counter/log, report server ID, file record read/write, mask write register, FIFO queue, and device identification
 - Save/Load Session: connection settings, Tags, Address Table range, and write bounds together in one file
 - Data Decoder: paste raw hex, see it decoded as U16 through F64/HEX/binary/ASCII/BCD/bits, in all four byte/word orderings - no connection needed
+- Device Profiles: save a device's Address Table range and Tags as one reusable template; browse, download, and share profiles with the Community - no account needed
 
 ---
 
@@ -66,6 +67,12 @@
   <img src="assets/tag_address.PNG" width="90%">
 </p>
 <p align="center"><em>Named tags across different addresses and types, monitored and written together in one list.</em></p>
+
+### Device Profiles
+<p align="center">
+  <img src="assets/Profile.png" width="90%">
+</p>
+<p align="center"><em>Save a device's Address Table range and Tags as a reusable profile - browse, download, and share profiles with the Community, no account needed.</em></p>
 
 ### Raw Data
 <p align="center">
@@ -103,6 +110,12 @@
   <img src="assets/connection_para_serial.PNG" width="45%">
 </p>
 <p align="center"><em>Modbus TCP (left) and Modbus Serial RTU/ASCII (right) - one dialog, switchable per connection.</em></p>
+
+### Find Devices
+<p align="center">
+  <img src="assets/serial_discovery.PNG" width="70%">
+</p>
+<p align="center"><em>TCP network scan and serial parameter sweep (Serial Discovery) in one shared results table, with a single Apply to Connection Settings.</em></p>
 
 ### IP Configuration
 <p align="center">
@@ -161,6 +174,15 @@
 - CSV import/export (Enabled included as a column; older exports without it import as enabled)  
 - Improved stability  
 
+### Device Profiles
+- Save a device's Address Table range and selected Tags together as one named, reusable profile (Name, Manufacturer, Type, Author) - build it once per device model, apply it to any connection to that model  
+- **Create New Profile** / **Edit** / **Delete**, and double-click a profile card (or select it and press Enter) to open **View Profile** - a read-only look at its tags, each marked red/green (yellow on a Tag Group header for a mix) against your current live Tags list, so you can tell at a glance which would actually be new  
+- **Apply** imports the checked tags (and the profile's Address Table range) into your live session without closing the dialog, so you can adjust the selection and apply again  
+- Local profiles live under your own Documents folder (`Documents/ModbusLens/Profiles`), one file per profile  
+- **Community**: browse and download profiles shared by other users - fetched over the network, no account needed. Apply and Download are independent inside the preview: import a profile's tags without ever saving it locally, download it without applying anything, both, or neither  
+- A downloaded profile shows a **Community** badge on its card, distinguishing it from a hand-made local one - the badge disappears once you edit it, since it's no longer literally the shared file at that point  
+- **Share to Community** submits a local profile for review in one click, no account required; a maintainer reviews every submission before it's published. Resubmitting the exact same, unchanged profile is silently skipped rather than sent twice  
+
 ### Raw Data
 - One row per Modbus transaction: time, operation, raw value in decimal and hex, Success/Failed status, and round-trip latency  
 - TX/RX Bytes - the literal bytes sent and received on the wire for that transaction (captured via pymodbus's trace hook), one level more raw than the decoded register values  
@@ -175,7 +197,7 @@
 ### Trend
 - Up to 20 pens, each picked straight from your Tags list (no retyping type/address/format) - only Holding/Input Register tags with a numeric format show up, since a trend line is for continuously varying values, not on/off state  
 - A pen automatically plots its tag's scaled Engineering Value if scaling is enabled for that tag, or the raw decoded value otherwise - it always follows whatever the Tags tab is currently set to show  
-- If the view is at the live edge it keeps following as new data arrives; scroll or zoom away to look at something earlier and it stays exactly there, however long the trend keeps running, until you scroll back  
+- **Auto Scroll** checkbox shows and controls live-following: checked, it keeps advancing to "now" as new data arrives; scrolling away, zooming, or jumping to a From/To range unchecks it automatically and the view stays exactly there however long the trend keeps running; checking it again jumps straight back to the live edge - travels with the view into the detached window too  
 - A scrollbar below the graph pans through everything collected in the session, live or not  
 - Hovering over the graph shows a crosshair, updates the value column per pen in the stats table below, and shows each pen's value right in the legend  
 - Live stats strip (current value, min, max, average) for every active pen, over whatever's currently visible - collapsible in the detached window to give the graph more room  
