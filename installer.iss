@@ -9,7 +9,7 @@
 ; Then compile: "C:\Users\PlayGround\AppData\Local\Programs\Inno Setup 6\ISCC.exe" installer.iss
 
 #define MyAppName "ModbusLens"
-#define MyAppVersion "2.2.0"
+#define MyAppVersion "2.3.0"
 #define MyAppPublisher "CraftParking"
 #define MyAppURL "https://github.com/CraftParking/ModbusLens"
 #define MyAppExeName "ModbusLens.exe"
