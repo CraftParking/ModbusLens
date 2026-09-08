@@ -440,7 +440,14 @@ class TrendWidget(QWidget):
     # `object` (not `dict`) -- PySide6 signals need a registered Qt/C++ meta-type per
     # argument, and a plain Python dict isn't one; `object` is the standard catch-all for
     # passing arbitrary Python values through a signal.
-    sample_tick = Signal(int, object)
+    # `object` for the timestamp, not `int` -- PySide6's `int` in a Signal maps to a
+    # 32-bit C `int`, which any real millisecond-epoch timestamp (13 digits) always
+    # overflows (confirmed: raises OverflowError on every single emit, independent
+    # of whether anything is even connected). Every real poll tick hit this at the
+    # very last line, after the chart/axis/scrollbar/stats already updated
+    # correctly -- so the bug was completely invisible in a --windowed build with
+    # no console to show the traceback, only surfacing as a background exception.
+    sample_tick = Signal(object, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -448,6 +455,13 @@ class TrendWidget(QWidget):
         self.pens = [TrendPen(i, DEFAULT_PEN_COLORS[i % len(DEFAULT_PEN_COLORS)]) for i in range(MAX_PENS)]
         self.window_seconds = TIME_WINDOWS[0][1]
         self.running = False
+        # Explicit state instead of recomputing "am I at the live edge" from the axis
+        # position on every poll tick (the old approach) -- makes the Auto Scroll
+        # checkbox an authoritative control instead of a passive readout that could
+        # drift out of sync with it (e.g. a connection hiccup briefly missing the
+        # distance tolerance would silently drop live-following with no visible sign).
+        self._auto_scroll_enabled = True
+        self._updating_auto_scroll_checkbox = False
         c = parent._colors() if parent is not None and hasattr(parent, "_colors") else {}
         is_dark = bool(parent) and getattr(parent, "_theme_mode", "light") == "dark"
         self.graph_settings = {
@@ -603,6 +617,11 @@ class TrendWidget(QWidget):
         bottom.addWidget(self.window_combo)
 
         bottom.addStretch()
+
+        self.auto_scroll_checkbox = QCheckBox("Auto Scroll")
+        self.auto_scroll_checkbox.setChecked(self._auto_scroll_enabled)
+        self.auto_scroll_checkbox.toggled.connect(self._on_auto_scroll_toggled)
+        bottom.addWidget(self.auto_scroll_checkbox)
 
         self.zoom_in_btn = QPushButton("Zoom In")
         self.zoom_in_btn.setStyleSheet(self._button_style())
@@ -829,15 +848,24 @@ class TrendWidget(QWidget):
         self._apply_time_window(anchor_now=False)
 
     def _apply_time_window(self, anchor_now):
+        """anchor_now=True snaps the view to end exactly at "now" and marks Auto
+        Scroll on, so _poll_pens keeps advancing it every tick -- used by Start
+        Trend and by checking the Auto Scroll box back on. anchor_now=False
+        re-centers the window around wherever it currently is (Zoom In/Out, the
+        Time Window dropdown) without moving to "now" -- manual navigation, so
+        Auto Scroll goes off, same as dragging the history scrollbar away from
+        its live end."""
         if anchor_now:
             now = QDateTime.currentDateTime()
             self.axis_x.setRange(now.addSecs(-self.window_seconds), now)
+            self._set_auto_scroll(True)
         else:
             current_min = self.axis_x.min()
             current_max = self.axis_x.max()
             center = current_min.addMSecs(current_min.msecsTo(current_max) // 2)
             half = self.window_seconds * 1000 // 2
             self.axis_x.setRange(center.addMSecs(-half), center.addMSecs(half))
+            self._set_auto_scroll(False)
         self._update_scrollbar()
         self._update_stats_table()
 
@@ -847,7 +875,9 @@ class TrendWidget(QWidget):
         self._apply_time_window(anchor_now=False)
 
     def _go_to_range(self):
-        """Jump the view directly to a typed From/To range."""
+        """Jump the view directly to a typed From/To range -- always manual
+        navigation, so Auto Scroll goes off same as any other way of looking
+        away from the live edge."""
         from_dt = self.from_datetime_edit.dateTime()
         to_dt = self.to_datetime_edit.dateTime()
         if from_dt >= to_dt:
@@ -856,8 +886,33 @@ class TrendWidget(QWidget):
 
         self.window_seconds = max(MIN_WINDOW_SECONDS, from_dt.secsTo(to_dt))
         self.axis_x.setRange(from_dt, to_dt)
+        self._set_auto_scroll(False)
         self._update_scrollbar()
         self._update_stats_table()
+
+    # --- Auto Scroll ---
+
+    def _set_auto_scroll(self, enabled):
+        """Single point of truth for both the internal flag _poll_pens reads and
+        the checkbox reflecting it -- guarded so programmatic updates here don't
+        re-trigger _on_auto_scroll_toggled as if the user had clicked it."""
+        self._auto_scroll_enabled = enabled
+        self._updating_auto_scroll_checkbox = True
+        try:
+            self.auto_scroll_checkbox.setChecked(enabled)
+        finally:
+            self._updating_auto_scroll_checkbox = False
+
+    def _on_auto_scroll_toggled(self, checked):
+        if self._updating_auto_scroll_checkbox:
+            return
+        if checked:
+            # Re-enabling from unchecked jumps straight back to the live edge and
+            # resumes following, same as if the user had scrolled all the way
+            # back themselves -- not just a passive flag flip.
+            self._apply_time_window(anchor_now=True)
+        else:
+            self._auto_scroll_enabled = False
 
     # --- Start / stop ---
 
@@ -907,12 +962,6 @@ class TrendWidget(QWidget):
         got_point = False
         log_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
-        # If the view is already sitting at the live edge, keep it there as new points
-        # arrive; if the user scrolled back into history, leave the view exactly where
-        # they put it. The tolerance covers normal gaps between one poll and the next.
-        tolerance_ms = max(self.interval_input.value(), 1000) * 1.5
-        was_at_live_edge = (now_ms - self.axis_x.max().toMSecsSinceEpoch()) <= tolerance_ms
-
         tick_values = {}
         for pen in self.pens:
             if not (pen.is_active() and pen.series is not None):
@@ -928,7 +977,7 @@ class TrendWidget(QWidget):
 
         if got_point:
             self._update_y_range()
-            if was_at_live_edge:
+            if self._auto_scroll_enabled:
                 self.axis_x.setRange(now.addSecs(-self.window_seconds), now)
             self._update_scrollbar()
             self._update_stats_table()
@@ -1103,6 +1152,10 @@ class TrendWidget(QWidget):
         new_min = QDateTime.fromMSecsSinceEpoch(int(data_start) + value)
         new_max = new_min.addMSecs(self.window_seconds * 1000)
         self.axis_x.setRange(new_min, new_max)
+        # Dragging all the way to the scrollbar's live end resumes Auto Scroll
+        # (same as re-checking the box); anywhere short of that is the user
+        # deliberately looking at history, same as any other manual navigation.
+        self._set_auto_scroll(value >= self.history_scrollbar.maximum())
         self._update_stats_table()
 
     # --- Live stats table + hover crosshair ---
