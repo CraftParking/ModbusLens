@@ -166,6 +166,28 @@ class ProfileCard(QFrame):
             subtitle_label.setStyleSheet(f"font-size: 12px; color: {colors.get('text', '#000')}; background: transparent;")
             layout.addWidget(subtitle_label)
 
+        # A profile downloaded from Community (see DeviceProfilesPanel.
+        # _on_community_profile_downloaded) looks identical to a hand-made local one
+        # otherwise -- same name/tags/author, nothing to tell them apart by. This
+        # badge is the only thing that does; it disappears once the profile is
+        # edited (source isn't one of the fields Edit's save carries forward),
+        # which is correct: it's no longer literally the community file at that point.
+        if str(profile.get("source", "")).strip() == "community":
+            accent = colors.get("accent", "#f5a623")
+            badge_label = QLabel("Community")
+            badge_label.setAlignment(Qt.AlignCenter)
+            badge_label.setStyleSheet(
+                f"font-size: 10px; font-weight: 600; color: {accent}; "
+                f"border: 1px solid {accent}; border-radius: 8px; padding: 1px 6px; "
+                "background: transparent;"
+            )
+            badge_row = QHBoxLayout()
+            badge_row.setContentsMargins(0, 0, 0, 0)
+            badge_row.addStretch()
+            badge_row.addWidget(badge_label)
+            badge_row.addStretch()
+            layout.addLayout(badge_row)
+
         layout.addStretch()
 
         # A community card's manifest entry carries only tag_count (not the full tag
@@ -1020,6 +1042,14 @@ class DeviceProfilesPanel(QWidget):
         if not isinstance(data, dict) or not isinstance(data.get("tags"), list):
             self.community_status_label.setText("Downloaded profile has an unexpected format -- not saved.")
             return
+
+        # Marks this local copy as coming from Community verbatim, so its card
+        # can show that (see ProfileCard) instead of looking identical to a
+        # hand-made local profile with the same content -- lost on the next Edit
+        # save (_edit_selected writes a fixed set of fields), which is correct:
+        # once modified it's no longer literally the community file.
+        data["source"] = "community"
+        data["source_file"] = entry.get("file", "")
 
         name = str(data.get("name") or entry.get("name") or "profile")
         path = unique_profile_path(name)
