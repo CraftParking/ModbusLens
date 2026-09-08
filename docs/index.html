@@ -431,6 +431,41 @@ Download AppImage
 
   var platformTabs = document.querySelectorAll('.platform-tab[data-platform]');
   var platformPanels = document.querySelectorAll('[data-platform-panel]');
+
+  // One release fetch, shared by whichever platform asks for it first -- avoids a
+  // duplicate API call if the user switches tabs back and forth.
+  var releasePromise = null;
+  function getRelease() {
+    if (!releasePromise) {
+      releasePromise = fetch('https://api.github.com/repos/CraftParking/ModbusLens/releases/latest')
+        .then(function (r) { return r.json(); });
+    }
+    return releasePromise;
+  }
+
+  var resolvedPlatforms = {};
+  function resolvePlatformLinks(platform) {
+    if (resolvedPlatforms[platform]) return;
+    resolvedPlatforms[platform] = true;
+    getRelease()
+      .then(function (release) {
+        var assets = release.assets || [];
+        if (release.tag_name) document.getElementById('dl-version').textContent = '(' + release.tag_name + ')';
+        if (platform === 'windows') {
+          var installer = assets.find(function (a) { return /setup/i.test(a.name) && /\.exe$/i.test(a.name); });
+          var portable = assets.find(function (a) { return /\.exe$/i.test(a.name) && !/setup/i.test(a.name); });
+          if (installer) document.getElementById('dl-installer').href = installer.browser_download_url;
+          if (portable) document.getElementById('dl-portable').href = portable.browser_download_url;
+        } else if (platform === 'linux') {
+          var appimage = assets.find(function (a) { return /\.appimage$/i.test(a.name); });
+          if (appimage) document.getElementById('dl-appimage').href = appimage.browser_download_url;
+        }
+      })
+      .catch(function () {
+        resolvedPlatforms[platform] = false; // allow a retry on the next tab click
+      });
+  }
+
   platformTabs.forEach(function (tab) {
     tab.addEventListener('click', function () {
       var platform = tab.getAttribute('data-platform');
@@ -442,22 +477,13 @@ Download AppImage
       platformPanels.forEach(function (panel) {
         panel.hidden = panel.getAttribute('data-platform-panel') !== platform;
       });
+      resolvePlatformLinks(platform);
     });
   });
 
-  fetch('https://api.github.com/repos/CraftParking/ModbusLens/releases/latest')
-    .then(function (r) { return r.json(); })
-    .then(function (release) {
-      var assets = release.assets || [];
-      var installer = assets.find(function (a) { return /setup/i.test(a.name) && /\.exe$/i.test(a.name); });
-      var portable = assets.find(function (a) { return /\.exe$/i.test(a.name) && !/setup/i.test(a.name); });
-      var appimage = assets.find(function (a) { return /\.appimage$/i.test(a.name); });
-      if (installer) document.getElementById('dl-installer').href = installer.browser_download_url;
-      if (portable) document.getElementById('dl-portable').href = portable.browser_download_url;
-      if (appimage) document.getElementById('dl-appimage').href = appimage.browser_download_url;
-      if (release.tag_name) document.getElementById('dl-version').textContent = '(' + release.tag_name + ')';
-    })
-    .catch(function () { /* buttons keep their releases-page fallback links */ });
+  // Windows is the tab shown by default, so resolve it up front; Linux (and any
+  // platform added later) only resolves once its tab is actually clicked.
+  resolvePlatformLinks('windows');
 </script>
 
 </body>
