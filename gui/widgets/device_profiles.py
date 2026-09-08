@@ -16,8 +16,10 @@ placeholder here.
 import json
 import re
 import time
+import urllib.error
+import urllib.request
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QGroupBox, QMessageBox,
@@ -30,6 +32,15 @@ CARD_COLUMNS = 4
 
 PROFILE_FILE_VERSION = 1
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+# Verified community profiles live as plain files in this repo (community-profiles/,
+# reviewed via GitHub Issues -- see DeviceProfilesPanel._build_share_url), with
+# index.json as a generated manifest (tools/build_community_index.py) the app reads
+# first to render cards without fetching every profile's full tag list up front.
+COMMUNITY_REPO = "CraftParking/ModbusLens"
+COMMUNITY_BRANCH = "main"
+COMMUNITY_BASE_URL = f"https://raw.githubusercontent.com/{COMMUNITY_REPO}/{COMMUNITY_BRANCH}/community-profiles/"
+COMMUNITY_INDEX_URL = COMMUNITY_BASE_URL + "index.json"
 
 
 def _slugify(name):
@@ -79,6 +90,34 @@ def unique_profile_path(name, exclude=None):
     return path
 
 
+class _HttpFetchWorker(QThread):
+    """Fetches one URL's raw body off the GUI thread. Both the community index and
+    a single profile's full JSON are quick one-shot GETs, not a continuous poll like
+    Tag Monitoring's pollers -- one generic worker parametrized by URL covers both
+    call sites instead of two near-identical classes. Kept alive via normal Qt
+    parent-child ownership (constructed with parent=<the panel>), not a Python
+    reference -- deleteLater on its own `finished` (QThread's built-in signal, once
+    run() returns) is what actually cleans it up."""
+
+    succeeded = Signal(str, bytes)  # url, body
+    failed = Signal(str, str)  # url, error message
+
+    def __init__(self, url, timeout=8, parent=None):
+        super().__init__(parent)
+        self.url = url
+        self.timeout = timeout
+
+    def run(self):
+        try:
+            request = urllib.request.Request(self.url, headers={"User-Agent": "ModbusLens"})
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                body = response.read()
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            self.failed.emit(self.url, str(e))
+            return
+        self.succeeded.emit(self.url, body)
+
+
 class ProfileCard(QFrame):
     """One saved profile shown as a card: name big and prominent at top, then
     Manufacturer/Type at normal size, then tag count and creation date centered
@@ -92,7 +131,7 @@ class ProfileCard(QFrame):
     WIDTH = 170
     HEIGHT = 145
 
-    def __init__(self, profile, colors, parent=None):
+    def __init__(self, profile, colors, parent=None, tag_count=None):
         super().__init__(parent)
         self.profile = profile
         self.colors = colors
@@ -121,7 +160,9 @@ class ProfileCard(QFrame):
 
         layout.addStretch()
 
-        tag_count = len(profile.get("tags", []))
+        # A community card's manifest entry carries only tag_count (not the full tag
+        # list), so it passes the count in explicitly rather than a fake tags list.
+        tag_count = len(profile.get("tags", [])) if tag_count is None else tag_count
         created = profile.get("created") or profile.get("modified") or ""
         created_date = str(created).split(" ")[0] if created else "-"
         info_text = f"{tag_count} tag{'s' if tag_count != 1 else ''} · Created {created_date}"
@@ -663,12 +704,20 @@ class CreateProfileDialog(QDialog):
 class DeviceProfilesPanel(QWidget):
     """The Profiles tab's content: a Local/Community toggle over a stacked panel.
     Local is a real, working save/import/edit/delete flow for on-disk profiles.
-    Community is a placeholder -- scope and format for shared profiles are still
-    being decided."""
+    Community browses profiles verified and published to this repo's
+    community-profiles/ folder (fetched over HTTPS from raw.githubusercontent.com,
+    no backend server) and downloads a chosen one straight into the Local list --
+    submitting a local profile FOR review is a separate action, see
+    _share_selected_to_community."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
+        self._community_profiles = []
+        self._community_cards = []
+        self._community_selected_file = None
+        self._community_loaded = False
+        self._community_loading = False
         self._build_ui()
         self.refresh_local_profiles()
 
@@ -718,6 +767,8 @@ class DeviceProfilesPanel(QWidget):
         self.community_btn.setChecked(not is_local)
         self.local_page.setVisible(is_local)
         self.community_page.setVisible(not is_local)
+        if not is_local and not self._community_loaded and not self._community_loading:
+            self._fetch_community_index()
 
     def _build_local_page(self):
         c = self._colors()
@@ -783,23 +834,195 @@ class DeviceProfilesPanel(QWidget):
         return page
 
     def _build_community_page(self):
+        c = self._colors()
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setAlignment(Qt.AlignTop)
+        layout.setSpacing(10)
 
-        group = QGroupBox("Community Profiles")
-        group.setStyleSheet(self._groupbox_style())
-        group_layout = QVBoxLayout(group)
-        info_label = QLabel(
-            "Coming soon: browse and download device profiles shared by other "
-            "ModbusLens users, and publish your own local profiles for others to use."
+        self.community_status_label = QLabel("")
+        self.community_status_label.setAlignment(Qt.AlignCenter)
+        self.community_status_label.setWordWrap(True)
+        self.community_status_label.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-size: 13px; padding: 30px;")
+        self.community_status_label.setVisible(False)
+        layout.addWidget(self.community_status_label)
+
+        self.community_empty_label = QLabel("No community profiles published yet -- check back later.")
+        self.community_empty_label.setAlignment(Qt.AlignCenter)
+        self.community_empty_label.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-size: 13px; padding: 30px;")
+        self.community_empty_label.setVisible(False)
+        layout.addWidget(self.community_empty_label)
+
+        self.community_cards_scroll = QScrollArea()
+        self.community_cards_scroll.setWidgetResizable(True)
+        self.community_cards_scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {c.get("surface", "#fff")};
+                border: 1px solid {c.get("border", "#ccc")};
+                border-radius: 6px;
+            }}
+        """)
+        self.community_cards_container = QWidget()
+        self.community_cards_container.setStyleSheet(f"background-color: {c.get('surface', '#fff')};")
+        self.community_cards_grid = QGridLayout(self.community_cards_container)
+        self.community_cards_grid.setContentsMargins(16, 16, 16, 16)
+        self.community_cards_grid.setSpacing(14)
+        self.community_cards_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.community_cards_scroll.setWidget(self.community_cards_container)
+        self.community_cards_scroll.setVisible(False)
+        layout.addWidget(self.community_cards_scroll, 1)
+
+        hint_label = QLabel("Double-click a profile to download it into your Local profiles.")
+        hint_label.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-size: 11px;")
+        layout.addWidget(hint_label)
+
+        btn_row = QHBoxLayout()
+        self.community_download_btn = QPushButton("Download")
+        self.community_download_btn.setStyleSheet(self._button_style())
+        self.community_download_btn.setEnabled(False)
+        self.community_download_btn.clicked.connect(
+            lambda: self._download_community_profile(self._community_selected_file)
         )
-        info_label.setWordWrap(True)
-        info_label.setStyleSheet(f"color: {self._colors().get('text_secondary', '#666')}; font-size: 13px;")
-        group_layout.addWidget(info_label)
-        layout.addWidget(group)
+        btn_row.addWidget(self.community_download_btn)
+
+        btn_row.addStretch()
+        self.community_refresh_btn = QPushButton("Refresh")
+        self.community_refresh_btn.setStyleSheet(self._button_style())
+        self.community_refresh_btn.clicked.connect(self._fetch_community_index)
+        btn_row.addWidget(self.community_refresh_btn)
+        layout.addLayout(btn_row)
+
         return page
+
+    # -- community profile browsing ---------------------------------------
+
+    def _fetch_community_index(self):
+        """Fetches index.json (see COMMUNITY_INDEX_URL) in the background and
+        rebuilds the card grid on success. Safe to call again while a fetch is
+        already in flight (Refresh button) -- the stale worker just finishes and
+        deletes itself; only the most recent one's result reaches the UI, since
+        the older one's signals were never connected to anything after this
+        reassigns the button states below."""
+        self._community_loading = True
+        self.community_download_btn.setEnabled(False)
+        self.community_refresh_btn.setEnabled(False)
+        self.community_empty_label.setVisible(False)
+        self.community_status_label.setText("Loading community profiles...")
+        self.community_status_label.setVisible(True)
+
+        worker = _HttpFetchWorker(COMMUNITY_INDEX_URL, parent=self)
+        worker.succeeded.connect(self._on_community_index_loaded)
+        worker.failed.connect(self._on_community_index_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_community_index_loaded(self, url, body):
+        self._community_loading = False
+        self.community_refresh_btn.setEnabled(True)
+        try:
+            data = json.loads(body.decode("utf-8"))
+            profiles = data.get("profiles") if isinstance(data, dict) else None
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            profiles = None
+        if not isinstance(profiles, list):
+            self.community_status_label.setText("Couldn't parse the community profile list -- try Refresh.")
+            return
+
+        self._community_loaded = True
+        self._community_profiles = profiles
+        self.community_status_label.setVisible(False)
+        self._rebuild_community_cards()
+
+    def _on_community_index_failed(self, url, error):
+        self._community_loading = False
+        self.community_refresh_btn.setEnabled(True)
+        self.community_status_label.setText(
+            f"Couldn't reach the community profile list ({error}). Check your "
+            "connection and try Refresh."
+        )
+        self.community_status_label.setVisible(True)
+
+    def _rebuild_community_cards(self):
+        for card in self._community_cards:
+            card.setParent(None)
+            card.deleteLater()
+        self._community_cards = []
+        self._community_selected_file = None
+
+        self.community_empty_label.setVisible(not self._community_profiles)
+        self.community_cards_scroll.setVisible(bool(self._community_profiles))
+
+        colors = self._colors()
+        for i, profile in enumerate(self._community_profiles):
+            card = ProfileCard(profile, colors, tag_count=profile.get("tag_count", 0))
+            card.clicked.connect(lambda f=profile["file"]: self._select_community(f))
+            card.double_clicked.connect(lambda f=profile["file"]: self._download_community_profile(f))
+            row, col = divmod(i, CARD_COLUMNS)
+            self.community_cards_grid.addWidget(card, row, col)
+            self._community_cards.append(card)
+        self._update_community_button_states()
+
+    def _select_community(self, file):
+        self._community_selected_file = file
+        for card in self._community_cards:
+            card.set_selected(card.profile.get("file") == file)
+        self._update_community_button_states()
+
+    def _update_community_button_states(self):
+        self.community_download_btn.setEnabled(self._community_selected_file is not None)
+
+    def _download_community_profile(self, file):
+        """Fetches one profile's full JSON and saves it as a new local profile --
+        reuses `unique_profile_path` (same as Create/Edit) so downloading a profile
+        that collides by name with an existing local one gets its own -2/-3 file
+        rather than silently overwriting it. Opens the same, already-proven
+        View Profile/per-tag-import dialog on it afterward instead of building a
+        second one just for community profiles."""
+        if file is None:
+            return
+        entry = next((p for p in self._community_profiles if p.get("file") == file), None)
+        if entry is None:
+            return
+        self._select_community(file)
+
+        self.community_download_btn.setEnabled(False)
+        self.community_refresh_btn.setEnabled(False)
+        self.community_status_label.setText(f"Downloading \"{entry.get('name', file)}\"...")
+        self.community_status_label.setVisible(True)
+
+        worker = _HttpFetchWorker(COMMUNITY_BASE_URL + file, parent=self)
+        worker.succeeded.connect(lambda u, body, entry=entry: self._on_community_profile_downloaded(entry, body))
+        worker.failed.connect(self._on_community_download_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_community_profile_downloaded(self, entry, body):
+        self.community_download_btn.setEnabled(True)
+        self.community_refresh_btn.setEnabled(True)
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.community_status_label.setText("Downloaded file wasn't valid JSON -- not saved.")
+            return
+        if not isinstance(data, dict) or not isinstance(data.get("tags"), list):
+            self.community_status_label.setText("Downloaded profile has an unexpected format -- not saved.")
+            return
+
+        name = str(data.get("name") or entry.get("name") or "profile")
+        path = unique_profile_path(name)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+        self.community_status_label.setVisible(False)
+        self.refresh_local_profiles(reselect_path=path)
+        self._set_mode("local")
+        self._open_view_profile_dialog(path)
+
+    def _on_community_download_failed(self, url, error):
+        self.community_download_btn.setEnabled(True)
+        self.community_refresh_btn.setEnabled(True)
+        self.community_status_label.setText(f"Download failed ({error}). Try again.")
+        self.community_status_label.setVisible(True)
 
     # -- local profile management ----------------------------------------
 

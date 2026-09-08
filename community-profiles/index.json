@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "file": "danfoss-ic2-micro.json",
+      "name": "Danfoss iC2-Micro",
+      "manufacturer": "Danfoss",
+      "type": "VFD",
+      "author": "CraftParking",
+      "tag_count": 5,
+      "created": "2026-09-07 10:06:51"
+    }
+  ]
+}
