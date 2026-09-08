@@ -79,6 +79,19 @@ COMMON_ARGS = [
         # (arch/, layers/) and data files (e.g. the MAC vendor list) that a
         # plain hidden-import would miss.
         '--collect-all=scapy',
+        # scapy.libs.matplot is an optional plotting helper scapy carries for its own
+        # .plot()/.psdump() commands, which ModbusLens never calls (only scapy.all's
+        # ARP/sniff/get_if_list are used, see network_diagnostics.py). --collect-all
+        # above still walks that module, which pulls in the matplotlib hook, which
+        # auto-probes for a Tk backend and drags in _tkinter -- whose PyInstaller
+        # runtime hook (pyi_rth__tkinter.py) then fails at launch with
+        # "Tcl data directory ... not found" because the onedir/onefile build never
+        # actually stages Tcl's data files, only the hook that expects them.
+        # Excluding both means matplotlib is never analyzed at all, so neither the
+        # runtime hook nor the crash it causes is included.
+        '--exclude-module=matplotlib',
+        '--exclude-module=tkinter',
+        '--exclude-module=_tkinter',
         '--exclude-module=PySide6.QtWebEngine',
         '--exclude-module=PySide6.QtWebEngineCore',
         '--exclude-module=PySide6.QtWebEngineWidgets',
