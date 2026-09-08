@@ -14,6 +14,8 @@ gui/_generated_icons/
 build/
 develop-eggs/
 dist/
+appimage_build/
+.build_tools/
 installer_output/
 downloads/
 eggs/
