@@ -223,6 +223,24 @@ CHANGELOG_HTML = """
 <li>Trend's Record/Replay feature could silently fail to log a tick due to a timestamp overflow in its internal signal</li>
 </ul>
 
+<h3>v2.2.0</h3>
+<p><u>New</u></p>
+<ul>
+<li>Modbus Diagnostic Functions dialog - the function codes beyond basic read/write (exception status, diagnostics, comm event log, report server ID, file records, mask write, FIFO queue, device identification)</li>
+<li>Save/Load Session - connection settings, Tags, Address Table range, and write bounds together in one file</li>
+<li>U64/S64/F64 numeric formats, alongside the existing U32/S32/F32</li>
+<li>Fast LAN Mode - instant unreachable-device detection instead of retrying every tag</li>
+<li>Raw Data gained an Exception column and an integrated Frame Viewer decoding TX/RX frames side by side</li>
+<li>Tags table: drag-to-reorder columns, a show/hide column picker, per-tag enable/disable</li>
+<li>A shared read cache and coalesced adjacent reads cut duplicate traffic on the wire</li>
+</ul>
+<p><u>Fixed</u></p>
+<ul>
+<li>Tag Monitoring's polling moved off the GUI thread - a single unreachable device no longer freezes the whole window</li>
+<li>Write-mode tags with a signed format showed the raw unsigned value instead of the signed one</li>
+<li>Tags table selection was invisible, with a related write-safety gap around deselected rows</li>
+</ul>
+
 <h3>v2.1.0</h3>
 <p><u>New</u></p>
 <ul>
