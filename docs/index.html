@@ -241,6 +241,7 @@ relying on it.</p>
 <tr><td>Built-in Test Scripting (WRITE/READ/WAIT/IF/REPEAT/ASSERT)</td><td class="compare-highlight">✔</td><td>✖</td><td>✖</td><td>✖</td><td>✖</td></tr>
 <tr><td>Network + Serial Device Discovery</td><td class="compare-highlight">✔</td><td>✖</td><td>✖</td><td>✖</td><td>✖</td></tr>
 <tr><td>Full Session Save/Load (connection, tags, ranges, write bounds)</td><td class="compare-highlight">✔</td><td>⚠ partial</td><td>✖</td><td>⚠ partial</td><td>✖</td></tr>
+<tr><td>Device Profiles (save, reuse, and share templates with the Community)</td><td class="compare-highlight">✔</td><td>✖</td><td>✖</td><td>✖</td><td>✖</td></tr>
 <tr><td>Free &amp; Open Source</td><td class="compare-highlight">✔</td><td>✖ paid</td><td>✖ paid</td><td>✖ paid</td><td>✔</td></tr>
 <tr><td>Unified Single Application</td><td class="compare-highlight">✔</td><td>✖</td><td>✖</td><td>✖</td><td>⚠ master only</td></tr>
 </tbody>
@@ -279,14 +280,13 @@ relying on it.</p>
 <p class="download-sub reveal">Get the latest version <span id="dl-version">&nbsp;</span> for your platform</p>
 
 <div class="platform-tabs reveal">
-<button class="platform-tab is-active" type="button" aria-current="true">
+<button class="platform-tab is-active" type="button" data-platform="windows" aria-current="true">
 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg>
 Windows
 </button>
-<button class="platform-tab" type="button" disabled title="Linux build not available yet">
+<button class="platform-tab" type="button" data-platform="linux">
 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9l3 2.5L7 14M12 14h5" stroke-linecap="round" stroke-linejoin="round"/></svg>
 Linux
-<span class="soon-tag">Coming soon</span>
 </button>
 <button class="platform-tab" type="button" disabled title="macOS build not available yet">
 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 6.7c-.6-1.4-1.9-2.3-3.4-2.3-.1 1.6.5 3.1 1.5 4.1-1.6-.1-3.2.9-4 2.4-1.7 3-.4 7.4 1.2 9.9.8 1.2 1.8 2.5 3 2.5 1.2 0 1.7-.8 3.1-.8s1.9.8 3.1.8c1.3 0 2.1-1.2 2.9-2.4.9-1.4 1.3-2.7 1.3-2.8 0 0-2.5-1-2.5-3.8 0-2.4 1.9-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.5-.1-2.8.9-3.6.9-.7 0-1.9-.9-3.2-.9-.1 0 0 0 0 0z"/></svg>
@@ -295,7 +295,7 @@ macOS
 </button>
 </div>
 
-<div class="download-grid">
+<div class="download-grid" id="download-panel-windows" data-platform-panel="windows">
 <article class="panel-card download-card reveal">
 <h3>Get ModbusLens</h3>
 <a class="btn btn-primary btn-block" id="dl-installer" href="https://github.com/CraftParking/ModbusLens/releases/latest">
@@ -316,6 +316,27 @@ machines (non-ASCII Windows usernames, or antivirus interfering with how it unpa
 <li>Windows 10 or newer, 64-bit</li>
 <li>Admin rights for the installer (one UAC prompt during setup)</li>
 <li>Npcap - optional, only needed for ARP-based discovery and packet capture</li>
+</ul>
+</article>
+</div>
+
+<div class="download-grid" id="download-panel-linux" data-platform-panel="linux" hidden>
+<article class="panel-card download-card reveal">
+<h3>Get ModbusLens</h3>
+<a class="btn btn-primary btn-block" id="dl-appimage" href="https://github.com/CraftParking/ModbusLens/releases/latest">
+<svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 3v12m0 0l-5-5m5 5l5-5M4 21h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+Download AppImage
+</a>
+<p class="download-note">No install, no root - download it, make it executable
+(<code>chmod +x ModbusLens-*.AppImage</code>), then run it directly. Nothing else to set up.</p>
+</article>
+
+<article class="panel-card download-card reveal">
+<h3>System Requirements</h3>
+<ul class="req-list">
+<li>Linux x86_64, any reasonably current desktop distro (Ubuntu, Debian, Fedora, ...)</li>
+<li>FUSE for double-click launch - if unavailable, run with <code>--appimage-extract-and-run</code> instead</li>
+<li>No admin/root rights needed to run it</li>
 </ul>
 </article>
 </div>
@@ -408,14 +429,32 @@ machines (non-ASCII Windows usernames, or antivirus interfering with how it unpa
     if (e.key === 'Escape') closeLightbox();
   });
 
+  var platformTabs = document.querySelectorAll('.platform-tab[data-platform]');
+  var platformPanels = document.querySelectorAll('[data-platform-panel]');
+  platformTabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      var platform = tab.getAttribute('data-platform');
+      platformTabs.forEach(function (t) {
+        var active = t === tab;
+        t.classList.toggle('is-active', active);
+        if (active) t.setAttribute('aria-current', 'true'); else t.removeAttribute('aria-current');
+      });
+      platformPanels.forEach(function (panel) {
+        panel.hidden = panel.getAttribute('data-platform-panel') !== platform;
+      });
+    });
+  });
+
   fetch('https://api.github.com/repos/CraftParking/ModbusLens/releases/latest')
     .then(function (r) { return r.json(); })
     .then(function (release) {
       var assets = release.assets || [];
       var installer = assets.find(function (a) { return /setup/i.test(a.name) && /\.exe$/i.test(a.name); });
       var portable = assets.find(function (a) { return /\.exe$/i.test(a.name) && !/setup/i.test(a.name); });
+      var appimage = assets.find(function (a) { return /\.appimage$/i.test(a.name); });
       if (installer) document.getElementById('dl-installer').href = installer.browser_download_url;
       if (portable) document.getElementById('dl-portable').href = portable.browser_download_url;
+      if (appimage) document.getElementById('dl-appimage').href = appimage.browser_download_url;
       if (release.tag_name) document.getElementById('dl-version').textContent = '(' + release.tag_name + ')';
     })
     .catch(function () { /* buttons keep their releases-page fallback links */ });
