@@ -22,11 +22,19 @@ class WriteTagPollWorker(QThread):
     this thread before actually tearing down that same client object (see
     MonitoringManager.stop_write_poll_worker/wait_for_idle)."""
 
-    # tag, value (None on failure), elapsed_ms, status ("ok"/"exception"/"busy"), detail, category
+    # tag, value (None on failure), elapsed_ms, status ("ok"/"exception"/"busy"), detail, category,
+    # tx_bytes, rx_bytes (None on failure)
     # (category is only ever "validation" or "" here -- read_tag_value raises instead of
     # returning None on a wire failure, so there's no separate ModbusClient-categorized
     # failure to distinguish, unlike TagPollWorker's read-mode "read_failed" status)
-    tag_result = Signal(dict, object, float, str, str, str)
+    #
+    # tx_bytes/rx_bytes are captured here, in this thread, immediately after the call that
+    # produced them -- last_tx_bytes/last_rx_bytes live on the shared modbus client, and by
+    # the time the GUI thread gets around to handling this signal a later tag's read
+    # (already underway in this same loop) may have overwritten them, misattributing one
+    # tag's actual wire bytes to a different tag's Raw Data row. Same reasoning already
+    # applied to last_error/last_error_category in TagPollWorker/_display_raw_data.
+    tag_result = Signal(dict, object, float, str, str, str, object, object)
     cycle_complete = Signal(int, int)  # failed_count, total_count
 
     def __init__(self, tags, modbus, offset_of, read_tag_value, validate_tag, reserve_range, release_range):
@@ -55,7 +63,7 @@ class WriteTagPollWorker(QThread):
                 offset = self.offset_of(tag)
             except Exception as e:
                 failed_count += 1
-                self.tag_result.emit(tag, None, 0.0, "exception", str(e), "validation")
+                self.tag_result.emit(tag, None, 0.0, "exception", str(e), "validation", None, None)
                 continue
 
             request_range = {
@@ -66,20 +74,24 @@ class WriteTagPollWorker(QThread):
                 # Matches the pre-threading behavior exactly: a busy range is skipped
                 # without counting toward the cycle's failed_count -- auto-stop only ever
                 # cared about genuine read failures, not transient interlock contention.
-                self.tag_result.emit(tag, None, 0.0, "busy", "", "busy")
+                self.tag_result.emit(tag, None, 0.0, "busy", "", "busy", None, None)
                 continue
 
             start_time = time.perf_counter()
             try:
                 value = self.read_tag_value(tag, modbus=self.modbus)
             except Exception as e:
+                tx_bytes = getattr(self.modbus, "last_tx_bytes", None)
+                rx_bytes = getattr(self.modbus, "last_rx_bytes", None)
                 self.release_range(request_range)
                 failed_count += 1
-                self.tag_result.emit(tag, None, 0.0, "exception", str(e), "validation")
+                self.tag_result.emit(tag, None, 0.0, "exception", str(e), "validation", tx_bytes, rx_bytes)
                 continue
+            tx_bytes = getattr(self.modbus, "last_tx_bytes", None)
+            rx_bytes = getattr(self.modbus, "last_rx_bytes", None)
             self.release_range(request_range)
             elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-            self.tag_result.emit(tag, value, elapsed_ms, "ok", "", "")
+            self.tag_result.emit(tag, value, elapsed_ms, "ok", "", "", tx_bytes, rx_bytes)
 
         self.cycle_complete.emit(failed_count, len(self.tags))

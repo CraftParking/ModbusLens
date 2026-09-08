@@ -90,7 +90,7 @@ class ProfileCard(QFrame):
     double_clicked = Signal()
 
     WIDTH = 170
-    HEIGHT = 130
+    HEIGHT = 145
 
     def __init__(self, profile, colors, parent=None):
         super().__init__(parent)
@@ -106,7 +106,7 @@ class ProfileCard(QFrame):
         name_label = QLabel(str(profile.get("name", "(unnamed)")))
         name_label.setAlignment(Qt.AlignCenter)
         name_label.setWordWrap(True)
-        name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {colors.get('text', '#000')};")
+        name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {colors.get('text', '#000')}; background: transparent;")
         layout.addWidget(name_label)
 
         manufacturer = str(profile.get("manufacturer", "")).strip()
@@ -116,7 +116,7 @@ class ProfileCard(QFrame):
             subtitle_label = QLabel(subtitle)
             subtitle_label.setAlignment(Qt.AlignCenter)
             subtitle_label.setWordWrap(True)
-            subtitle_label.setStyleSheet(f"font-size: 12px; color: {colors.get('text', '#000')};")
+            subtitle_label.setStyleSheet(f"font-size: 12px; color: {colors.get('text', '#000')}; background: transparent;")
             layout.addWidget(subtitle_label)
 
         layout.addStretch()
@@ -124,10 +124,14 @@ class ProfileCard(QFrame):
         tag_count = len(profile.get("tags", []))
         created = profile.get("created") or profile.get("modified") or ""
         created_date = str(created).split(" ")[0] if created else "-"
-        info_label = QLabel(f"{tag_count} tag{'s' if tag_count != 1 else ''} · Created {created_date}")
+        info_text = f"{tag_count} tag{'s' if tag_count != 1 else ''} · Created {created_date}"
+        author = str(profile.get("author", "")).strip()
+        if author:
+            info_text += f"\nby {author}"
+        info_label = QLabel(info_text)
         info_label.setAlignment(Qt.AlignCenter)
         info_label.setWordWrap(True)
-        info_label.setStyleSheet(f"font-size: 11px; color: {colors.get('text_secondary', '#666')};")
+        info_label.setStyleSheet(f"font-size: 11px; color: {colors.get('text_secondary', '#666')}; background: transparent;")
         layout.addWidget(info_label)
 
         self.set_selected(False)
@@ -218,19 +222,26 @@ class CreateProfileDialog(QDialog):
     Profile"/"Apply", and the Tags page shows only the profile's own saved tags (never
     merged with extra live ones -- there's nothing to add TO the profile here) each
     marked with a red/green status dot against `live_tag_names` (the current Tags tab's
-    tag names) so the user can see at a glance which tags would actually be new. Accept
-    returns the checked subset via selected_tags() for the caller to import alongside
-    whatever's already live, same as Edit/Create."""
+    tag names) so the user can see at a glance which tags would actually be new. Apply
+    does NOT close the dialog in this mode -- it calls `on_apply(selected_tags())` right
+    away (the caller's chance to actually import them), then refreshes the Tags page
+    against `on_apply`'s return value (the live tag names after that import) so status
+    dots update in place and Apply can be clicked again for a second batch. Only Close
+    (Cancel, relabeled) ends the dialog. Non-view-only modes are unaffected: Accept still
+    closes immediately and the caller reads selected_tags()/profile_name() etc. after
+    exec() returns, same as always."""
 
     PAGES = ["Profile Info", "Tags", "Datasheet"]
 
     def __init__(self, colors, button_style, available_tags=None, preset=None, parent=None,
-                 view_only=False, live_tag_names=None):
+                 view_only=False, live_tag_names=None, input_style="", on_apply=None):
         super().__init__(parent)
         self.colors = colors
         self.button_style = button_style
+        self.input_style = input_style
         self.view_only = view_only
         self.live_tag_names = live_tag_names or set()
+        self.on_apply = on_apply
         if view_only:
             self.available_tags = list((preset or {}).get("tags") or [])
         else:
@@ -278,6 +289,7 @@ class CreateProfileDialog(QDialog):
                 background-color: {c.get('surface_alt', '#f5f5f5')};
                 color: {c.get('text', '#000')};
                 border: 1px solid {c.get('border', '#ccc')};
+                outline: 0;
             }}
             QListWidget::item {{
                 padding: 10px;
@@ -285,6 +297,8 @@ class CreateProfileDialog(QDialog):
             QListWidget::item:selected {{
                 background-color: {c.get('accent', '#f5a623')};
                 color: {c.get('accent_ink', c.get('text', '#000'))};
+                outline: 0;
+                border: none;
             }}
         """)
         self.nav_list.currentRowChanged.connect(self._on_nav_changed)
@@ -304,7 +318,7 @@ class CreateProfileDialog(QDialog):
         self.accept_btn.setStyleSheet(self.button_style)
         self.accept_btn.clicked.connect(self._on_accept)
         btn_row.addWidget(self.accept_btn)
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton("Close" if self.view_only else "Cancel")
         cancel_btn.setStyleSheet(self.button_style)
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
@@ -316,29 +330,48 @@ class CreateProfileDialog(QDialog):
         if row >= 0:
             self.stack.setCurrentIndex(row)
 
+    def _make_info_field(self, value, placeholder):
+        """An editable QLineEdit in Create/Edit mode, or a plain QLabel in view_only --
+        View Profile shows nothing that looks editable, since nothing on this page can
+        actually be changed there. QLabel also has .text(), so profile_name() etc. below
+        work unchanged regardless of which one this returns."""
+        if self.view_only:
+            label = QLabel(value)
+            label.setStyleSheet(f"color: {self.colors.get('text', '#000')};")
+            return label
+        field = QLineEdit(value)
+        field.setPlaceholderText(placeholder)
+        field.setStyleSheet(self.input_style)
+        return field
+
     def _build_info_page(self):
         preset = self.preset or {}
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setAlignment(Qt.AlignTop)
+        # Tight between a field's own label and value; addSpacing below adds the bigger
+        # gap between one field group and the next, so groups read as visually distinct.
+        layout.setSpacing(2)
+        FIELD_GAP = 14
+
         layout.addWidget(QLabel("Profile Name:"))
-        self.name_input = QLineEdit(str(preset.get("name", "")))
-        self.name_input.setPlaceholderText("e.g. Schneider ATV320 VFD")
+        self.name_input = self._make_info_field(str(preset.get("name", "")), "e.g. Schneider ATV320 VFD")
         layout.addWidget(self.name_input)
+        layout.addSpacing(FIELD_GAP)
 
         layout.addWidget(QLabel("Manufacturer:"))
-        self.manufacturer_input = QLineEdit(str(preset.get("manufacturer", "")))
-        self.manufacturer_input.setPlaceholderText("e.g. Schneider Electric")
+        self.manufacturer_input = self._make_info_field(str(preset.get("manufacturer", "")), "e.g. Schneider Electric")
         layout.addWidget(self.manufacturer_input)
+        layout.addSpacing(FIELD_GAP)
 
         layout.addWidget(QLabel("Type:"))
-        self.type_input = QLineEdit(str(preset.get("type", "")))
-        self.type_input.setPlaceholderText("e.g. VFD, PLC, Sensor")
+        self.type_input = self._make_info_field(str(preset.get("type", "")), "e.g. VFD, PLC, Sensor")
         layout.addWidget(self.type_input)
+        layout.addSpacing(FIELD_GAP)
 
-        if self.view_only:
-            for field in (self.name_input, self.manufacturer_input, self.type_input):
-                field.setReadOnly(True)
+        layout.addWidget(QLabel("Author:"))
+        self.author_input = self._make_info_field(str(preset.get("author", "")), "e.g. your name")
+        layout.addWidget(self.author_input)
 
         layout.addStretch()
         return page
@@ -389,12 +422,32 @@ class CreateProfileDialog(QDialog):
         select_row.addWidget(select_none_btn)
         layout.addLayout(select_row)
 
+        # Cluster by Group, preserving first-appearance order -- computed here (rather
+        # than right before the loop that consumes it) so the view_only legend below can
+        # count mixed (yellow) groups without duplicating this same clustering logic.
+        groups_order = []
+        groups = {}
+        for tag in self.available_tags:
+            key = str(tag.get("Group", "") or "")
+            if key not in groups:
+                groups[key] = []
+                groups_order.append(key)
+            groups[key].append(tag)
+
         if self.view_only:
+            red_count = sum(1 for t in self.available_tags if str(t.get("Tag Name", "")) not in self.live_tag_names)
+            green_count = sum(1 for t in self.available_tags if str(t.get("Tag Name", "")) in self.live_tag_names)
+            yellow_count = sum(
+                1 for key in groups_order
+                if _group_status([str(t.get("Tag Name", "")) for t in groups[key]], self.live_tag_names) == "yellow"
+            )
+            legend_counts = {"red": red_count, "green": green_count, "yellow": yellow_count}
+
             legend_row = QHBoxLayout()
             legend_row.setSpacing(16)
             for status in ("red", "green", "yellow"):
                 legend_row.addWidget(_status_dot(status))
-                legend_label = QLabel(_STATUS_LABELS[status])
+                legend_label = QLabel(f"{_STATUS_LABELS[status]} ({legend_counts[status]})")
                 legend_label.setStyleSheet(f"color: {self.colors.get('text_secondary', '#666')}; font-size: 11px;")
                 legend_row.addWidget(legend_label)
             legend_row.addStretch()
@@ -412,16 +465,6 @@ class CreateProfileDialog(QDialog):
         container_layout = QVBoxLayout(container)
         container_layout.setAlignment(Qt.AlignTop)
         container_layout.setSpacing(2)
-
-        # Cluster by Group, preserving first-appearance order.
-        groups_order = []
-        groups = {}
-        for tag in self.available_tags:
-            key = str(tag.get("Group", "") or "")
-            if key not in groups:
-                groups[key] = []
-                groups_order.append(key)
-            groups[key].append(tag)
 
         self._tag_checkboxes = []
         self._group_checkboxes = {}
@@ -560,12 +603,45 @@ class CreateProfileDialog(QDialog):
         return page
 
     def _on_accept(self):
+        if self.view_only:
+            self._on_apply_clicked()
+            return
         if not self.name_input.text().strip():
             QMessageBox.warning(self, "Name Required", "Enter a profile name first.")
             self.nav_list.setCurrentRow(0)
             self.name_input.setFocus()
             return
         self.accept()
+
+    def _on_apply_clicked(self):
+        """view_only's Apply -- unlike Create/Edit's Accept, this never closes the
+        dialog: it runs on_apply() right away (the caller's real import), then rebuilds
+        the Tags page against on_apply's return value (the live tag names right after
+        that import) so status dots update in place and the user can adjust the
+        selection and click Apply again for a second batch. Only Close ends the
+        dialog."""
+        if self.on_apply is not None:
+            new_live_names = self.on_apply(self.selected_tags())
+            if new_live_names is not None:
+                self.live_tag_names = new_live_names
+        self._refresh_tags_page()
+
+    def _refresh_tags_page(self):
+        """Rebuilds the Tags page from scratch (needed to recompute every status dot),
+        while preserving each tag's current checked state across the rebuild -- without
+        this, re-checking status dots would also silently reset any manual check/uncheck
+        the user made back to _build_tags_page's default (everything checked)."""
+        checked_state = {str(tag.get("Tag Name", "")): checkbox.isChecked() for checkbox, tag in self._tag_checkboxes}
+        old_page = self.stack.widget(1)
+        new_page = self._build_tags_page()
+        for checkbox, tag in self._tag_checkboxes:
+            name = str(tag.get("Tag Name", ""))
+            if name in checked_state:
+                checkbox.setChecked(checked_state[name])
+        self.stack.removeWidget(old_page)
+        old_page.deleteLater()
+        self.stack.insertWidget(1, new_page)
+        self.stack.setCurrentIndex(1)
 
     def profile_name(self):
         return self.name_input.text().strip()
@@ -575,6 +651,9 @@ class CreateProfileDialog(QDialog):
 
     def device_type(self):
         return self.type_input.text().strip()
+
+    def author(self):
+        return self.author_input.text().strip()
 
     def selected_tags(self):
         """The subset of available_tags whose checkbox is checked, in original order."""
@@ -598,6 +677,9 @@ class DeviceProfilesPanel(QWidget):
 
     def _button_style(self):
         return self.parent_window._get_button_style() if self.parent_window and hasattr(self.parent_window, "_get_button_style") else ""
+
+    def _input_style(self):
+        return self.parent_window._get_input_style() if self.parent_window and hasattr(self.parent_window, "_get_input_style") else ""
 
     def _groupbox_style(self):
         return self.parent_window._get_groupbox_style() if self.parent_window and hasattr(self.parent_window, "_get_groupbox_style") else ""
@@ -762,27 +844,35 @@ class DeviceProfilesPanel(QWidget):
         per-tag import picker -- replaces the old instant "double-click applies
         everything" behavior. Tags already in the live Tags tab are marked green (see
         _status_dot/_group_status), so the user can tell at a glance which of the
-        profile's tags would actually be new before choosing what to bring in."""
+        profile's tags would actually be new before choosing what to bring in.
+
+        Apply doesn't close this dialog (see CreateProfileDialog's view_only docs) --
+        on_apply below runs the actual import immediately, on every click, and hands
+        back the fresh set of live tag names so the dialog can re-color its dots and the
+        user can keep adjusting the selection and importing more in the same session."""
         self._select_path(path)
         profile = self._selected_profile()
         mw = self.parent_window
         if profile is None or mw is None:
             return
+
+        def on_apply(selected_tags):
+            imported_count, skipped_count = mw._import_additional_tag_rows(selected_tags)
+            mw._apply_address_table_data(profile.get("address_table"))
+            if hasattr(mw, "_log"):
+                message = f"Imported {imported_count} tag(s) from profile '{profile.get('name', '')}'"
+                if skipped_count:
+                    message += f" ({skipped_count} already present, skipped)"
+                mw._log(message)
+            return {t.get("Tag Name", "") for t in mw._build_tag_export_rows()}
+
         live_tag_names = {t.get("Tag Name", "") for t in mw._build_tag_export_rows()}
         dialog = CreateProfileDialog(
             self._colors(), self._button_style(), preset=profile, parent=self,
-            view_only=True, live_tag_names=live_tag_names,
+            view_only=True, live_tag_names=live_tag_names, input_style=self._input_style(),
+            on_apply=on_apply,
         )
-        if dialog.exec() != QDialog.Accepted:
-            return
-        selected_tags = dialog.selected_tags()
-        imported_count, skipped_count = mw._import_additional_tag_rows(selected_tags)
-        mw._apply_address_table_data(profile.get("address_table"))
-        if hasattr(mw, "_log"):
-            message = f"Imported {imported_count} tag(s) from profile '{profile.get('name', '')}'"
-            if skipped_count:
-                message += f" ({skipped_count} already present, skipped)"
-            mw._log(message)
+        dialog.exec()
 
     def _update_button_states(self):
         has_selection = self._selected_profile() is not None
@@ -806,7 +896,10 @@ class DeviceProfilesPanel(QWidget):
         if mw is None:
             return
         available_tags = mw._build_tag_export_rows()
-        dialog = CreateProfileDialog(self._colors(), self._button_style(), available_tags, parent=self)
+        dialog = CreateProfileDialog(
+            self._colors(), self._button_style(), available_tags, parent=self,
+            input_style=self._input_style(),
+        )
         if dialog.exec() != QDialog.Accepted:
             return
         name = dialog.profile_name()
@@ -819,6 +912,7 @@ class DeviceProfilesPanel(QWidget):
             "name": name,
             "manufacturer": dialog.manufacturer(),
             "type": dialog.device_type(),
+            "author": dialog.author(),
             "created": time.strftime("%Y-%m-%d %H:%M:%S"),
             "modified": time.strftime("%Y-%m-%d %H:%M:%S"),
             "tags": dialog.selected_tags(),
@@ -848,7 +942,8 @@ class DeviceProfilesPanel(QWidget):
         old_path = profile["_path"]
         available_tags = mw._build_tag_export_rows()
         dialog = CreateProfileDialog(
-            self._colors(), self._button_style(), available_tags, preset=profile, parent=self
+            self._colors(), self._button_style(), available_tags, preset=profile, parent=self,
+            input_style=self._input_style(),
         )
         if dialog.exec() != QDialog.Accepted:
             return
@@ -862,6 +957,7 @@ class DeviceProfilesPanel(QWidget):
             "name": new_name,
             "manufacturer": dialog.manufacturer(),
             "type": dialog.device_type(),
+            "author": dialog.author(),
             "created": profile.get("created", time.strftime("%Y-%m-%d %H:%M:%S")),
             "modified": time.strftime("%Y-%m-%d %H:%M:%S"),
             "tags": dialog.selected_tags(),

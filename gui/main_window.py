@@ -688,6 +688,7 @@ class ModbusGUI(QMainWindow):
         self._update_tag_address_header()
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
         self.monitoring_tag_table.setColumnWidth(12, 130)
+        self._update_tag_name_column_width()
         self.monitoring_tag_table.setSelectionBehavior(QTableWidget.SelectRows)
         # Every cell here is a setCellWidget() covering the row, so the only click surface
         # Qt's own selection model ever sees is the row-number header (see TagTableWidget's
@@ -1112,13 +1113,31 @@ class ModbusGUI(QMainWindow):
             type_widget.currentTextChanged.connect(self._on_monitoring_tag_address_or_type_changed)
         if hasattr(name_widget, "editingFinished"):
             name_widget.editingFinished.connect(self._on_monitoring_tag_name_edited)
+        name_widget.textChanged.connect(self._update_tag_name_column_width)
 
         self._coerce_monitoring_tag_count(insert_row)
         self._ensure_unique_monitoring_tag_address(insert_row)
+        self._update_tag_name_column_width()
 
         # Auto-select the newly inserted row
         self.monitoring_tag_table.selectRow(insert_row)
         self.monitoring_tag_table.setCurrentCell(insert_row, 0)
+
+    def _update_tag_name_column_width(self):
+        """Tag Name (column 0) auto-sizes to whichever current tag name is widest, so a
+        long name is never truncated and a table of short names doesn't waste horizontal
+        space. Every cell here is a QLineEdit (setCellWidget), not a QTableWidgetItem --
+        QLineEdit.sizeHint() is roughly fixed regardless of its actual text, so
+        resizeColumnToContents(0)/ResizeToContents wouldn't track the real text width;
+        measuring each row's text via font metrics directly is what actually does."""
+        min_width, padding = 90, 24
+        metrics = self.monitoring_tag_table.fontMetrics()
+        widest = min_width
+        for row in range(self.monitoring_tag_table.rowCount()):
+            widget = self.monitoring_tag_table.cellWidget(row, 0)
+            if isinstance(widget, QLineEdit):
+                widest = max(widest, metrics.horizontalAdvance(widget.text()) + padding)
+        self.monitoring_tag_table.setColumnWidth(0, widest)
 
     def _capture_tag_row(self, row):
         """Snapshot every column of a Tags row so it can be torn down and rebuilt at a new
@@ -1590,6 +1609,7 @@ class ModbusGUI(QMainWindow):
         self._update_tag_buttons_state()
         if self.tag_group_names:
             self._rebuild_tag_table_grouped()
+        self._update_tag_name_column_width()
 
     def _show_tag_context_menu(self, pos):
         table = self.monitoring_tag_table
@@ -1712,6 +1732,7 @@ class ModbusGUI(QMainWindow):
             self.monitoring_manager.tag_groups.clear()
             self.monitoring_manager.group_header_rows.clear()
             self._update_tag_buttons_state()
+            self._update_tag_name_column_width()
             self._log("All tags removed")
 
     def _update_tag_buttons_state(self):
@@ -3024,6 +3045,11 @@ Unit ID: {unit_id}<br><br>
         the table itself -- disabling the whole QTableWidget also blocked column resize and
         Write Value edits, even though writing while monitoring is a supported feature."""
         for row in range(self.monitoring_tag_table.rowCount()):
+            if row in self.monitoring_manager.group_header_rows:
+                # A group header's collapse/expand click isn't a configuration edit --
+                # setEnabled(False) would also stop Qt delivering it mouse events at all,
+                # locking every group open/closed for the whole monitoring session.
+                continue
             for column in range(7):  # Tag Name, Group, Mode, Type, Address, Count, Format
                 widget = self.monitoring_tag_table.cellWidget(row, column)
                 if widget is not None:
@@ -3148,7 +3174,8 @@ Unit ID: {unit_id}<br><br>
             if was_at_bottom:
                 scrollbar.setValue(scrollbar.maximum())
 
-    def _display_raw_data(self, title, data, elapsed_ms=None, function_info=None, error_category=None):
+    def _display_raw_data(self, title, data, elapsed_ms=None, function_info=None, error_category=None,
+                           tx_bytes=None, rx_bytes=None):
         """Log one Modbus transaction to the Raw Data tab: what was requested, its raw
         value(s) in decimal and hex, whether it succeeded, how long it took, and (when the
         caller knows it) which function code was actually used.
@@ -3157,14 +3184,16 @@ Unit ID: {unit_id}<br><br>
         what operation they performed (Address Table, Tags, Script) pass it explicitly rather
         than having it guessed back out of the free-form title string.
 
-        error_category lets a caller pass through an already-captured ModbusClient
-        _set_error category instead of this method reading self.modbus.last_error_category
-        live -- needed by Tag Monitoring's poll worker specifically, since its merged-block
-        reads happen on a background thread and a later block's read can overwrite
-        last_error_category before this GUI-thread call runs for an earlier one's result
-        (same reasoning TagPollWorker already applies to last_error itself). Every other
-        caller here reads synchronously right after its own blocking call, so the live
-        read below is accurate for them.
+        error_category, tx_bytes and rx_bytes let a caller pass through already-captured
+        ModbusClient state instead of this method reading self.modbus.last_error_category/
+        last_tx_bytes/last_rx_bytes live -- needed by Tag Monitoring's poll workers
+        specifically, since their reads happen on a background thread and a later tag's
+        read can overwrite these shared attributes before this GUI-thread call runs for an
+        earlier tag's result, misattributing one tag's wire bytes to a different tag's Raw
+        Data row. Every other caller here reads synchronously right after its own blocking
+        call, so the live read below is accurate for them -- tx_bytes/rx_bytes only fall
+        back to it when a caller doesn't pass its own (plain None, not just falsy, so an
+        explicitly-passed empty/failed capture isn't silently replaced by a stale live read).
         """
         timestamp = time.strftime('%H:%M:%S')
         function_code, _function_name = function_info if function_info else (None, None)
@@ -3186,8 +3215,10 @@ Unit ID: {unit_id}<br><br>
 
         if hasattr(self, 'diagnostics_dialogs'):
             error_text = getattr(self.modbus, 'last_error', None) if data is None else None
-            tx_bytes = getattr(self.modbus, 'last_tx_bytes', None)
-            rx_bytes = getattr(self.modbus, 'last_rx_bytes', None)
+            if tx_bytes is None:
+                tx_bytes = getattr(self.modbus, 'last_tx_bytes', None)
+            if rx_bytes is None:
+                rx_bytes = getattr(self.modbus, 'last_rx_bytes', None)
             # Blank for a plain communications failure (timeout, no response) -- only a
             # device that actually replied with a Modbus exception code gets one, so the
             # Raw Data tab's Exception column distinguishes "the device refused this" from

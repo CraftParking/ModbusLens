@@ -194,6 +194,8 @@ class MonitoringManager:
         # Find the row for this tag
         target_row = None
         for row in range(target_table.rowCount()):
+            if row in self.group_header_rows:
+                continue  # its column-0 widget is a GroupHeaderWidget, not a name QLineEdit
             name_widget = target_table.cellWidget(row, 0)
             if name_widget and name_widget.text().strip() == tag_name:
                 type_widget = target_table.cellWidget(row, 3)
@@ -208,7 +210,11 @@ class MonitoringManager:
 
         if read_value:
             read_value_widget = target_table.cellWidget(target_row, 7)
-            if read_value_widget:
+            # Don't stomp on a value the user is actively typing/selecting in this field --
+            # every poll tick used to unconditionally overwrite it, so any manual edit got
+            # wiped out within one poll interval (as little as 200ms) before the user could
+            # do anything with it. Resumes live updates the moment focus leaves the field.
+            if read_value_widget and not read_value_widget.hasFocus():
                 read_value_widget.setText(read_value)
                 self._apply_alarm_style(read_value_widget, in_alarm)
 
@@ -372,7 +378,7 @@ class MonitoringManager:
         self._poll_worker = worker
         worker.start()
 
-    def _on_tag_poll_result(self, tag, value, elapsed_ms, status, detail, category):
+    def _on_tag_poll_result(self, tag, value, elapsed_ms, status, detail, category, tx_bytes, rx_bytes):
         """GUI-thread handler for one tag's result from the poll worker -- does exactly
         what the old inline loop body did after getting a value back, since all of this
         touches Qt widgets (the Tags table, the System Log, the Raw Data tab) and must
@@ -386,7 +392,8 @@ class MonitoringManager:
             in_alarm = self.check_alarm(tag, value)
             engineering_value = self.compute_engineering_value(tag, value)
             self.parent._display_raw_data(
-                f"Tag[{tag['name']}]", value, elapsed_ms, function_code_for(tag["type"], is_write=False)
+                f"Tag[{tag['name']}]", value, elapsed_ms, function_code_for(tag["type"], is_write=False),
+                tx_bytes=tx_bytes, rx_bytes=rx_bytes,
             )
             self.add_monitoring_row(
                 tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
@@ -405,7 +412,7 @@ class MonitoringManager:
             self.parent._log(f"Monitoring read failed for {tag['name']} at {tag['address']}{extra}")
             self.parent._display_raw_data(
                 f"Tag[{tag['name']}]", None, elapsed_ms, function_code_for(tag["type"], is_write=False),
-                error_category=category,
+                error_category=category, tx_bytes=tx_bytes, rx_bytes=rx_bytes,
             )
         elif status == "busy":
             self.parent._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
@@ -498,7 +505,7 @@ class MonitoringManager:
         self._write_poll_worker = worker
         worker.start()
 
-    def _on_write_tag_poll_result(self, tag, value, elapsed_ms, status, detail, category):
+    def _on_write_tag_poll_result(self, tag, value, elapsed_ms, status, detail, category, tx_bytes, rx_bytes):
         """GUI-thread handler for one write-mode tag's result from the poll worker -- does
         exactly what the old inline loop body did after getting a value back, since all of
         this touches Qt widgets (the Tags table, Raw Data tab, System Log) and must stay
@@ -513,6 +520,7 @@ class MonitoringManager:
             self.parent._display_raw_data(
                 f"Tag[{tag['name']}] (write-mode, current value)", value, elapsed_ms,
                 function_code_for(tag["type"], is_write=False),
+                tx_bytes=tx_bytes, rx_bytes=rx_bytes,
             )
             self.add_monitoring_row(
                 tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
