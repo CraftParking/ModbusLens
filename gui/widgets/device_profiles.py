@@ -17,9 +17,11 @@ import json
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QGroupBox, QMessageBox,
@@ -41,6 +43,12 @@ COMMUNITY_REPO = "CraftParking/ModbusLens"
 COMMUNITY_BRANCH = "main"
 COMMUNITY_BASE_URL = f"https://raw.githubusercontent.com/{COMMUNITY_REPO}/{COMMUNITY_BRANCH}/community-profiles/"
 COMMUNITY_INDEX_URL = COMMUNITY_BASE_URL + "index.json"
+COMMUNITY_NEW_ISSUE_URL = f"https://github.com/{COMMUNITY_REPO}/issues/new"
+
+# A conservative cross-browser safety margin for a GET URL's total length -- past
+# this, a pre-filled title+body query string risks silently truncating or being
+# rejected outright by the browser/GitHub before the user ever sees the issue form.
+_MAX_PREFILL_URL_LENGTH = 6000
 
 
 def _slugify(name):
@@ -823,6 +831,11 @@ class DeviceProfilesPanel(QWidget):
         self.delete_btn.clicked.connect(self._delete_selected)
         btn_row.addWidget(self.delete_btn)
 
+        self.share_btn = QPushButton("Share to Community")
+        self.share_btn.setStyleSheet(self._button_style())
+        self.share_btn.clicked.connect(self._share_selected_to_community)
+        btn_row.addWidget(self.share_btn)
+
         btn_row.addStretch()
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setStyleSheet(self._button_style())
@@ -1101,6 +1114,7 @@ class DeviceProfilesPanel(QWidget):
         has_selection = self._selected_profile() is not None
         self.edit_btn.setEnabled(has_selection)
         self.delete_btn.setEnabled(has_selection)
+        self.share_btn.setEnabled(has_selection)
 
     def _selected_profile(self):
         if self._selected_path is None:
@@ -1213,3 +1227,62 @@ class DeviceProfilesPanel(QWidget):
             QMessageBox.critical(self, "Delete Profile Failed", f"Could not delete profile: {e}")
             return
         self.refresh_local_profiles()
+
+    def _share_selected_to_community(self):
+        """Opens a pre-filled GitHub "New Issue" against this repo with the
+        profile's JSON in the body, for a maintainer to review before it's added
+        to community-profiles/ (see COMMUNITY_REPO/tools/build_community_index.py).
+        Deliberately no server, no embedded token: GitHub's own login handles
+        auth/spam, and the app never talks to anything but a public GET/browser
+        open."""
+        profile = self._selected_profile()
+        if profile is None:
+            return
+
+        name = str(profile.get("name", "")).strip() or "Unnamed device"
+        export = {k: v for k, v in profile.items() if not k.startswith("_")}
+        profile_json = json.dumps(export, indent=2)
+
+        title = f"Profile submission: {name}"
+        body_lines = [
+            "<!-- Submitting a device profile for the Community list. A maintainer",
+            "     reviews this before adding it to community-profiles/. -->",
+            "",
+            f"**Device:** {name}",
+        ]
+        manufacturer = str(profile.get("manufacturer", "")).strip()
+        device_type = str(profile.get("type", "")).strip()
+        author = str(profile.get("author", "")).strip()
+        if manufacturer:
+            body_lines.append(f"**Manufacturer:** {manufacturer}")
+        if device_type:
+            body_lines.append(f"**Type:** {device_type}")
+        if author:
+            body_lines.append(f"**Author:** {author}")
+        body_lines.append(f"**Tags:** {len(export.get('tags') or [])}")
+        body_lines += ["", "```json", profile_json, "```"]
+        body = "\n".join(body_lines)
+
+        query = urllib.parse.urlencode({"title": title, "body": body, "labels": "profile-submission"})
+        url = f"{COMMUNITY_NEW_ISSUE_URL}?{query}"
+
+        if len(url) > _MAX_PREFILL_URL_LENGTH:
+            # A profile with many tags can make the pre-filled body too long for a
+            # GET URL to carry reliably across every browser -- fall back to
+            # copying the full submission text to the clipboard and only
+            # pre-filling the title, rather than silently truncating the JSON.
+            QGuiApplication.clipboard().setText(body)
+            QMessageBox.information(
+                self, "Profile Too Large to Pre-fill",
+                "This profile has too many tags to pre-fill the GitHub issue body "
+                "directly.\n\nThe full submission text (including the profile JSON) "
+                "has been copied to your clipboard -- paste it into the issue body "
+                "that opens next.",
+            )
+            query = urllib.parse.urlencode({"title": title, "labels": "profile-submission"})
+            url = f"{COMMUNITY_NEW_ISSUE_URL}?{query}"
+
+        QDesktopServices.openUrl(QUrl(url))
+        mw = self.parent_window
+        if mw is not None and hasattr(mw, "_log"):
+            mw._log(f"Opened a GitHub issue to submit profile '{name}' to the Community list")
