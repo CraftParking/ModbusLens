@@ -1096,8 +1096,21 @@ class ScriptWidget(QWidget):
         self.cpu_label.setText(f"CPU: {percent:.1f}%")
 
     def _show_editor_context_menu(self, pos):
-        cursor = self.editor.cursorForPosition(pos)
-        self.editor.setTextCursor(cursor)
+        # Right-clicking INSIDE an existing selection should preserve it (same
+        # convention as most text editors) so the menu's Copy actually has
+        # something to copy -- unconditionally moving the cursor to the click
+        # point here previously collapsed any selection on every right-click,
+        # disabling Copy entirely. Only reposition when the click lands outside
+        # the current selection, same as right-clicking to place the cursor
+        # somewhere new normally does.
+        current = self.editor.textCursor()
+        click_cursor = self.editor.cursorForPosition(pos)
+        click_inside_selection = (
+            current.hasSelection()
+            and current.selectionStart() <= click_cursor.position() <= current.selectionEnd()
+        )
+        if not click_inside_selection:
+            self.editor.setTextCursor(click_cursor)
 
         menu = self.editor.createStandardContextMenu()
         menu.addSeparator()
