@@ -13,6 +13,7 @@ for internal config/history. Community-shared profiles are a separate, later
 phase -- format and hosting aren't decided yet, so that tab is still a
 placeholder here.
 """
+import hashlib
 import json
 import re
 import time
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
     QDialog, QListWidget, QStackedWidget, QLineEdit, QCheckBox,
 )
 
-from app_paths import documents_dir
+from app_paths import app_data_dir, documents_dir
 
 CARD_COLUMNS = 4
 
@@ -43,20 +44,72 @@ COMMUNITY_BASE_URL = f"https://raw.githubusercontent.com/{COMMUNITY_REPO}/{COMMU
 COMMUNITY_INDEX_URL = COMMUNITY_BASE_URL + "index.json"
 
 # Submission (DeviceProfilesPanel._share_selected_to_community) goes straight to a
-# Formspree form's endpoint as a background JSON POST -- no browser, no mail
-# client, no server of our own to host. Formspree forwards each submission to the
-# maintainer's inbox for review; its form ID isn't a secret the way an API token
-# would be (leaking it only risks someone spamming that inbox through the form
-# itself, which Formspree's own free-tier rate-limiting/spam filtering already
-# guards against), unlike embedding a GitHub token or SMTP password in a public
-# client, which would let an attacker act as this app anywhere, not just here.
-# Replace YOUR_FORM_ID with the real one after creating the form at formspree.io.
-COMMUNITY_FORM_ENDPOINT = "https://formspree.io/f/xjyvadqr"
+# staticforms.dev form as a background JSON POST -- no browser, no mail client,
+# no server of our own to host. staticforms.dev forwards each submission to the
+# maintainer's inbox for review; the API key isn't a secret the way a GitHub
+# token or SMTP password would be (leaking it only risks someone spamming the
+# maintainer's own inbox through this one form, which staticforms.dev's own
+# spam filtering already guards against), unlike a real credential that would
+# let an attacker act as this app anywhere, not just here. Chosen over Formspree
+# (50 submissions/month free) for a 10x higher free cap (500/month) with no
+# card required and no default Origin/Referer domain restriction to trip up a
+# desktop app's header-less POST.
+COMMUNITY_FORM_ENDPOINT = "https://api.staticforms.dev/submit"
+COMMUNITY_FORM_API_KEY = "sf_a3b1de6a563204f0d607ae19"
 
 
 def _slugify(name):
     slug = _SLUG_RE.sub("-", name.strip().lower()).strip("-")
     return slug or "profile"
+
+
+def _profile_content_hash(profile):
+    """A stable fingerprint of a profile's actual content (name/manufacturer/
+    type/author/tags/address_table), deliberately excluding created/modified
+    timestamps and internal bookkeeping keys (_path, source, source_file) --
+    those change or differ without the profile itself meaningfully changing,
+    which would make two submissions of "the same thing" hash differently."""
+    fields = {
+        "name": str(profile.get("name", "")).strip(),
+        "manufacturer": str(profile.get("manufacturer", "")).strip(),
+        "type": str(profile.get("type", "")).strip(),
+        "author": str(profile.get("author", "")).strip(),
+        "tags": profile.get("tags") or [],
+        "address_table": profile.get("address_table"),
+    }
+    canonical = json.dumps(fields, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _community_submissions_path():
+    """Lives in the app-data dir, not next to real profiles (profiles_dir()) --
+    list_profiles() globs every *.json there and would try to parse this as a
+    profile too, since pathlib's glob doesn't skip dotfiles the way a shell's
+    bare `*` normally would."""
+    d = app_data_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "community_submissions.json"
+
+
+def _load_submitted_hashes():
+    try:
+        with open(_community_submissions_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return set(data)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return set()
+
+
+def _record_submitted_hash(content_hash):
+    hashes = _load_submitted_hashes()
+    hashes.add(content_hash)
+    try:
+        with open(_community_submissions_path(), "w", encoding="utf-8") as f:
+            json.dump(sorted(hashes), f)
+    except OSError:
+        pass  # Worst case a genuine duplicate isn't caught next time -- not worth failing the submission over.
 
 
 def profiles_dir():
@@ -185,7 +238,7 @@ class ProfileCard(QFrame):
             layout.addWidget(subtitle_label)
 
         # A profile downloaded from Community (see DeviceProfilesPanel.
-        # _on_community_profile_downloaded) looks identical to a hand-made local one
+        # _save_community_profile) looks identical to a hand-made local one
         # otherwise -- same name/tags/author, nothing to tell them apart by. This
         # badge is the only thing that does; it disappears once the profile is
         # edited (source isn't one of the fields Edit's save carries forward),
@@ -323,7 +376,7 @@ class CreateProfileDialog(QDialog):
     PAGES = ["Profile Info", "Tags", "Datasheet"]
 
     def __init__(self, colors, button_style, available_tags=None, preset=None, parent=None,
-                 view_only=False, live_tag_names=None, input_style="", on_apply=None):
+                 view_only=False, live_tag_names=None, input_style="", on_apply=None, on_download=None):
         super().__init__(parent)
         self.colors = colors
         self.button_style = button_style
@@ -331,6 +384,11 @@ class CreateProfileDialog(QDialog):
         self.view_only = view_only
         self.live_tag_names = live_tag_names or set()
         self.on_apply = on_apply
+        # Only ever set for a Community profile being previewed (see
+        # DeviceProfilesPanel._view_community_profile) -- a local profile is
+        # already "downloaded" (it's a file on disk), so there's nothing for
+        # this button to do there and it's never shown for one.
+        self.on_download = on_download
         if view_only:
             self.available_tags = list((preset or {}).get("tags") or [])
         else:
@@ -402,6 +460,11 @@ class CreateProfileDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+        if self.on_download is not None:
+            self.download_btn = QPushButton("Download")
+            self.download_btn.setStyleSheet(self.button_style)
+            self.download_btn.clicked.connect(self._on_download_clicked)
+            btn_row.addWidget(self.download_btn)
         accept_text = "Apply" if self.view_only else ("Save" if self.is_edit else "Create")
         self.accept_btn = QPushButton(accept_text)
         self.accept_btn.setStyleSheet(self.button_style)
@@ -715,6 +778,18 @@ class CreateProfileDialog(QDialog):
                 self.live_tag_names = new_live_names
         self._refresh_tags_page()
 
+    def _on_download_clicked(self):
+        """Saves this previewed Community profile to the local Profiles folder
+        without applying anything to the live Tags table -- entirely
+        independent of Apply, so the user can download, apply, both, or
+        neither, in any order, before Close. Disables itself after one
+        successful download rather than letting a repeat click create another
+        -2/-3 duplicate copy of a file that's already there."""
+        if self.on_download is not None:
+            self.on_download()
+        self.download_btn.setEnabled(False)
+        self.download_btn.setText("Downloaded")
+
     def _refresh_tags_page(self):
         """Rebuilds the Tags page from scratch (needed to recompute every status dot),
         while preserving each tag's current checked state across the rebuild -- without
@@ -754,9 +829,10 @@ class DeviceProfilesPanel(QWidget):
     Local is a real, working save/import/edit/delete flow for on-disk profiles.
     Community browses profiles verified and published to this repo's
     community-profiles/ folder (fetched over HTTPS from raw.githubusercontent.com,
-    no backend server) and downloads a chosen one straight into the Local list --
-    submitting a local profile FOR review is a separate action, see
-    _share_selected_to_community."""
+    no backend server); double-clicking one previews it (see
+    _view_community_profile) with independent Apply/Download actions, neither
+    of which requires the other. Submitting a local profile FOR review is a
+    separate action, see _share_selected_to_community."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -925,19 +1001,11 @@ class DeviceProfilesPanel(QWidget):
         self.community_cards_scroll.setVisible(False)
         layout.addWidget(self.community_cards_scroll, 1)
 
-        hint_label = QLabel("Double-click a profile to download it into your Local profiles.")
+        hint_label = QLabel("Double-click a profile to view it, apply its tags, or download it.")
         hint_label.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-size: 11px;")
         layout.addWidget(hint_label)
 
         btn_row = QHBoxLayout()
-        self.community_download_btn = QPushButton("Download")
-        self.community_download_btn.setStyleSheet(self._button_style())
-        self.community_download_btn.setEnabled(False)
-        self.community_download_btn.clicked.connect(
-            lambda: self._download_community_profile(self._community_selected_file)
-        )
-        btn_row.addWidget(self.community_download_btn)
-
         btn_row.addStretch()
         self.community_refresh_btn = QPushButton("Refresh")
         self.community_refresh_btn.setStyleSheet(self._button_style())
@@ -957,7 +1025,6 @@ class DeviceProfilesPanel(QWidget):
         the older one's signals were never connected to anything after this
         reassigns the button states below."""
         self._community_loading = True
-        self.community_download_btn.setEnabled(False)
         self.community_refresh_btn.setEnabled(False)
         self.community_empty_label.setVisible(False)
         self.community_status_label.setText("Loading community profiles...")
@@ -1009,81 +1076,108 @@ class DeviceProfilesPanel(QWidget):
         for i, profile in enumerate(self._community_profiles):
             card = ProfileCard(profile, colors, tag_count=profile.get("tag_count", 0))
             card.clicked.connect(lambda f=profile["file"]: self._select_community(f))
-            card.double_clicked.connect(lambda f=profile["file"]: self._download_community_profile(f))
+            card.double_clicked.connect(lambda f=profile["file"]: self._view_community_profile(f))
             row, col = divmod(i, CARD_COLUMNS)
             self.community_cards_grid.addWidget(card, row, col)
             self._community_cards.append(card)
-        self._update_community_button_states()
 
     def _select_community(self, file):
         self._community_selected_file = file
         for card in self._community_cards:
             card.set_selected(card.profile.get("file") == file)
-        self._update_community_button_states()
 
-    def _update_community_button_states(self):
-        self.community_download_btn.setEnabled(self._community_selected_file is not None)
-
-    def _download_community_profile(self, file):
-        """Fetches one profile's full JSON and saves it as a new local profile --
-        reuses `unique_profile_path` (same as Create/Edit) so downloading a profile
-        that collides by name with an existing local one gets its own -2/-3 file
-        rather than silently overwriting it. Opens the same, already-proven
-        View Profile/per-tag-import dialog on it afterward instead of building a
-        second one just for community profiles."""
+    def _view_community_profile(self, file):
+        """Double-clicking a Community card previews it -- it does NOT download
+        anything by itself. Fetches the profile's full JSON (the card's manifest
+        entry only carries tag_count, not the real tags) and opens it in the same
+        View Profile dialog Local profiles use, with Download added as its own
+        button (see CreateProfileDialog's on_download) -- so the user can Apply
+        its tags to the live Tags table, Download it to disk, both, or neither,
+        entirely independently, before Close."""
         if file is None:
             return
         entry = next((p for p in self._community_profiles if p.get("file") == file), None)
-        if entry is None:
+        mw = self.parent_window
+        if entry is None or mw is None:
             return
         self._select_community(file)
 
-        self.community_download_btn.setEnabled(False)
         self.community_refresh_btn.setEnabled(False)
-        self.community_status_label.setText(f"Downloading \"{entry.get('name', file)}\"...")
+        self.community_status_label.setText(f"Loading \"{entry.get('name', file)}\"...")
         self.community_status_label.setVisible(True)
 
         worker = _HttpFetchWorker(COMMUNITY_BASE_URL + file, parent=self)
-        worker.succeeded.connect(lambda u, body, entry=entry: self._on_community_profile_downloaded(entry, body))
-        worker.failed.connect(self._on_community_download_failed)
+        worker.succeeded.connect(lambda u, body, entry=entry: self._on_community_profile_fetched(entry, body))
+        worker.failed.connect(self._on_community_fetch_failed)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
-    def _on_community_profile_downloaded(self, entry, body):
-        self.community_download_btn.setEnabled(True)
+    def _on_community_profile_fetched(self, entry, body):
         self.community_refresh_btn.setEnabled(True)
         try:
             data = json.loads(body.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            self.community_status_label.setText("Downloaded file wasn't valid JSON -- not saved.")
+            self.community_status_label.setText("That profile wasn't valid JSON -- couldn't open it.")
             return
         if not isinstance(data, dict) or not isinstance(data.get("tags"), list):
-            self.community_status_label.setText("Downloaded profile has an unexpected format -- not saved.")
+            self.community_status_label.setText("That profile has an unexpected format -- couldn't open it.")
             return
+        self.community_status_label.setVisible(False)
 
+        mw = self.parent_window
+
+        def on_apply(selected_tags):
+            imported_count, skipped_count = mw._import_additional_tag_rows(selected_tags)
+            mw._apply_address_table_data(data.get("address_table"))
+            if hasattr(mw, "_log"):
+                message = f"Imported {imported_count} tag(s) from community profile '{data.get('name', '')}'"
+                if skipped_count:
+                    message += f" ({skipped_count} already present, skipped)"
+                mw._log(message)
+            return {t.get("Tag Name", "") for t in mw._build_tag_export_rows()}
+
+        def on_download():
+            self._save_community_profile(entry, data)
+
+        live_tag_names = {t.get("Tag Name", "") for t in mw._build_tag_export_rows()}
+        dialog = CreateProfileDialog(
+            self._colors(), self._button_style(), preset=data, parent=self,
+            view_only=True, live_tag_names=live_tag_names, input_style=self._input_style(),
+            on_apply=on_apply, on_download=on_download,
+        )
+        dialog.exec()
+
+    def _on_community_fetch_failed(self, url, error):
+        self.community_refresh_btn.setEnabled(True)
+        self.community_status_label.setText(f"Couldn't load that profile ({error}). Try again.")
+        self.community_status_label.setVisible(True)
+
+    def _save_community_profile(self, entry, data):
+        """Saves an already-fetched Community profile's JSON to the local
+        Profiles folder -- reuses `unique_profile_path` (same as Create/Edit) so
+        a name collision with an existing local one gets its own -2/-3 file
+        rather than silently overwriting it. Called from the preview dialog's
+        Download button (see _on_community_profile_fetched), never touches the
+        live Tags table or switches tabs -- that's Apply's job, entirely
+        independent of this one."""
         # Marks this local copy as coming from Community verbatim, so its card
         # can show that (see ProfileCard) instead of looking identical to a
         # hand-made local profile with the same content -- lost on the next Edit
         # save (_edit_selected writes a fixed set of fields), which is correct:
         # once modified it's no longer literally the community file.
-        data["source"] = "community"
-        data["source_file"] = entry.get("file", "")
+        saved = dict(data)
+        saved["source"] = "community"
+        saved["source_file"] = entry.get("file", "")
 
-        name = str(data.get("name") or entry.get("name") or "profile")
+        name = str(saved.get("name") or entry.get("name") or "profile")
         path = unique_profile_path(name)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            json.dump(saved, f, indent=2)
 
-        self.community_status_label.setVisible(False)
-        self.refresh_local_profiles(reselect_path=path)
-        self._set_mode("local")
-        self._open_view_profile_dialog(path)
-
-    def _on_community_download_failed(self, url, error):
-        self.community_download_btn.setEnabled(True)
-        self.community_refresh_btn.setEnabled(True)
-        self.community_status_label.setText(f"Download failed ({error}). Try again.")
-        self.community_status_label.setVisible(True)
+        self.refresh_local_profiles()
+        mw = self.parent_window
+        if mw is not None and hasattr(mw, "_log"):
+            mw._log(f"Downloaded community profile '{name}' to Local profiles")
 
     # -- local profile management ----------------------------------------
 
@@ -1277,25 +1371,47 @@ class DeviceProfilesPanel(QWidget):
         self.refresh_local_profiles()
 
     def _share_selected_to_community(self):
-        """Submits the profile directly to COMMUNITY_FORM_ENDPOINT (a Formspree
-        form) as a background JSON POST -- one click, no browser, no mail
-        client. Formspree emails the submission to the maintainer, who reviews
-        it before adding it to community-profiles/ (see
-        tools/build_community_index.py) by hand."""
+        """Submits the profile directly to COMMUNITY_FORM_ENDPOINT (a
+        staticforms.dev form) as a background JSON POST -- one click, no
+        browser, no mail client. staticforms.dev emails the submission to the
+        maintainer, who reviews it before adding it to community-profiles/
+        (see tools/build_community_index.py) by hand."""
         profile = self._selected_profile()
         if profile is None:
             return
 
         name = str(profile.get("name", "")).strip() or "Unnamed device"
+        content_hash = _profile_content_hash(profile)
+        if content_hash in _load_submitted_hashes():
+            # Already submitted this exact profile content before (same name/
+            # manufacturer/type/author/tags/address_table) -- silently skip
+            # rather than send a duplicate, which would waste the shared
+            # monthly submission quota and re-spam the maintainer's inbox with
+            # something they've already seen. Deliberately the ONE quiet
+            # outcome here -- every other path (success, network failure)
+            # still shows its own dialog as normal; this doesn't become a
+            # precedent for swallowing other errors silently.
+            mw = self.parent_window
+            if mw is not None and hasattr(mw, "_log"):
+                mw._log(f"'{name}' was already submitted to the Community list previously -- skipped")
+            return
+
         export = {k: v for k, v in profile.items() if not k.startswith("_")}
         payload = {
-            "_subject": f"ModbusLens profile submission: {name}",
+            "apiKey": COMMUNITY_FORM_API_KEY,
+            "subject": f"ModbusLens profile submission: {name}",
             "name": name,
             "manufacturer": str(profile.get("manufacturer", "")).strip(),
             "type": str(profile.get("type", "")).strip(),
             "author": str(profile.get("author", "")).strip(),
             "tag_count": len(export.get("tags") or []),
             "profile_json": json.dumps(export, indent=2),
+            # Always left blank by this app -- staticforms.dev flags any field whose
+            # name contains "honeypot" as spam when it's non-empty (a naive bot
+            # scraping/replaying this endpoint tends to fill in every field it sees,
+            # a targeted human reading this source obviously wouldn't be fooled by
+            # it, so this only helps against that first, cheaper class of abuse).
+            "honeypot_field": "",
         }
         data = json.dumps(payload).encode("utf-8")
 
@@ -1307,14 +1423,17 @@ class DeviceProfilesPanel(QWidget):
             headers={"Content-Type": "application/json", "Accept": "application/json"},
             parent=self,
         )
-        worker.succeeded.connect(lambda u, body, name=name: self._on_share_submitted(name))
+        worker.succeeded.connect(
+            lambda u, body, name=name, content_hash=content_hash: self._on_share_submitted(name, content_hash)
+        )
         worker.failed.connect(self._on_share_failed)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
-    def _on_share_submitted(self, name):
+    def _on_share_submitted(self, name, content_hash):
         self.share_btn.setEnabled(True)
         self.share_btn.setText("Share to Community")
+        _record_submitted_hash(content_hash)
         QMessageBox.information(
             self, "Submitted",
             f"\"{name}\" was submitted for review. A maintainer will add it to "
