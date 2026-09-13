@@ -1,9 +1,9 @@
 from collections import deque
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QWidget,
-    QComboBox, QSpinBox, QProgressBar, QGroupBox,
+    QComboBox, QSpinBox, QProgressBar, QGroupBox, QDialog, QListWidget, QListWidgetItem,
 )
 
 from theme import apply_dropdown_delegate
@@ -33,6 +33,17 @@ _SPACE_LABELS = {
     "Holding Registers": "Holding Register",
     "Input Registers": "Input Register",
 }
+
+# Default tag naming for Create Tags From Scan: classic 5-digit Modicon convention
+# (COIL_00001/DI_10001/IR_30001/HR_40001 -- type digit + 4-digit 1-based address) --
+# just a readable, addressable default label, never a guess at what the register means.
+_TAG_NAME_PREFIX = {"Coils": "COIL", "Discrete Inputs": "DI", "Input Registers": "IR", "Holding Registers": "HR"}
+_MODICON_DIGIT = {"Coils": "0", "Discrete Inputs": "1", "Input Registers": "3", "Holding Registers": "4"}
+
+
+def _default_scanned_tag_name(function_name, protocol_offset):
+    return f"{_TAG_NAME_PREFIX[function_name]}_{_MODICON_DIGIT[function_name]}{protocol_offset + 1:04d}"
+
 
 # Consecutive busy-skips (interlock contention) before giving up on the scan entirely,
 # rather than retrying forever -- _pause_shared_connection_monitoring already stops every
@@ -194,6 +205,59 @@ def _merge_ranges(ranges):
     return merged
 
 
+class CreateTagsFromScanDialog(QDialog):
+    """Shown from "Create Tags..." after a scan finds responding addresses -- lets the
+    user pick which of the found (merged, contiguous) ranges to import, one new Tags-tab
+    row per individual address in the checked ranges. Confirming here IS the "don't
+    auto-create tags without user confirmation" gate; there's no second nested confirm."""
+
+    def __init__(self, function_name, merged_ranges, parent=None):
+        super().__init__(parent)
+        self.function_name = function_name
+        self.setWindowTitle("Create Tags From Scan")
+        self.setMinimumWidth(380)
+
+        layout = QVBoxLayout(self)
+        total = sum(end - start + 1 for start, end in merged_ranges)
+        layout.addWidget(QLabel(
+            f"{function_name}: {len(merged_ranges)} responding range(s), {total} address(es) total.\n"
+            "Choose which ranges to import -- one new Tags-tab row per address, named\n"
+            f"{_TAG_NAME_PREFIX[function_name]}_{_MODICON_DIGIT[function_name]}xxxx. An address that\n"
+            "already has a tag of this type is skipped rather than duplicated."
+        ))
+
+        self.list_widget = QListWidget()
+        for start, end in merged_ranges:
+            count = end - start + 1
+            label = f"{start} (1 address)" if count == 1 else f"{start}-{end} ({count} addresses)"
+            item = QListWidgetItem(label)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
+            item.setData(Qt.UserRole, (start, end))
+            self.list_widget.addItem(item)
+        layout.addWidget(self.list_widget)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+        create_btn = QPushButton("Create Tags")
+        create_btn.clicked.connect(self.accept)
+        button_row.addWidget(create_btn)
+        layout.addLayout(button_row)
+
+    def selected_addresses(self):
+        """Every individual protocol-offset address across the checked ranges, in order."""
+        addresses = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                start, end = item.data(Qt.UserRole)
+                addresses.extend(range(start, end + 1))
+        return addresses
+
+
 class RegisterScannerWidget(QWidget):
     """Scanner tab: auto-discover which addresses respond on the connected device.
     Works the same way for a TCP or serial connection -- whichever is currently
@@ -271,6 +335,15 @@ class RegisterScannerWidget(QWidget):
         self.clear_results_btn.setToolTip("Clear the scanner output log and any found ranges.")
         self.clear_results_btn.clicked.connect(self._clear_results)
         row2.addWidget(self.clear_results_btn)
+
+        self.create_tags_btn = QPushButton("Create Tags...")
+        self.create_tags_btn.setStyleSheet(self.parent_window._get_button_style())
+        self.create_tags_btn.setEnabled(False)
+        self.create_tags_btn.setToolTip(
+            "Create a new Tags-tab row for each responding address found by the scan"
+        )
+        self.create_tags_btn.clicked.connect(self._create_tags_from_scan)
+        row2.addWidget(self.create_tags_btn)
         control_layout.addLayout(row2)
         layout.addWidget(control_group)
 
@@ -296,6 +369,7 @@ class RegisterScannerWidget(QWidget):
         """Clear the scanner's output log and any ranges it has found so far."""
         self._found_ranges = []
         self.output_text.clear()
+        self.create_tags_btn.setEnabled(False)
 
     def refresh_connection_state(self):
         connected = bool(self.parent_window.modbus and self.parent_window.modbus.is_connected())
@@ -376,6 +450,7 @@ class RegisterScannerWidget(QWidget):
         self.progress_bar.setValue(0)
         self.addr_start_btn.setEnabled(False)
         self.addr_stop_btn.setEnabled(True)
+        self.create_tags_btn.setEnabled(False)
 
         self.address_worker = AddressScanWorker(
             self.parent_window.modbus, self.addr_function_combo.currentText(), start, end,
@@ -408,6 +483,7 @@ class RegisterScannerWidget(QWidget):
         self.output_text.append(f"({probes_issued} request(s) issued)")
         self.progress_bar.setVisible(False)
         self.addr_stop_btn.setEnabled(False)
+        self.create_tags_btn.setEnabled(bool(merged))
         self.refresh_connection_state()
 
         # Resume the reconnect watchdog we paused before the scan, if the connection it
@@ -427,6 +503,65 @@ class RegisterScannerWidget(QWidget):
             if trend_widget is not None and self.parent_window.modbus and self.parent_window.modbus.is_connected():
                 trend_widget.poll_timer.start(trend_widget.interval_input.value())
                 self.output_text.append("Resumed Trend polling.")
+
+    def _create_tags_from_scan(self):
+        """"Create Tags..." -- lets the user pick which found ranges to import, then adds
+        one new Tags-tab row per address via _add_monitoring_tag (never write_bounds/wire
+        access, this is a purely local table edit). An address that already has a tag of
+        the same type is skipped rather than duplicated or silently moved -- _add_
+        monitoring_tag's own duplicate-address nudging would otherwise land a tag with a
+        scan-derived name at the wrong address."""
+        merged = _merge_ranges(self._found_ranges)
+        if not merged:
+            return
+
+        function_name = self.addr_function_combo.currentText()
+        dialog = CreateTagsFromScanDialog(function_name, merged, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        addresses = dialog.selected_addresses()
+        if not addresses:
+            return
+
+        tag_type = _SPACE_LABELS[function_name]
+        one_based = getattr(self.parent_window, "tag_address_one_based", True)
+
+        existing_offsets = set()
+        for tag in self.parent_window._get_monitoring_tags():
+            if tag["type"] != tag_type:
+                continue
+            try:
+                existing_offsets.add(self.parent_window._tag_user_address_to_offset(tag))
+            except ValueError:
+                continue
+
+        created = 0
+        skipped = 0
+        for protocol_offset in addresses:
+            if protocol_offset in existing_offsets:
+                skipped += 1
+                continue
+            user_address = protocol_offset + (1 if one_based else 0)
+            name = _default_scanned_tag_name(function_name, protocol_offset)
+            self.parent_window._add_monitoring_tag(tag_name=name, tag_type=tag_type, address=user_address, count=1)
+            existing_offsets.add(protocol_offset)
+            created += 1
+
+        if created and getattr(self.parent_window, "tag_group_names", None):
+            self.parent_window._rebuild_tag_table_grouped()
+
+        message = f"Created {created} tag(s) from scan results"
+        if skipped:
+            message += f", skipped {skipped} address(es) that already had a tag"
+        self.output_text.append(message + ".")
+
+        if created:
+            tab_widget = getattr(self.parent_window, "tab_widget", None)
+            if tab_widget is not None:
+                for i in range(tab_widget.count()):
+                    if tab_widget.tabText(i) == "Tags":
+                        tab_widget.setCurrentIndex(i)
+                        break
 
     def _scan_in_progress(self):
         return bool(self.address_worker and self.address_worker.isRunning())
