@@ -47,3 +47,21 @@ def format_word_width(value_format):
     "_SWAP"). 1 for every 16-bit-or-narrower format (U16/S16/Bool/Hex/etc.)."""
     base = (value_format or "U16").strip().upper().replace("_SWAP", "")
     return MULTI_WORD_FORMAT_WIDTHS.get(base, 1)
+
+
+def raw_bit_pattern(registers, value_format):
+    """Combine `registers` into one plain unsigned bit pattern for bit-level display (Bit
+    View), honoring a trailing "_SWAP" word order the same way _decode_register_values
+    does -- but returning the raw bits rather than a signed/float decoded value, since a
+    two's-complement negative number and its unsigned bit pattern are identical bit-for-bit
+    anyway. Returns (raw_uint, bit_width); missing trailing registers read as 0."""
+    word_width = format_word_width(value_format)
+    bit_width = word_width * 16
+    words = [int(r) & 0xFFFF for r in registers[:word_width]]
+    words += [0] * (word_width - len(words))
+    if (value_format or "").strip().upper().endswith("_SWAP"):
+        words.reverse()
+    raw = 0
+    for w in words:
+        raw = (raw << 16) | w
+    return raw, bit_width

@@ -26,6 +26,8 @@ class MonitoringManager:
         self.tag_scaling = {}  # row index -> engineering-unit scaling config dict
         self.tag_groups = {}  # row index -> group name ("" = ungrouped)
         self.group_header_rows = {}  # row index -> group name, for a group's own header row
+        self.tag_bits = {}  # row index -> {bit index (str) -> name}, for Bit View
+        self.tag_last_raw = {}  # row index -> last-read raw register list, for Bit View
         self._log_file = None
         self._log_writer = None
         self._poll_worker = None  # the in-flight TagPollWorker, if a poll cycle is running
@@ -70,16 +72,18 @@ class MonitoringManager:
         self._log_file.flush()
 
     def handle_row_inserted(self, row):
-        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows aligned with table
-        rows after a new row is inserted at `row`."""
+        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows/tag_bits/tag_last_raw
+        aligned with table rows after a new row is inserted at `row`."""
         self.tag_alarms = {(r + 1 if r >= row else r): cfg for r, cfg in self.tag_alarms.items()}
         self.tag_scaling = {(r + 1 if r >= row else r): cfg for r, cfg in self.tag_scaling.items()}
         self.tag_groups = {(r + 1 if r >= row else r): g for r, g in self.tag_groups.items()}
         self.group_header_rows = {(r + 1 if r >= row else r): g for r, g in self.group_header_rows.items()}
+        self.tag_bits = {(r + 1 if r >= row else r): names for r, names in self.tag_bits.items()}
+        self.tag_last_raw = {(r + 1 if r >= row else r): v for r, v in self.tag_last_raw.items()}
 
     def handle_row_removed(self, row):
-        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows aligned with table
-        rows after the row at `row` is removed."""
+        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows/tag_bits/tag_last_raw
+        aligned with table rows after the row at `row` is removed."""
         self.tag_alarms.pop(row, None)
         self.tag_alarms = {(r - 1 if r > row else r): cfg for r, cfg in self.tag_alarms.items()}
         self.tag_scaling.pop(row, None)
@@ -88,6 +92,10 @@ class MonitoringManager:
         self.tag_groups = {(r - 1 if r > row else r): g for r, g in self.tag_groups.items()}
         self.group_header_rows.pop(row, None)
         self.group_header_rows = {(r - 1 if r > row else r): g for r, g in self.group_header_rows.items()}
+        self.tag_bits.pop(row, None)
+        self.tag_bits = {(r - 1 if r > row else r): names for r, names in self.tag_bits.items()}
+        self.tag_last_raw.pop(row, None)
+        self.tag_last_raw = {(r - 1 if r > row else r): v for r, v in self.tag_last_raw.items()}
 
     def check_alarm(self, tag, value):
         """Return True if this tag's current value violates its configured alarm."""
@@ -391,6 +399,10 @@ class MonitoringManager:
             raw_hex = self.format_raw_hex(tag, value)
             in_alarm = self.check_alarm(tag, value)
             engineering_value = self.compute_engineering_value(tag, value)
+            if tag["type"] in ("Holding Register", "Input Register"):
+                # Cached for Bit View, which redraws from here on its own timer rather
+                # than needing a push from every poll result.
+                self.tag_last_raw[tag["row"]] = value if isinstance(value, list) else [value]
             self.parent._display_raw_data(
                 f"Tag[{tag['name']}]", value, elapsed_ms, function_code_for(tag["type"], is_write=False),
                 tx_bytes=tx_bytes, rx_bytes=rx_bytes,
@@ -517,6 +529,11 @@ class MonitoringManager:
             timestamp = self._current_write_poll_timestamp
             display_value = self.parent._format_monitoring_value(tag, value)
             raw_hex = self.format_raw_hex(tag, value)
+            if tag["type"] in ("Holding Register", "Input Register"):
+                # Same Bit View cache the read-mode poll result handler fills in -- a
+                # write-mode control-word tag's current value (read back before the next
+                # write) is just as valid a source for it.
+                self.tag_last_raw[tag["row"]] = value if isinstance(value, list) else [value]
             self.parent._display_raw_data(
                 f"Tag[{tag['name']}] (write-mode, current value)", value, elapsed_ms,
                 function_code_for(tag["type"], is_write=False),

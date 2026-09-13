@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton, QInputDialog
 )
 from PySide6.QtCore import Qt, QTimer, QEvent, Signal
-from PySide6.QtGui import QIcon, QActionGroup, QShortcut, QKeySequence
+from PySide6.QtGui import QIcon, QActionGroup, QShortcut, QKeySequence, QColor
 
 # Add the gui directory to the path for relative imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -53,7 +53,7 @@ from network.find_devices import FindDevicesDialog
 from core.modbus_client import ModbusClient
 from app_paths import resource_path, app_data_dir
 from log_format import format_log_html
-from modbus_meta import function_code_for, MULTI_WORD_FORMATS, format_word_width
+from modbus_meta import function_code_for, MULTI_WORD_FORMATS, format_word_width, raw_bit_pattern
 import theme
 
 __version__ = "2.3.0"
@@ -309,6 +309,11 @@ class ModbusGUI(QMainWindow):
         # QTableWidget's normal ::item:selected background, so selection was
         # otherwise invisible.
         self._highlighted_tag_rows = set()
+        # Open Bit View dialogs (see BitViewDialog), keyed by the Tags row they're
+        # showing -- at most one dialog per row, closed outright on any row-index-shifting
+        # change (reorder/regroup/remove) rather than re-keyed, since those are rare
+        # manual actions and a stale dialog silently showing the wrong tag would be worse.
+        self._bit_view_dialogs = {}
         self.monitoring_active = False
         self.tag_address_one_based = True
         
@@ -1201,9 +1206,11 @@ class ModbusGUI(QMainWindow):
         if source_row == target_row or not (0 <= source_row < row_count) or not (0 <= target_row < row_count):
             return
 
+        self._close_all_bit_view_dialogs()
         data = self._capture_tag_row(source_row)
         alarm = self.monitoring_manager.tag_alarms.get(source_row)
         scaling = self.monitoring_manager.tag_scaling.get(source_row)
+        bit_names = self.monitoring_manager.tag_bits.get(source_row)
 
         self.monitoring_tag_table.removeRow(source_row)
         self.monitoring_manager.handle_row_removed(source_row)
@@ -1226,6 +1233,9 @@ class ModbusGUI(QMainWindow):
                 finally:
                     self._updating_tag_table = False
 
+        if bit_names:
+            self.monitoring_manager.tag_bits[target_row] = bit_names
+
         self._log(f"Moved tag '{data['tag_name']}' to row {target_row + 1}")
 
     def _rebuild_tag_table_grouped(self):
@@ -1244,12 +1254,13 @@ class ModbusGUI(QMainWindow):
         if not self.tag_group_names:
             return
 
+        self._close_all_bit_view_dialogs()
         table = self.monitoring_tag_table
         header_rows = set(self.monitoring_manager.group_header_rows)
 
         # Snapshot every current tag row (skip existing header rows) plus its alarm/
-        # scaling config, in existing relative order -- preserves any prior within-group
-        # ordering across the rebuild.
+        # scaling/bit-name config, in existing relative order -- preserves any prior
+        # within-group ordering across the rebuild.
         captured = []
         for row in range(table.rowCount()):
             if row in header_rows:
@@ -1257,7 +1268,8 @@ class ModbusGUI(QMainWindow):
             data = self._capture_tag_row(row)
             alarm = self.monitoring_manager.tag_alarms.get(row)
             scaling = self.monitoring_manager.tag_scaling.get(row)
-            captured.append((data, alarm, scaling))
+            bit_names = self.monitoring_manager.tag_bits.get(row)
+            captured.append((data, alarm, scaling, bit_names))
 
         # Cluster: Ungrouped ("") first, then each named group. A named group with 0
         # tags right now just gets no header -- it still exists in every Group combo's
@@ -1271,6 +1283,7 @@ class ModbusGUI(QMainWindow):
         self.monitoring_manager.tag_scaling.clear()
         self.monitoring_manager.tag_groups.clear()
         self.monitoring_manager.group_header_rows.clear()
+        self.monitoring_manager.tag_bits.clear()
         self._highlighted_tag_rows.clear()
 
         colors = self._colors()
@@ -1286,11 +1299,13 @@ class ModbusGUI(QMainWindow):
             table.setCellWidget(header_row, 0, header_widget)
             self.monitoring_manager.group_header_rows[header_row] = group_key
 
-            for data, alarm, scaling in entries:
+            for data, alarm, scaling, bit_names in entries:
                 insert_row = table.rowCount()
                 self._add_monitoring_tag(insert_row=insert_row, **data)
                 if alarm:
                     self.monitoring_manager.tag_alarms[insert_row] = alarm
+                if bit_names:
+                    self.monitoring_manager.tag_bits[insert_row] = bit_names
                 if scaling:
                     self.monitoring_manager.tag_scaling[insert_row] = scaling
                     scale_widget = table.cellWidget(insert_row, 13)
@@ -1606,7 +1621,16 @@ class ModbusGUI(QMainWindow):
 
         self._log(f"Duplicate {tag_type} address {address} detected; moved to next free address {next_addr}.")
 
+    def _close_all_bit_view_dialogs(self):
+        """Close every open Bit View dialog -- called before anything that changes which
+        tag a row index refers to (reorder, regroup, remove), since a dialog's row key
+        would otherwise silently point at the wrong tag afterward."""
+        for dialog in list(self._bit_view_dialogs.values()):
+            dialog.close()
+        self._bit_view_dialogs.clear()
+
     def _remove_monitoring_tag(self):
+        self._close_all_bit_view_dialogs()
         selected_rows = sorted(self._get_selected_tag_rows(), reverse=True)
         for row in selected_rows:
             self.monitoring_tag_table.removeRow(row)
@@ -1632,13 +1656,23 @@ class ModbusGUI(QMainWindow):
             table.selectRow(row)
             selected_rows = [row]
 
+        type_widget = table.cellWidget(row, 3)
+        is_register = type_widget and type_widget.currentText() in ("Holding Register", "Input Register")
+
         menu = QMenu(self)
         alarm_action = menu.addAction("Configure Alarm...")
+        bit_view_action = menu.addAction("Bit View...")
+        bit_view_action.setEnabled(bool(is_register))
+        bit_view_action.setToolTip(
+            "Show and name the individual bits of this register (e.g. a VFD status/control word)"
+        )
         menu.addSeparator()
         copy_action = menu.addAction("Copy Row(s)")
         action = menu.exec(table.viewport().mapToGlobal(pos))
         if action == alarm_action:
             self._configure_tag_alarm(row)
+        elif action == bit_view_action:
+            self._open_tag_bit_view(row)
         elif action == copy_action:
             self._copy_tag_rows(selected_rows)
 
@@ -1697,6 +1731,39 @@ class ModbusGUI(QMainWindow):
             self.monitoring_manager.tag_alarms[row] = dialog.values()
             self._log(f"Alarm configured for {tag['name']}")
 
+    def _open_tag_bit_view(self, row):
+        """Open (or re-focus) the Bit View window for one Holding/Input Register tag --
+        a live, per-bit breakdown of its raw value, each bit independently named and
+        persisted with the tag (see BitViewDialog, tag_bits)."""
+        tags_by_row = {tag["row"]: tag for tag in self._get_monitoring_tags()}
+        tag = tags_by_row.get(row)
+        if not tag:
+            QMessageBox.warning(self, "No Tag", "This row doesn't have a configured tag yet.")
+            return
+        if tag["type"] not in ("Holding Register", "Input Register"):
+            QMessageBox.warning(self, "Not a Register", "Bit View is only available for Holding/Input Register tags.")
+            return
+
+        existing_dialog = self._bit_view_dialogs.get(row)
+        if existing_dialog:
+            existing_dialog.raise_()
+            existing_dialog.activateWindow()
+            return
+
+        bit_names = dict(self.monitoring_manager.tag_bits.get(row, {}))
+        dialog = BitViewDialog(tag, bit_names, self.monitoring_manager, self)
+        self._bit_view_dialogs[row] = dialog
+
+        def on_names_changed(names, r=row):
+            if names:
+                self.monitoring_manager.tag_bits[r] = names
+            else:
+                self.monitoring_manager.tag_bits.pop(r, None)
+
+        dialog.names_changed.connect(on_names_changed)
+        dialog.finished.connect(lambda _res, r=row: self._bit_view_dialogs.pop(r, None))
+        dialog.show()
+
     def _on_scale_checkbox_toggled(self, checked):
         if self._updating_tag_table:
             return
@@ -1733,13 +1800,15 @@ class ModbusGUI(QMainWindow):
             QMessageBox.No
         )
         if reply == QMessageBox.Yes:
+            self._close_all_bit_view_dialogs()
             self.monitoring_tag_table.setRowCount(0)
             self.monitoring_manager.tag_alarms.clear()
-            # Also clear tag_scaling/tag_groups/group_header_rows -- Remove All wipes
-            # every row, so nothing should be left pointing at now-nonexistent ones.
+            # Also clear tag_scaling/tag_groups/group_header_rows/tag_bits -- Remove All
+            # wipes every row, so nothing should be left pointing at now-nonexistent ones.
             self.monitoring_manager.tag_scaling.clear()
             self.monitoring_manager.tag_groups.clear()
             self.monitoring_manager.group_header_rows.clear()
+            self.monitoring_manager.tag_bits.clear()
             self._update_tag_buttons_state()
             self._update_tag_name_column_width()
             self._log("All tags removed")
@@ -2054,7 +2123,7 @@ Unit ID: {unit_id}<br><br>
 
     TAG_ROW_FIELDS = ['Tag Name', 'Group', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment', 'Enabled',
                       'Scale Enabled', 'Scale Mode', 'Raw Min', 'Raw Max', 'Scaled Min',
-                      'Scaled Max', 'Factor', 'Value Type']
+                      'Scaled Max', 'Factor', 'Value Type', 'Bit Names']
 
     def _build_tag_export_rows(self):
         """The Tags table as a list of plain dicts, one per tag, in the exact shape both
@@ -2063,6 +2132,7 @@ Unit ID: {unit_id}<br><br>
         rows = []
         for tag in self._get_monitoring_tags():
             scaling = self.monitoring_manager.tag_scaling.get(tag['row'])
+            bit_names = self.monitoring_manager.tag_bits.get(tag['row'])
             rows.append({
                 'Tag Name': tag['name'],
                 'Group': tag.get('group', ''),
@@ -2081,18 +2151,35 @@ Unit ID: {unit_id}<br><br>
                 'Scaled Max': scaling.get('scaled_max', '') if scaling else '',
                 'Factor': scaling.get('factor', '') if scaling else '',
                 'Value Type': scaling.get('value_type', '') if scaling else '',
+                'Bit Names': json.dumps(bit_names) if bit_names else '',
             })
         return rows
+
+    @staticmethod
+    def _parse_bit_names(raw_text):
+        """Decode the 'Bit Names' export column (a JSON object of bit index -> name)
+        back into a plain dict, tolerating blank/old exports and corrupt text alike --
+        neither is an import error, just "no bit names configured"."""
+        raw_text = (raw_text or '').strip()
+        if not raw_text:
+            return None
+        try:
+            names = json.loads(raw_text)
+        except (ValueError, TypeError):
+            return None
+        return names if isinstance(names, dict) and names else None
 
     def _apply_imported_tag_rows(self, rows):
         """Clears the Tags table and repopulates it from `rows` (the same per-tag dict
         shape _build_tag_export_rows produces) -- shared by CSV import and Load Session,
         so a row from either source is handled by the exact same tolerant, older-export
         -friendly logic. Returns the number of tags actually imported."""
+        self._close_all_bit_view_dialogs()
         self.monitoring_tag_table.setRowCount(0)
         self.monitoring_manager.tag_scaling.clear()
         self.monitoring_manager.tag_groups.clear()
         self.monitoring_manager.group_header_rows.clear()
+        self.monitoring_manager.tag_bits.clear()
 
         imported_count = 0
         for row in rows:
@@ -2119,6 +2206,10 @@ Unit ID: {unit_id}<br><br>
             except (ValueError, KeyError) as e:
                 self._log(f"Skipping invalid row: {e}")
                 continue
+
+            bit_names = self._parse_bit_names(row.get('Bit Names', ''))
+            if bit_names:
+                self.monitoring_manager.tag_bits[new_row] = bit_names
 
             # Older exports have no scaling columns -- absent means "not scaled",
             # not an error.
@@ -2209,6 +2300,10 @@ Unit ID: {unit_id}<br><br>
             except (ValueError, KeyError) as e:
                 self._log(f"Skipping invalid row: {e}")
                 continue
+
+            bit_names = self._parse_bit_names(row.get('Bit Names', ''))
+            if bit_names:
+                self.monitoring_manager.tag_bits[new_row] = bit_names
 
             scale_enabled = str(row.get('Scale Enabled', '')).strip().lower() in ('true', '1', 'yes')
             if not scale_enabled:
@@ -3926,6 +4021,119 @@ class ScalingConfigDialog(QDialog):
             "scaled_max": self.scaled_max_spin.value(),
             "value_type": self.value_type_combo.currentText(),
         }
+
+
+class BitViewDialog(QDialog):
+    """Live, per-bit breakdown of one Holding/Input Register tag's raw value -- each bit
+    shown on its own named line (bit index, an editable name, and its current 0/1 state),
+    the way an individual register can be named as its own tag. Built for VFD-style
+    control/status words (a single INT or DINT packing several independent booleans --
+    running, ready-to-energize, fault, at-speed, auto/manual mode, etc.), per user
+    feedback (u/automater on reddit; see notes.md).
+
+    Non-modal (show(), not exec()) and left open while the user works elsewhere: it
+    redraws its Value column from MonitoringManager.tag_last_raw on a short timer instead
+    of needing every poll result pushed to it individually, so it just tracks whatever Tag
+    Monitoring's own poll cycle last read for this row. Bit names are emitted via
+    names_changed as they're edited, so the caller (ModbusGUI._open_tag_bit_view) can
+    persist them into tag_bits immediately rather than waiting for the dialog to close."""
+
+    names_changed = Signal(dict)  # {bit index (str) -> name}, current full set
+
+    REFRESH_MS = 300
+
+    def __init__(self, tag, bit_names, monitoring_manager, parent=None):
+        super().__init__(parent)
+        self.tag = tag
+        self.row = tag["row"]
+        self.monitoring_manager = monitoring_manager
+        self.bit_names = dict(bit_names or {})
+        self._last_raw = None
+        self._updating = False
+
+        value_format = tag.get("format") or "U16"
+        self.bit_width = format_word_width(value_format) * 16
+
+        self.setWindowTitle(f"Bit View - {tag['name']}")
+        self.setMinimumSize(340, 420)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            f"{tag['name']}  ({tag['type']}, {value_format})\n"
+            "Name each bit below -- values update live while Tag Monitoring is running."
+        ))
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Bit", "Name", "Value"])
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setRowCount(self.bit_width)
+        self.table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
+
+        self._value_items = []
+        try:
+            self._updating = True
+            for bit in range(self.bit_width):
+                bit_item = QTableWidgetItem(str(bit))
+                bit_item.setFlags(bit_item.flags() & ~Qt.ItemIsEditable)
+                self.table.setItem(bit, 0, bit_item)
+
+                name_item = QTableWidgetItem(self.bit_names.get(str(bit), ""))
+                name_item.setToolTip("e.g. Running, Ready, Fault, At Speed, Auto/Manual...")
+                self.table.setItem(bit, 1, name_item)
+
+                value_item = QTableWidgetItem("-")
+                value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
+                value_item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(bit, 2, value_item)
+                self._value_items.append(value_item)
+        finally:
+            self._updating = False
+
+        self.table.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self.table)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        close_row.addWidget(close_btn)
+        layout.addLayout(close_row)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._refresh_values)
+        self._timer.start(self.REFRESH_MS)
+        self._refresh_values()
+
+    def _on_item_changed(self, item):
+        if self._updating or item.column() != 1:
+            return
+        bit = item.row()
+        name = item.text().strip()
+        if name:
+            self.bit_names[str(bit)] = name
+        else:
+            self.bit_names.pop(str(bit), None)
+        self.names_changed.emit(dict(self.bit_names))
+
+    def _refresh_values(self):
+        raw_registers = self.monitoring_manager.tag_last_raw.get(self.row)
+        if raw_registers is None or raw_registers == self._last_raw:
+            return  # no tag polled yet, or nothing new since the last tick
+        self._last_raw = raw_registers
+
+        raw_uint, _ = raw_bit_pattern(raw_registers, self.tag.get("format") or "U16")
+        on_color = QColor("#2E7D32")
+        off_color = QColor(0, 0, 0, 0)
+        for bit, item in enumerate(self._value_items):
+            is_set = bool((raw_uint >> bit) & 1)
+            item.setText("1" if is_set else "0")
+            item.setBackground(on_color if is_set else off_color)
+
+    def closeEvent(self, event):
+        self._timer.stop()
+        super().closeEvent(event)
 
 
 class ConnectionSettingsDialog(QDialog):
