@@ -99,6 +99,13 @@ class TagTableWidget(QTableWidget):
         self._drop_indicator.hide()
         self.verticalHeader().installEventFilter(self)
 
+        # A plain click (not a drag) on a row's header number toggles that row's inline Bit
+        # View expansion, if it qualifies. Qt's own sectionClicked already does the
+        # click-vs-drag disambiguation correctly even with sectionsMovable(True) (it only
+        # fires when the section wasn't actually moved) -- a hand-rolled press/release/
+        # move heuristic here was unreliable on real hardware (see notes.md).
+        self.verticalHeader().sectionClicked.connect(self._on_row_header_section_clicked)
+
         # Delete key removes the selected row(s), mirroring "Remove Selected Tag". Every
         # cell here is a live QLineEdit/QComboBox/QSpinBox/QCheckBox (see class docstring), so
         # this needs WidgetWithChildrenShortcut to fire no matter which cell widget currently
@@ -126,6 +133,9 @@ class TagTableWidget(QTableWidget):
             elif event.type() in (QEvent.Type.MouseButtonRelease, QEvent.Type.Leave):
                 self._drop_indicator.hide()
         return super().eventFilter(watched, event)
+
+    def _on_row_header_section_clicked(self, logical_index):
+        self.main_window._on_tag_row_header_clicked(logical_index)
 
     def _update_drop_indicator(self, header_y):
         """Show a line at the row boundary the header drag is currently hovering over --
@@ -321,6 +331,14 @@ class ModbusGUI(QMainWindow):
         self.monitoring_timer.timeout.connect(self._update_monitored_data)
         self.write_poll_timer = QTimer(self)
         self.write_poll_timer.timeout.connect(self._update_write_tag_values)
+
+        # Redraws every expanded inline Bit View row's Read Value from tag_last_raw --
+        # same 300ms cadence and independence from monitoring_active as BitViewDialog's own
+        # timer, just shared across every expanded row instead of one timer per dialog.
+        self._bit_child_last_raw = {}  # parent row -> last raw seen, to skip no-op redraws
+        self._bit_child_refresh_timer = QTimer(self)
+        self._bit_child_refresh_timer.timeout.connect(self._refresh_bit_child_rows)
+        self._bit_child_refresh_timer.start(300)
 
         # Auto-reconnect: watches the connection after a successful connect() and, if it
         # drops unexpectedly (not via the user clicking Disconnect), retries with backoff
@@ -1137,6 +1155,13 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table.selectRow(insert_row)
         self.monitoring_tag_table.setCurrentCell(insert_row, 0)
 
+        # Row numbers embedded in any qualifying row's "▶/▼ N" vertical-header label go
+        # stale the moment a row is inserted above them (Qt shifts the header *item* down
+        # with its row, but not the row-number text baked into it) -- refresh here, the one
+        # place every row insertion (Add Tag, drag-reorder, group rebuild, CSV/Session/
+        # Profile import) already funnels through.
+        self._refresh_bit_row_header_labels()
+
     def _update_tag_name_column_width(self):
         """Tag Name (column 0) auto-sizes to whichever current tag name is widest, so a
         long name is never truncated and a table of short names doesn't waste horizontal
@@ -1202,6 +1227,14 @@ class ModbusGUI(QMainWindow):
             self._log("Drag-reorder is disabled while Tag Groups are in use.")
             return
 
+        if self.monitoring_manager.expanded_bit_tags:
+            # Simplest safe behavior, same precedent as the Tag Groups case above: rather
+            # than teach drag-reorder about moving a parent and its bit-child rows together
+            # (or blocking a drop landing between them), just refuse it outright while
+            # anything is expanded. Collapse first, then reorder.
+            self._log("Drag-reorder is disabled while bit rows are expanded -- collapse them first.")
+            return
+
         row_count = self.monitoring_tag_table.rowCount()
         if source_row == target_row or not (0 <= source_row < row_count) or not (0 <= target_row < row_count):
             return
@@ -1258,18 +1291,22 @@ class ModbusGUI(QMainWindow):
         table = self.monitoring_tag_table
         header_rows = set(self.monitoring_manager.group_header_rows)
 
-        # Snapshot every current tag row (skip existing header rows) plus its alarm/
+        # Snapshot every current tag row (skip existing header rows and inline bit-child
+        # rows -- the latter are re-derived from tag_bits after their parent lands at its
+        # new row index, never captured/moved as rows of their own) plus its alarm/
         # scaling/bit-name config, in existing relative order -- preserves any prior
         # within-group ordering across the rebuild.
+        bit_rows = set(self.monitoring_manager.tag_bit_rows)
         captured = []
         for row in range(table.rowCount()):
-            if row in header_rows:
+            if row in header_rows or row in bit_rows:
                 continue
             data = self._capture_tag_row(row)
             alarm = self.monitoring_manager.tag_alarms.get(row)
             scaling = self.monitoring_manager.tag_scaling.get(row)
             bit_names = self.monitoring_manager.tag_bits.get(row)
-            captured.append((data, alarm, scaling, bit_names))
+            was_expanded = row in self.monitoring_manager.expanded_bit_tags
+            captured.append((data, alarm, scaling, bit_names, was_expanded))
 
         # Cluster: Ungrouped ("") first, then each named group. A named group with 0
         # tags right now just gets no header -- it still exists in every Group combo's
@@ -1284,6 +1321,9 @@ class ModbusGUI(QMainWindow):
         self.monitoring_manager.tag_groups.clear()
         self.monitoring_manager.group_header_rows.clear()
         self.monitoring_manager.tag_bits.clear()
+        self.monitoring_manager.tag_bit_rows.clear()
+        self.monitoring_manager.expanded_bit_tags.clear()
+        self._bit_child_last_raw.clear()
         self._highlighted_tag_rows.clear()
 
         colors = self._colors()
@@ -1299,7 +1339,7 @@ class ModbusGUI(QMainWindow):
             table.setCellWidget(header_row, 0, header_widget)
             self.monitoring_manager.group_header_rows[header_row] = group_key
 
-            for data, alarm, scaling, bit_names in entries:
+            for data, alarm, scaling, bit_names, was_expanded in entries:
                 insert_row = table.rowCount()
                 self._add_monitoring_tag(insert_row=insert_row, **data)
                 if alarm:
@@ -1315,12 +1355,15 @@ class ModbusGUI(QMainWindow):
                             scale_widget.checkbox.setChecked(True)
                         finally:
                             self._updating_tag_table = False
+                if was_expanded:
+                    self._insert_bit_child_rows(insert_row)
 
         for group_key in self.collapsed_groups:
             self._set_group_rows_hidden(group_key, True)
 
         # A drag would just get visually undone by the next regroup -- see _move_tag_row.
-        table.verticalHeader().setSectionsMovable(not self.tag_group_names and not self.monitoring_active)
+        self._apply_tag_row_drag_movable()
+        self._refresh_bit_row_header_labels()
 
     def _set_group_rows_hidden(self, group_key, hidden):
         """Hide/show every tag row currently belonging to group_key (its own header row
@@ -1410,6 +1453,12 @@ class ModbusGUI(QMainWindow):
         if row is None:
             return
         self._coerce_monitoring_tag_count(row)
+        # Format no longer Bool (or Type changed away from a register elsewhere) -- an
+        # expanded row whose bits no longer make sense collapses rather than showing stale
+        # bit rows for a format that isn't Bool anymore.
+        if row in self.monitoring_manager.expanded_bit_tags and not self._tag_row_qualifies_for_bit_expansion(row):
+            self._remove_bit_child_rows(row)
+        self._refresh_bit_row_header_labels()
 
     def _on_monitoring_tag_count_changed(self, _value=None):
         if self._updating_tag_table:
@@ -1481,6 +1530,9 @@ class ModbusGUI(QMainWindow):
             return
         self._coerce_monitoring_tag_count(row)
         self._ensure_unique_monitoring_tag_address(row)
+        if row in self.monitoring_manager.expanded_bit_tags and not self._tag_row_qualifies_for_bit_expansion(row):
+            self._remove_bit_child_rows(row)
+        self._refresh_bit_row_header_labels()
 
     def _on_monitoring_tag_group_changed(self, _value=None):
         if self._updating_tag_table:
@@ -1631,7 +1683,16 @@ class ModbusGUI(QMainWindow):
 
     def _remove_monitoring_tag(self):
         self._close_all_bit_view_dialogs()
-        selected_rows = sorted(self._get_selected_tag_rows(), reverse=True)
+        selected_rows = set(self._get_selected_tag_rows())
+        # Pull in any selected row's inline bit-child rows too, so they're deleted alongside
+        # their parent in the same descending-order pass below instead of being orphaned --
+        # computed up front, before anything is actually removed, so later index shifts from
+        # this same loop can't invalidate an already-selected row.
+        for row in list(selected_rows):
+            selected_rows.update(
+                r for r, info in self.monitoring_manager.tag_bit_rows.items() if info["parent_row"] == row
+            )
+        selected_rows = sorted(selected_rows, reverse=True)
         for row in selected_rows:
             self.monitoring_tag_table.removeRow(row)
             self.monitoring_manager.handle_row_removed(row)
@@ -1639,15 +1700,20 @@ class ModbusGUI(QMainWindow):
         # the tracked set still holds now-meaningless indices -- drop them so a future
         # diff doesn't skip highlighting a row that reused a stale index.
         self._highlighted_tag_rows.clear()
+        self._bit_child_last_raw = {
+            row: raw for row, raw in self._bit_child_last_raw.items()
+            if row in self.monitoring_manager.expanded_bit_tags
+        }
         self._update_tag_buttons_state()
         if self.tag_group_names:
             self._rebuild_tag_table_grouped()
         self._update_tag_name_column_width()
+        self._refresh_bit_row_header_labels()
 
     def _show_tag_context_menu(self, pos):
         table = self.monitoring_tag_table
         row = table.rowAt(pos.y())
-        if row < 0 or row in self.monitoring_manager.group_header_rows:
+        if row < 0 or row in self.monitoring_manager.group_header_rows or row in self.monitoring_manager.tag_bit_rows:
             return
         selected_rows = sorted(self._get_selected_tag_rows())
         if row not in selected_rows:
@@ -1658,6 +1724,7 @@ class ModbusGUI(QMainWindow):
 
         type_widget = table.cellWidget(row, 3)
         is_register = type_widget and type_widget.currentText() in ("Holding Register", "Input Register")
+        can_expand_bits = self._tag_row_qualifies_for_bit_expansion(row)
 
         menu = QMenu(self)
         alarm_action = menu.addAction("Configure Alarm...")
@@ -1666,6 +1733,13 @@ class ModbusGUI(QMainWindow):
         bit_view_action.setToolTip(
             "Show and name the individual bits of this register (e.g. a VFD status/control word)"
         )
+        show_bits_inline_action = menu.addAction("Show Bits Inline")
+        show_bits_inline_action.setCheckable(True)
+        show_bits_inline_action.setEnabled(can_expand_bits or row in self.monitoring_manager.expanded_bit_tags)
+        show_bits_inline_action.setChecked(row in self.monitoring_manager.expanded_bit_tags)
+        show_bits_inline_action.setToolTip(
+            "Expand each bit of this Bool-format register as its own row directly below it"
+        )
         menu.addSeparator()
         copy_action = menu.addAction("Copy Row(s)")
         action = menu.exec(table.viewport().mapToGlobal(pos))
@@ -1673,6 +1747,8 @@ class ModbusGUI(QMainWindow):
             self._configure_tag_alarm(row)
         elif action == bit_view_action:
             self._open_tag_bit_view(row)
+        elif action == show_bits_inline_action:
+            self._toggle_bit_rows_expanded(row)
         elif action == copy_action:
             self._copy_tag_rows(selected_rows)
 
@@ -1764,6 +1840,304 @@ class ModbusGUI(QMainWindow):
         dialog.finished.connect(lambda _res, r=row: self._bit_view_dialogs.pop(r, None))
         dialog.show()
 
+    # -- Inline Bit View (per-bit rows expanded directly under a Bool-format register row) --
+    # A second, inline way to see/name/write the same bits BitViewDialog shows in a popup --
+    # both read from and write into the exact same MonitoringManager.tag_bits/tag_last_raw,
+    # so naming or writing a bit in either place is immediately reflected in the other.
+
+    _BIT_TRUE_TEXTS = {"1", "true", "on", "yes"}
+    _BIT_FALSE_TEXTS = {"0", "false", "off", "no"}
+
+    def _tag_row_qualifies_for_bit_expansion(self, row):
+        """Whether `row` is a plain register tag row eligible for inline bit expansion --
+        never true for a group header or an existing bit-child row."""
+        if row in self.monitoring_manager.group_header_rows or row in self.monitoring_manager.tag_bit_rows:
+            return False
+        type_widget = self.monitoring_tag_table.cellWidget(row, 3)
+        format_widget = self.monitoring_tag_table.cellWidget(row, 6)
+        if not type_widget or not format_widget or not hasattr(type_widget, "currentText"):
+            return False
+        return (
+            type_widget.currentText() in ("Holding Register", "Input Register")
+            and format_widget.currentText() == "Bool"
+        )
+
+    def _on_tag_row_header_clicked(self, row):
+        """A row's header number was clicked (not dragged) -- toggle its inline bit rows if
+        it's a qualifying Bool-format register row; otherwise a plain click does nothing,
+        same as before this feature existed."""
+        if row < 0 or row >= self.monitoring_tag_table.rowCount():
+            return
+        if not self._tag_row_qualifies_for_bit_expansion(row):
+            return
+        self._toggle_bit_rows_expanded(row)
+
+    def _toggle_bit_rows_expanded(self, parent_row):
+        if parent_row in self.monitoring_manager.expanded_bit_tags:
+            self._remove_bit_child_rows(parent_row)
+        else:
+            self._insert_bit_child_rows(parent_row)
+
+    def _insert_bit_child_rows(self, parent_row):
+        """Insert 16 live bit rows directly under `parent_row` (Bool format is always one
+        16-bit register -- format_word_width ignores Count for Bool). Each child row only
+        gets cell widgets in the Tag Name/Read Value/Write Value/Timestamp columns -- every
+        other column (crucially Mode col 2 and Type col 3) is left with no widget at all, so
+        MonitoringManager.get_monitoring_tags()'s `all(...)` guard automatically skips these
+        rows for polling, CSV export, Session save, and Device Profile export, and they never
+        get a Group cell or a tag_groups entry -- no separate exclusion logic needed anywhere
+        else for that."""
+        table = self.monitoring_tag_table
+        type_widget = table.cellWidget(parent_row, 3)
+        format_widget = table.cellWidget(parent_row, 6)
+        if not type_widget or not format_widget:
+            return
+
+        writable = type_widget.currentText() == "Holding Register"
+        bit_names = self.monitoring_manager.tag_bits.get(parent_row, {})
+
+        for bit in range(16):
+            child_row = parent_row + 1 + bit
+            table.insertRow(child_row)
+            self.monitoring_manager.handle_row_inserted(child_row)
+
+            name_widget = self._create_monitoring_tag_widget("lineedit", bit_names.get(str(bit), ""))
+            name_widget.setPlaceholderText(f"Bit {bit}")
+            name_widget.setToolTip("e.g. Running, Ready, Fault, At Speed, Auto/Manual...")
+            table.setCellWidget(child_row, 0, name_widget)
+            name_widget.editingFinished.connect(self._on_bit_name_edited)
+
+            read_value_widget = self._create_monitoring_tag_widget("lineedit", "-")
+            read_value_widget.setReadOnly(True)
+            table.setCellWidget(child_row, 7, read_value_widget)
+
+            if writable:
+                write_value_widget = self._create_monitoring_tag_widget("lineedit", "")
+                write_value_widget.setToolTip("Type 1/0 (or true/false) and press Enter to write just this bit")
+                write_value_widget.returnPressed.connect(self._on_bit_write_value_enter)
+                table.setCellWidget(child_row, 9, write_value_widget)
+
+            timestamp_widget = self._create_monitoring_tag_widget("lineedit", "")
+            timestamp_widget.setReadOnly(True)
+            table.setCellWidget(child_row, 11, timestamp_widget)
+
+            self.monitoring_manager.tag_bit_rows[child_row] = {"parent_row": parent_row, "bit_index": bit}
+
+        self.monitoring_manager.expanded_bit_tags.add(parent_row)
+        self._refresh_bit_row_header_labels()
+        self._apply_tag_row_drag_movable()
+        self._refresh_bit_child_rows(only_parent_row=parent_row)
+
+    def _remove_bit_child_rows(self, parent_row):
+        """Collapse `parent_row` -- removes its bit-child rows (highest index first, so each
+        removal's handle_row_removed reindex never has to touch a not-yet-removed sibling).
+        Bit names in tag_bits[parent_row] are left untouched; only the materialized rows and
+        expand-state disappear, so re-expanding later shows the same names again."""
+        child_rows = sorted(
+            (row for row, info in self.monitoring_manager.tag_bit_rows.items() if info["parent_row"] == parent_row),
+            reverse=True,
+        )
+        for row in child_rows:
+            self.monitoring_tag_table.removeRow(row)
+            self.monitoring_manager.handle_row_removed(row)
+        self.monitoring_manager.expanded_bit_tags.discard(parent_row)
+        self._bit_child_last_raw.pop(parent_row, None)
+        self._refresh_bit_row_header_labels()
+        self._apply_tag_row_drag_movable()
+
+    def _find_bit_child_row_info(self, widget, column):
+        """Resolve (parent_row, bit_index) for the bit-child row whose cell widget in
+        `column` is `widget` -- mirrors _find_monitoring_tag_row, scoped to tag_bit_rows
+        instead of scanning every row."""
+        for row, info in self.monitoring_manager.tag_bit_rows.items():
+            if self.monitoring_tag_table.cellWidget(row, column) is widget:
+                return info["parent_row"], info["bit_index"]
+        return None
+
+    def _on_bit_name_edited(self):
+        if self._updating_tag_table:
+            return
+        found = self._find_bit_child_row_info(self.sender(), 0)
+        if found is None:
+            return
+        parent_row, bit_index = found
+        name = self.sender().text().strip()
+        names = self.monitoring_manager.tag_bits.setdefault(parent_row, {})
+        if name:
+            names[str(bit_index)] = name
+        else:
+            names.pop(str(bit_index), None)
+            if not names:
+                self.monitoring_manager.tag_bits.pop(parent_row, None)
+
+    def _refresh_bit_row_header_labels(self):
+        """Vertical-header text for every row: a plain row number, except a ▶/▼ arrow
+        prefix for a row currently eligible/showing inline bit rows, and a plain indent
+        glyph (no number, not independently addressable) for a bit-child row -- mirrors
+        GroupHeaderWidget's own ▶/▼ convention."""
+        table = self.monitoring_tag_table
+        for row in range(table.rowCount()):
+            if row in self.monitoring_manager.tag_bit_rows:
+                table.setVerticalHeaderItem(row, QTableWidgetItem("↳"))
+            elif self._tag_row_qualifies_for_bit_expansion(row):
+                arrow = "▼" if row in self.monitoring_manager.expanded_bit_tags else "▶"
+                table.setVerticalHeaderItem(row, QTableWidgetItem(f"{arrow} {row + 1}"))
+            else:
+                table.setVerticalHeaderItem(row, QTableWidgetItem(str(row + 1)))
+
+    def _refresh_bit_child_rows(self, only_parent_row=None):
+        """Redraw every expanded row's bit-child Read Value cells from tag_last_raw --
+        called on the shared 300ms timer for every expanded row, or immediately for one
+        `only_parent_row` right after a manual bit write, same reasoning as
+        BitViewDialog._refresh_values (skip a redraw if nothing's changed since last tick)."""
+        parent_rows = [only_parent_row] if only_parent_row is not None else list(
+            self.monitoring_manager.expanded_bit_tags
+        )
+        table = self.monitoring_tag_table
+        on_color = QColor("#2E7D32")
+
+        for parent_row in parent_rows:
+            if parent_row not in self.monitoring_manager.expanded_bit_tags:
+                continue
+            raw_registers = self.monitoring_manager.tag_last_raw.get(parent_row)
+            if raw_registers is None:
+                continue
+            if only_parent_row is None and raw_registers == self._bit_child_last_raw.get(parent_row):
+                continue
+            self._bit_child_last_raw[parent_row] = raw_registers
+
+            format_widget = table.cellWidget(parent_row, 6)
+            value_format = format_widget.currentText() if format_widget else "Bool"
+            raw_uint, _ = raw_bit_pattern(raw_registers, value_format)
+            timestamp = time.strftime("%H:%M:%S")
+
+            for child_row, info in self.monitoring_manager.tag_bit_rows.items():
+                if info["parent_row"] != parent_row:
+                    continue
+                bit = info["bit_index"]
+                is_set = bool((raw_uint >> bit) & 1)
+                read_value_widget = table.cellWidget(child_row, 7)
+                if read_value_widget:
+                    read_value_widget.setText("True" if is_set else "False")
+                    if is_set:
+                        read_value_widget.setStyleSheet(f"background-color: {on_color.name(QColor.HexArgb)};")
+                    else:
+                        read_value_widget.setStyleSheet(self._get_input_style())
+                timestamp_widget = table.cellWidget(child_row, 11)
+                if timestamp_widget:
+                    timestamp_widget.setText(timestamp)
+
+    def _on_bit_write_value_enter(self):
+        if self._updating_tag_table:
+            return
+        found = self._find_bit_child_row_info(self.sender(), 9)
+        if found is None:
+            return
+        parent_row, bit_index = found
+        self._write_tag_bit(parent_row, bit_index)
+
+    def _write_tag_bit(self, parent_row, bit_index):
+        """Read-modify-write a single bit of `parent_row`'s register -- the "Single-bit
+        write" roadmap item (notes.md external feature-idea list). Mirrors _write_tag_rows/
+        _write_tag's confirm -> pause-monitoring -> validate -> reserve -> write -> verify ->
+        resume-monitoring shape, applied to one bit instead of a whole register."""
+        if not self._check_connection():
+            return
+
+        tags_by_row = {tag["row"]: tag for tag in self._get_monitoring_tags()}
+        tag = tags_by_row.get(parent_row)
+        if not tag:
+            QMessageBox.warning(self, "No Tag", "This row doesn't have a configured tag yet.")
+            return
+        if tag["type"] == "Input Register":
+            QMessageBox.warning(self, "Read-Only", "Input Registers are read-only; this bit can't be written.")
+            return
+
+        child_row = next(
+            (r for r, info in self.monitoring_manager.tag_bit_rows.items()
+             if info["parent_row"] == parent_row and info["bit_index"] == bit_index),
+            None,
+        )
+        if child_row is None:
+            return
+        write_value_widget = self.monitoring_tag_table.cellWidget(child_row, 9)
+        if not write_value_widget:
+            return
+
+        text = write_value_widget.text().strip().lower()
+        if text in self._BIT_TRUE_TEXTS:
+            desired = True
+        elif text in self._BIT_FALSE_TEXTS:
+            desired = False
+        else:
+            self._log(f"Invalid bit write value for {tag['name']} bit {bit_index}: {write_value_widget.text()!r}")
+            return
+
+        bit_name = self.monitoring_manager.tag_bits.get(parent_row, {}).get(str(bit_index), "")
+        display_name = f"{tag['name']} bit {bit_index}" + (f" ({bit_name})" if bit_name else "")
+
+        if not self._confirm_write([{
+            "name": display_name, "address": tag["address"], "type": tag["type"],
+            "write_value": "1" if desired else "0",
+        }]):
+            self._log("Write cancelled by user")
+            self.status_bar.showMessage("Write cancelled -- no value was sent to the device", 5000)
+            return
+
+        was_monitoring = self.monitoring_active
+        if was_monitoring:
+            self.monitoring_timer.stop()
+            self._log("Safety interlock: monitoring paused while write request is active")
+
+        try:
+            try:
+                self._validate_tag_request(tag, "write")
+                if not self._begin_modbus_operation(tag, "write"):
+                    self._log(f"Safety interlock: skipped write for {display_name} because the range is busy")
+                    return
+
+                try:
+                    current = self._read_tag_value(tag)
+                    if not isinstance(current, list):
+                        current = [current]
+                    raw_uint, _ = raw_bit_pattern(current, tag["format"])
+
+                    already_set = bool((raw_uint >> bit_index) & 1)
+                    if already_set == desired:
+                        self._log(f"Skipped write; {display_name} already matches")
+                        return
+
+                    new_raw = (raw_uint | (1 << bit_index)) if desired else (raw_uint & ~(1 << bit_index))
+                    protocol_offset = self._tag_user_address_to_offset(tag)
+
+                    start_time = time.perf_counter()
+                    success = self.modbus.write_register(protocol_offset, new_raw & 0xFFFF)
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    self._display_raw_data(
+                        f"Tag[{display_name}] Write", [new_raw & 0xFFFF] if success else None, elapsed_ms,
+                        function_code_for(tag["type"], is_write=True, count=1),
+                    )
+                    if not success:
+                        self._log(f"Write failed: {display_name}")
+                        return
+
+                    verified = self._read_tag_value(tag)
+                    if not isinstance(verified, list):
+                        verified = [verified]
+                    self.monitoring_manager.tag_last_raw[parent_row] = verified
+                    self._refresh_bit_child_rows(only_parent_row=parent_row)
+                    self._log(f"Write verified: {display_name} = {desired}")
+                finally:
+                    self._end_modbus_operation(tag, "write")
+            except ValueError as e:
+                self._log(f"Invalid write value for {display_name}: {e}")
+            except Exception as e:
+                self._log(f"Write error for {display_name}: {e}")
+        finally:
+            if was_monitoring and self.monitoring_active:
+                self.monitoring_timer.start(self.tag_monitoring_interval.value())
+                self._log("Safety interlock: monitoring resumed after write request")
+
     def _on_scale_checkbox_toggled(self, checked):
         if self._updating_tag_table:
             return
@@ -1826,9 +2200,10 @@ class ModbusGUI(QMainWindow):
         fallback used to leave a row silently counted as "selected" for Write
         Selected / Remove Tag well after the user had visually deselected it. Also
         excludes group header rows -- those aren't tags, and selecting one shouldn't let
-        Remove Tag/Write Selected/Copy act on it."""
+        Remove Tag/Write Selected/Copy act on it. Also excludes inline bit-child rows, which
+        aren't independent tags either."""
         selected = {index.row() for index in self.monitoring_tag_table.selectedIndexes()}
-        return selected - set(self.monitoring_manager.group_header_rows)
+        return selected - set(self.monitoring_manager.group_header_rows) - set(self.monitoring_manager.tag_bit_rows)
 
     def _on_tag_table_selection_changed(self):
         """Every Tags-table cell is a setCellWidget() (QComboBox/QSpinBox/QLineEdit),
@@ -2180,6 +2555,9 @@ Unit ID: {unit_id}<br><br>
         self.monitoring_manager.tag_groups.clear()
         self.monitoring_manager.group_header_rows.clear()
         self.monitoring_manager.tag_bits.clear()
+        self.monitoring_manager.tag_bit_rows.clear()
+        self.monitoring_manager.expanded_bit_tags.clear()
+        self._bit_child_last_raw.clear()
 
         imported_count = 0
         for row in rows:
@@ -2254,6 +2632,7 @@ Unit ID: {unit_id}<br><br>
         if self.tag_group_names:
             self._rebuild_tag_table_grouped()
 
+        self._refresh_bit_row_header_labels()
         return imported_count
 
     def _import_additional_tag_rows(self, rows):
@@ -2342,6 +2721,7 @@ Unit ID: {unit_id}<br><br>
         if self.tag_group_names:
             self._rebuild_tag_table_grouped()
 
+        self._refresh_bit_row_header_labels()
         return imported_count, skipped_count
 
     def _export_tags_csv(self):
@@ -3169,9 +3549,20 @@ Unit ID: {unit_id}<br><br>
         if hasattr(self, 'tag_offset_checkbox'):
             self.tag_offset_checkbox.setEnabled(enabled)
         # Row drag-to-reorder is a configuration action too -- keep it disabled while the
-        # poll loop is iterating rows by index, same as Add/Remove Tag. Also stays off
-        # whenever Tag Groups are in use, independent of monitoring state (see _move_tag_row).
-        self.monitoring_tag_table.verticalHeader().setSectionsMovable(enabled and not self.tag_group_names)
+        # poll loop is iterating rows by index, same as Add/Remove Tag.
+        self._tag_row_drag_base_enabled = enabled
+        self._apply_tag_row_drag_movable()
+
+    def _apply_tag_row_drag_movable(self):
+        """Row drag-to-reorder stays off whenever Tag Groups are in use or any bit rows are
+        expanded, independent of monitoring state (see _move_tag_row) -- recomputed here so
+        toggling bit rows takes effect immediately, not just on the next monitoring
+        start/stop. `_set_tag_editor_enabled` is the only place that changes the base
+        (poll-loop-safety) component; everything else just re-derives from it."""
+        base_enabled = getattr(self, "_tag_row_drag_base_enabled", True)
+        self.monitoring_tag_table.verticalHeader().setSectionsMovable(
+            base_enabled and not self.tag_group_names and not self.monitoring_manager.expanded_bit_tags
+        )
 
     def _restart_monitoring_timers(self, read_interval):
         tags = self._get_monitoring_tags()

@@ -28,6 +28,8 @@ class MonitoringManager:
         self.group_header_rows = {}  # row index -> group name, for a group's own header row
         self.tag_bits = {}  # row index -> {bit index (str) -> name}, for Bit View
         self.tag_last_raw = {}  # row index -> last-read raw register list, for Bit View
+        self.tag_bit_rows = {}  # bit-child row index -> {"parent_row": int, "bit_index": int}
+        self.expanded_bit_tags = set()  # parent row indices currently showing inline bit rows
         self._log_file = None
         self._log_writer = None
         self._poll_worker = None  # the in-flight TagPollWorker, if a poll cycle is running
@@ -72,18 +74,28 @@ class MonitoringManager:
         self._log_file.flush()
 
     def handle_row_inserted(self, row):
-        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows/tag_bits/tag_last_raw
-        aligned with table rows after a new row is inserted at `row`."""
+        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows/tag_bits/tag_last_raw/
+        tag_bit_rows/expanded_bit_tags aligned with table rows after a new row is inserted
+        at `row`."""
         self.tag_alarms = {(r + 1 if r >= row else r): cfg for r, cfg in self.tag_alarms.items()}
         self.tag_scaling = {(r + 1 if r >= row else r): cfg for r, cfg in self.tag_scaling.items()}
         self.tag_groups = {(r + 1 if r >= row else r): g for r, g in self.tag_groups.items()}
         self.group_header_rows = {(r + 1 if r >= row else r): g for r, g in self.group_header_rows.items()}
         self.tag_bits = {(r + 1 if r >= row else r): names for r, names in self.tag_bits.items()}
         self.tag_last_raw = {(r + 1 if r >= row else r): v for r, v in self.tag_last_raw.items()}
+        self.tag_bit_rows = {
+            (r + 1 if r >= row else r): {
+                "parent_row": info["parent_row"] + 1 if info["parent_row"] >= row else info["parent_row"],
+                "bit_index": info["bit_index"],
+            }
+            for r, info in self.tag_bit_rows.items()
+        }
+        self.expanded_bit_tags = {(r + 1 if r >= row else r) for r in self.expanded_bit_tags}
 
     def handle_row_removed(self, row):
-        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows/tag_bits/tag_last_raw
-        aligned with table rows after the row at `row` is removed."""
+        """Keep tag_alarms/tag_scaling/tag_groups/group_header_rows/tag_bits/tag_last_raw/
+        tag_bit_rows/expanded_bit_tags aligned with table rows after the row at `row` is
+        removed."""
         self.tag_alarms.pop(row, None)
         self.tag_alarms = {(r - 1 if r > row else r): cfg for r, cfg in self.tag_alarms.items()}
         self.tag_scaling.pop(row, None)
@@ -96,6 +108,16 @@ class MonitoringManager:
         self.tag_bits = {(r - 1 if r > row else r): names for r, names in self.tag_bits.items()}
         self.tag_last_raw.pop(row, None)
         self.tag_last_raw = {(r - 1 if r > row else r): v for r, v in self.tag_last_raw.items()}
+        self.tag_bit_rows.pop(row, None)
+        self.tag_bit_rows = {
+            (r - 1 if r > row else r): {
+                "parent_row": info["parent_row"] - 1 if info["parent_row"] > row else info["parent_row"],
+                "bit_index": info["bit_index"],
+            }
+            for r, info in self.tag_bit_rows.items()
+        }
+        self.expanded_bit_tags.discard(row)
+        self.expanded_bit_tags = {(r - 1 if r > row else r) for r in self.expanded_bit_tags}
 
     def check_alarm(self, tag, value):
         """Return True if this tag's current value violates its configured alarm."""
