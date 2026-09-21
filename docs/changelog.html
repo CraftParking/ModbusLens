@@ -50,6 +50,7 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <li>TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing</li>
 <li>Bit View - a live, per-bit breakdown of a register tag's raw value, each bit individually named; a Bool-format tag can expand its bits inline in the Tags table, with single-bit read-modify-write for Holding Registers</li>
 <li>Create Tags From Scan - generate Tags-tab rows directly from a Scanner result, one per responding address</li>
+<li>Gateway mode (Server tab) - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response instead of simulating one, with a Gateway Activity log showing every relayed request and result</li>
 </ul>
 </article>
 

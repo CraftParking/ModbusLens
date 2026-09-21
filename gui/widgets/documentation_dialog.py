@@ -145,6 +145,10 @@ IP and subnet mask - <b>Tools &gt; IP Configuration</b> shows all of them at onc
 <li><b>Fast LAN Mode</b> - a short (200ms) timeout and no retries, for a local network where a
 timeout means the device is actually gone rather than just momentarily slow. It also changes how
 Tags monitoring reacts to a failed poll - see <b>Tags Monitoring</b>.</li>
+<li><b>Framing</b> - <b>Modbus TCP (standard)</b> is the default MBAP framing almost every device
+uses. Switch to <b>RTU over TCP</b> only for a transparent serial-to-Ethernet gateway (e.g. a
+Waveshare RS485-TO-ETH running in TCP Server/passthrough mode) that tunnels raw RTU frames
+(with CRC16) over a plain TCP socket instead of translating them to real Modbus-TCP framing.</li>
 </ul>
 
 <h3>Modbus Serial (RTU/ASCII)</h3>
@@ -286,6 +290,19 @@ Coil/Discrete Input is a simple flag; BOOL on a Holding/Input Register instead s
 out of a status word. 32-bit formats (U32/S32/F32) need a <b>Count</b> that's a multiple of 2;
 64-bit formats (U64/S64/F64) need a multiple of 4 -- since they span 2 or 4 registers per value,
 respectively.</p>
+
+<h3>Bit View</h3>
+<p>Right-click a Holding/Input Register tag and choose <b>Bit View...</b> for a live, per-bit
+breakdown of its raw value - each of the register's bits shown on its own line with an editable
+name and current 0/1 state, useful for VFD-style control/status words that pack several
+independent booleans (running, ready, fault, at-speed, auto/manual, ...) into one register.</p>
+<p>A Bool-format tag can also expand its bits directly inline, as rows in the Tags table itself -
+click the row number to toggle. For a Holding Register (writable), each bit row gets its own
+<b>Write Value</b> cell: type <code>1</code>/<code>0</code> (or <code>true</code>/<code>false</code>)
+and press <b>Enter</b> to read-modify-write just that one bit, leaving the rest of the register
+untouched. Input Registers are read-only, so their bit rows have no Write Value cell. Naming a bit
+in either the popup or the inline rows updates the other immediately - they're the same underlying
+bit names.</p>
 
 <h3>Engineering-unit scaling</h3>
 <p>Check the <b>Scale</b> box on a row to open a small popup with two modes:</p>
@@ -553,6 +570,27 @@ another is running shows a <b>Server Already Running</b> message. Stop the first
 <code>127.0.0.1</code> (or your machine's LAN IP) on the port the server is listening on, and you
 have a complete self-contained loop for testing Tags, Trend, or a Script with zero risk to real
 equipment.</p>
+
+<h3>Gateway mode</h3>
+<p>Switch <b>Mode</b> to <b>Gateway</b> to turn the Server tab from a simulator into a real
+TCP-to-serial bridge: instead of answering from a local, manually-set datastore, every request
+that arrives over TCP is relayed to a real downstream serial (RTU/ASCII) device, and the device's
+actual response is returned - the same Unit ID is used on both sides, as a transparent
+passthrough. This is how you make a serial-only device (an old PLC, energy meter, VFD, ...)
+reachable from anywhere on the network, without buying dedicated gateway hardware.</p>
+<p>Fill in the <b>Downstream Serial Device</b> group (COM Port, Baud, Parity, Stop Bits, Byte
+Size, Framing) the same way you would in Connection Settings' Serial section, then <b>Start
+Server</b> as usual. The <b>Gateway Activity</b> table replaces Data Space View while running,
+logging every relayed request live: time, direction, function, address, and result - including a
+real device exception (e.g. Illegal Data Address) passed straight through, or, if the downstream
+device doesn't respond or the serial connection itself is down, the standard Modbus gateway
+exception codes (<b>Gateway Path Unavailable</b> / <b>Gateway Target Device Failed to
+Respond</b>).</p>
+<p>Like every other feature in ModbusLens, Gateway mode only runs while the app itself stays
+open - closing the window, or the PC sleeping or restarting, stops it. It's an interactive bridge
+for testing, commissioning, or temporarily sharing access to a device, not an unattended 24/7
+production gateway (which would need to run headless, auto-restart, and survive indefinitely
+without a GUI open - a different kind of tool than ModbusLens is today).</p>
 """),
 
     ("Scripting", """
@@ -774,6 +812,15 @@ as not-responding, especially over a serial connection where every probe is one 
 round-trip. If a scan seems to be missing an address you know exists, try a longer timeout.</p>
 <p>Don't know the serial connection parameters (baud rate, parity, stop bits) for a device in
 the first place? See <b>Serial Discovery</b>.</p>
+
+<h3>Create Tags From Scan</h3>
+<p>Once a scan finds responding addresses, <b>Create Tags...</b> opens a dialog listing the
+merged ranges found - check the ones you want and click <b>Create Tags</b> to generate one new
+row per individual address in the Tags tab, saving you from adding them one at a time by hand.
+Each generated tag is named with the classic 5-digit Modicon convention (type digit plus a
+4-digit 1-based address, e.g. <code>HR_40001</code> for a Holding Register, <code>COIL_00001</code>
+for a Coil) so it stays addressable and unambiguous even without a real register map. An address
+that already has a tag of that type is skipped rather than creating a duplicate.</p>
 """),
 
     ("Serial Discovery", """

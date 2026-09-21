@@ -117,6 +117,7 @@ FEATURES_HTML = """
 <li>Act as a Modbus TCP slave so another master can poll ModbusLens directly, on the Unit ID you configure</li>
 <li>Coils, Discrete Inputs, Holding Registers, and Input Registers are all editable live, as if you were the field device</li>
 <li>Useful for testing your own SCADA/PLC program without real hardware</li>
+<li>Gateway mode - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response instead of simulating one, turning a serial-only device into one reachable over TCP; a Gateway Activity log shows every relayed request and result</li>
 </ul>
 
 <h4>Scripting</h4>
@@ -196,6 +197,7 @@ CHANGELOG_HTML = """
 <li>TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing</li>
 <li>Bit View - a live, per-bit breakdown of a Holding/Input Register tag's raw value, each bit individually named; a Bool-format tag can also expand its bits inline in the Tags table, with single-bit read-modify-write via its own Write Value cell (Holding Register only)</li>
 <li>Create Tags From Scan - generate Tags-tab rows directly from a Scanner result, one per responding address, named with the classic 5-digit Modicon convention</li>
+<li>Gateway mode (Server tab) - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response instead of simulating one, with a Gateway Activity log showing every relayed request and result</li>
 </ul>
 
 <h3>v2.3.0</h3>

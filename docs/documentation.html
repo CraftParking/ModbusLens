@@ -639,6 +639,27 @@ another is running shows a <b>Server Already Running</b> message. Stop the first
 <code>127.0.0.1</code> (or your machine's LAN IP) on the port the server is listening on, and you
 have a complete self-contained loop for testing Tags, Trend, or a Script with zero risk to real
 equipment.</p>
+
+<h3>Gateway mode</h3>
+<p>Switch <b>Mode</b> to <b>Gateway</b> to turn the Server tab from a simulator into a real
+TCP-to-serial bridge: instead of answering from a local, manually-set datastore, every request
+that arrives over TCP is relayed to a real downstream serial (RTU/ASCII) device, and the device's
+actual response is returned - the same Unit ID is used on both sides, as a transparent
+passthrough. This is how you make a serial-only device (an old PLC, energy meter, VFD, ...)
+reachable from anywhere on the network, without buying dedicated gateway hardware.</p>
+<p>Fill in the <b>Downstream Serial Device</b> group (COM Port, Baud, Parity, Stop Bits, Byte
+Size, Framing) the same way you would in Connection Settings' Serial section, then <b>Start
+Server</b> as usual. The <b>Gateway Activity</b> table replaces Data Space View while running,
+logging every relayed request live: time, direction, function, address, and result - including a
+real device exception (e.g. Illegal Data Address) passed straight through, or, if the downstream
+device doesn't respond or the serial connection itself is down, the standard Modbus gateway
+exception codes (<b>Gateway Path Unavailable</b> / <b>Gateway Target Device Failed to
+Respond</b>).</p>
+<p>Like every other feature in ModbusLens, Gateway mode only runs while the app itself stays
+open - closing the window, or the PC sleeping or restarting, stops it. It's an interactive bridge
+for testing, commissioning, or temporarily sharing access to a device, not an unattended 24/7
+production gateway (which would need to run headless, auto-restart, and survive indefinitely
+without a GUI open - a different kind of tool than ModbusLens is today).</p>
 </article>
 
 <article class="doc-section" id="scripting">

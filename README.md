@@ -214,6 +214,8 @@
 - Act as a Modbus TCP slave so another master can poll ModbusLens directly  
 - Coils, Discrete Inputs, Holding Registers, and Input Registers are all editable live, as if you were the field device  
 - Useful for testing your own SCADA/PLC program without real hardware  
+- Gateway mode - instead of simulating a device, relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response, turning a serial-only device into one reachable over TCP; runs only while ModbusLens stays open (an interactive bridge for testing/commissioning, not an unattended 24/7 production gateway)  
+- Gateway Activity log shows every relayed request (time, direction, function, address, result), including real device exceptions and gateway-side failures (no response / downstream unreachable) passed through transparently  
 
 ### Scripting
 - A small, purpose-built test-sequence language instead of embedded Python - built so a controls/automation engineer can write a test sequence without knowing how to program: no imports, no client objects, no exception handling to write, just `WRITE HR 1 = 100`. The tradeoff is deliberate - it can only do Modbus reads/writes/waits/logging/arithmetic, never arbitrary code, which is also what makes the safety limits below possible in the first place  
@@ -314,7 +316,6 @@ Two options are provided:
 - Server tab simulating multiple devices/unit addresses at once, not just one  
 - Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
 - Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
-- Gateway mode - relay real traffic between RTU/ASCII serial and TCP instead of only simulating a device  
 - A string/text data type, beyond the current numeric format set  
 - A user-configurable UI scale/zoom factor for very high-resolution displays run at 100% OS scaling (separate from the per-log Ctrl+scroll zoom, and from OS-level HiDPI scaling, which the app already follows automatically)  
 - Calculated tags combining multiple registers via an expression, as a persistent Tag/Trend source (Scripting can already do this ad hoc; this would make it a saved, always-on tag)  
