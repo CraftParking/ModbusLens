@@ -18,7 +18,7 @@ class ModbusClient:
 
     def __init__(self, ip="127.0.0.1", port=502, unit_id=1, timeout=1.5, retries=1,
                  mode="tcp", serial_port="COM1", baudrate=19200, parity="N", stopbits=1, bytesize=8,
-                 serial_framer="rtu", source_address=None):
+                 serial_framer="rtu", source_address=None, tcp_framer="socket"):
         self.mode = mode  # "tcp" or "serial"
         self.ip = ip
         self.port = port
@@ -35,6 +35,10 @@ class ModbusClient:
         self.stopbits = stopbits
         self.bytesize = bytesize
         self.serial_framer = serial_framer  # "rtu" or "ascii" -- only meaningful when mode == "serial"
+        # "socket" (standard Modbus-TCP/MBAP) or "rtu" -- the latter for transparent
+        # serial-to-Ethernet converters (e.g. Waveshare RS485-TO-ETH in TCP Server mode
+        # with no protocol conversion) that tunnel raw RTU bytes over a plain TCP socket.
+        self.tcp_framer = tcp_framer
         self.client: Optional[Union[ModbusTcpClient, ModbusSerialClient]] = None
         self._connected = False
         self.last_error: Optional[str] = None
@@ -120,6 +124,8 @@ class ModbusClient:
         if self.mode == "serial":
             framer_label = "ASCII" if self.serial_framer == "ascii" else "RTU"
             return f"{self.serial_port} @ {self.baudrate} baud ({framer_label})"
+        if self.tcp_framer == "rtu":
+            return f"{self.ip}:{self.port} (RTU over TCP)"
         return f"{self.ip}:{self.port}"
 
     def connect(self):
@@ -138,8 +144,9 @@ class ModbusClient:
                     trace_packet=self._trace_packet,
                 )
             else:
+                framer = FramerType.RTU if self.tcp_framer == "rtu" else FramerType.SOCKET
                 self.client = ModbusTcpClient(
-                    host=self.ip, port=self.port, timeout=self.timeout, retries=self.retries,
+                    host=self.ip, port=self.port, framer=framer, timeout=self.timeout, retries=self.retries,
                     trace_packet=self._trace_packet,
                     source_address=(self.source_address, 0) if self.source_address else None,
                 )

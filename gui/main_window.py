@@ -264,6 +264,7 @@ class ModbusGUI(QMainWindow):
         self.stopbits = 1
         self.bytesize = 8
         self.serial_framer = "rtu"  # "rtu" or "ascii"
+        self.tcp_framer = "socket"  # "socket" (standard Modbus-TCP) or "rtu" (RTU-over-TCP gateways)
         # Short (~200ms) timeout, no retries, and a bare TCP reachability probe instead of
         # a full retry/timeout cycle when a poll fails -- for LANs where a real timeout
         # means "dead device," not "slow network."
@@ -2296,6 +2297,7 @@ class ModbusGUI(QMainWindow):
         self.stopbits = vals['stopbits']
         self.bytesize = vals['bytesize']
         self.serial_framer = vals['serial_framer']
+        self.tcp_framer = vals['tcp_framer']
         self.fast_lan_mode = vals['fast_lan_mode']
         self.interface_ip = vals['interface_ip']
 
@@ -2333,10 +2335,13 @@ class ModbusGUI(QMainWindow):
             elif self.fast_lan_mode:
                 self.modbus = ModbusClient(
                     self.target_ip, self.target_port, unit_id, timeout=0.2, retries=0,
-                    source_address=self.interface_ip,
+                    source_address=self.interface_ip, tcp_framer=self.tcp_framer,
                 )
             else:
-                self.modbus = ModbusClient(self.target_ip, self.target_port, unit_id, source_address=self.interface_ip)
+                self.modbus = ModbusClient(
+                    self.target_ip, self.target_port, unit_id,
+                    source_address=self.interface_ip, tcp_framer=self.tcp_framer,
+                )
 
             if self.modbus.connect():
                 conn_info = f"{target} (Unit {unit_id})"
@@ -3862,6 +3867,7 @@ Unit ID: {unit_id}<br><br>
                 "stopbits": self.stopbits,
                 "bytesize": self.bytesize,
                 "serial_framer": self.serial_framer,
+                "tcp_framer": self.tcp_framer,
                 "fast_lan_mode": self.fast_lan_mode,
                 "interface_ip": self.interface_ip,
             },
@@ -4595,6 +4601,21 @@ class ConnectionSettingsDialog(QDialog):
         net_scan_btn.clicked.connect(self._open_find_devices)
         net_scan_btn.setToolTip("Scan the local network for Modbus devices, verify they speak Modbus, and identify them.")
         grid.addWidget(net_scan_btn, 4, 0, 1, 2)
+
+        grid.addWidget(QLabel("Framing:"), 5, 0)
+        self.tcp_framer_combo = QComboBox()
+        self.tcp_framer_combo.setStyleSheet(parent._get_input_style())
+        self.tcp_framer_combo.addItem("Modbus TCP (standard)", "socket")
+        self.tcp_framer_combo.addItem("RTU over TCP (transparent serial-to-Ethernet gateway)", "rtu")
+        self.tcp_framer_combo.setToolTip(
+            "Use \"RTU over TCP\" for serial-to-Ethernet converters (e.g. Waveshare RS485-TO-ETH)\n"
+            "running in transparent/passthrough mode, which tunnel raw RTU frames (with CRC16)\n"
+            "over a plain TCP socket instead of translating them to real Modbus-TCP framing."
+        )
+        tcp_framer_index = 1 if getattr(current, "tcp_framer", "socket") == "rtu" else 0
+        self.tcp_framer_combo.setCurrentIndex(tcp_framer_index)
+        grid.addWidget(self.tcp_framer_combo, 5, 1)
+
         layout.addWidget(self.tcp_group)
 
         # 2. Network interface (TCP only)
@@ -4899,6 +4920,7 @@ class ConnectionSettingsDialog(QDialog):
             'stopbits': self.stopbits_combo.currentData(),
             'bytesize': self.bytesize_combo.currentData(),
             'serial_framer': self.framer_combo.currentData(),
+            'tcp_framer': self.tcp_framer_combo.currentData(),
             'fast_lan_mode': self.fast_lan_checkbox.isChecked(),
             'interface_ip': self.iface_combo.currentData(),
             'history': self.history,
