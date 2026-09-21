@@ -171,6 +171,7 @@
 - Tag names are validated as they're typed - letters/numbers/underscore only, no spaces, and script keywords/reserved words are rejected with a warning, since a tag's name also doubles as its reference in a Script and in Trend's pen picker  
 - Per-tag **Enabled** checkbox - unchecked, a tag is skipped by continuous polling (both the Read cycle and Write-mode refresh) without deleting the row; manual actions (Write Selected, one-shot write via Enter) still work regardless  
 - Column reorder (drag a header) and a show/hide picker (right-click a header) on the Tags table, so columns you don't need (e.g. Comment, Timestamp) can be hidden without touching the underlying data  
+- Bit View - for a Holding/Input Register tag, right-click > **Bit View...** opens a live, per-bit breakdown of its raw value (each bit individually named and shown as 0/1), for VFD-style control/status words that pack several booleans into one register; a Bool-format tag can also expand its bits inline as rows directly under it in the Tags table. For a Holding Register (writable), each bit row gets its own Write Value cell - type 1/0 and press Enter to read-modify-write just that one bit, without touching the rest of the register  
 - Log live tag values to CSV  
 - CSV import/export (Enabled included as a column; older exports without it import as enabled)  
 - Improved stability  
@@ -253,6 +254,7 @@
 - Probes the largest block the function allows first, and only narrows down address-by-address where a block doesn't fully respond - far fewer requests than checking one address at a time  
 - Reuses the app's existing connection (like Address Table/Tags/Script), pausing Tags/Address Table live monitoring first so nothing else is polling the same connection at the same time  
 - A configurable probe timeout keeps scanning fast over TCP; over a serial connection each probe is one bus round-trip, so a large range takes noticeably longer  
+- Create Tags From Scan - after a scan finds responding addresses, pick which ranges to import and generate one new Tags-tab row per address, named with the classic 5-digit Modicon convention (e.g. `HR_40001`); an address that already has a tag of that type is skipped instead of duplicated  
 
 ### UI Improvements
 - Cleaner layout with compact connection bar  
@@ -308,14 +310,12 @@ Two options are provided:
   *independent* windows side by side, but they share nothing). This needs a real backend change -
   a device-abstraction layer around what's currently a single connection per window - not just a
   UI addition.
-- Register maps with mixed data types per device profile  
 - Multiple Unit IDs over a single connection (useful for RTU/ASCII sharing one serial line, or a TCP-to-RTU gateway fanning out to several devices)  
 - Server tab simulating multiple devices/unit addresses at once, not just one  
 - Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
 - Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
 - Gateway mode - relay real traffic between RTU/ASCII serial and TCP instead of only simulating a device  
 - A string/text data type, beyond the current numeric format set  
-- Single-bit read/write within a register, for legacy devices  
 - A user-configurable UI scale/zoom factor for very high-resolution displays run at 100% OS scaling (separate from the per-log Ctrl+scroll zoom, and from OS-level HiDPI scaling, which the app already follows automatically)  
 - Calculated tags combining multiple registers via an expression, as a persistent Tag/Trend source (Scripting can already do this ad hoc; this would make it a saved, always-on tag)  
 

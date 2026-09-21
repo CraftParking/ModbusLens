@@ -77,6 +77,7 @@ FEATURES_HTML = """
 <li>Engineering-unit scaling per tag - linear (Raw/Scaled Min/Max) or multiply-by-constant, shown live in the Engineering Value column</li>
 <li>Log live tag values to CSV</li>
 <li>CSV import/export</li>
+<li>Bit View - a live, per-bit breakdown of a Holding/Input Register tag's raw value, each bit individually named and shown as 0/1, for VFD-style control/status words; a Bool-format tag can also expand its bits inline as rows in the Tags table, with a Write Value cell per bit (Holding Register only) to read-modify-write just that one bit</li>
 </ul>
 
 <h4>Device Profiles</h4>
@@ -168,6 +169,7 @@ FEATURES_HTML = """
 <li>Probes the largest block the function allows first, and only narrows down address-by-address where a block doesn't fully respond</li>
 <li>Reuses the app's existing connection, pausing Tags/Address Table live monitoring (and the reconnect watchdog) first</li>
 <li>A configurable probe timeout keeps scanning fast over TCP; over serial each probe is one bus round-trip</li>
+<li>Create Tags From Scan - after a scan finds responding addresses, pick which ranges to import and generate one new Tags-tab row per address, named with the classic 5-digit Modicon convention; an address that already has a tag of that type is skipped instead of duplicated</li>
 </ul>
 
 <h4>UI</h4>
@@ -192,6 +194,8 @@ CHANGELOG_HTML = """
 <p><u>New</u></p>
 <ul>
 <li>TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing</li>
+<li>Bit View - a live, per-bit breakdown of a Holding/Input Register tag's raw value, each bit individually named; a Bool-format tag can also expand its bits inline in the Tags table, with single-bit read-modify-write via its own Write Value cell (Holding Register only)</li>
+<li>Create Tags From Scan - generate Tags-tab rows directly from a Scanner result, one per responding address, named with the classic 5-digit Modicon convention</li>
 </ul>
 
 <h3>v2.3.0</h3>
