@@ -214,6 +214,10 @@ IP and subnet mask - <b>Tools &gt; IP Configuration</b> shows all of them at onc
 <li><b>Fast LAN Mode</b> - a short (200ms) timeout and no retries, for a local network where a
 timeout means the device is actually gone rather than just momentarily slow. It also changes how
 Tags monitoring reacts to a failed poll - see <b>Tags Monitoring</b>.</li>
+<li><b>Framing</b> - <b>Modbus TCP (standard)</b> is the default MBAP framing almost every device
+uses. Switch to <b>RTU over TCP</b> only for a transparent serial-to-Ethernet gateway (e.g. a
+Waveshare RS485-TO-ETH running in TCP Server/passthrough mode) that tunnels raw RTU frames
+(with CRC16) over a plain TCP socket instead of translating them to real Modbus-TCP framing.</li>
 </ul>
 
 <h3>Modbus Serial (RTU/ASCII)</h3>

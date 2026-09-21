@@ -54,6 +54,7 @@ FEATURES_HTML = """
 <li>Optional interface binding in Connection Settings - "Auto" leaves routing to the OS (default); picking a NIC binds the outgoing TCP socket to it</li>
 <li>Fast LAN Mode (Connection Settings, TCP) - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off</li>
 <li>Save/Load Session - connection settings, Tags (with scaling), Address Table range, and any live write bounds together in one file, not just Tags on their own</li>
+<li>TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing</li>
 </ul>
 
 <h4>Data Handling</h4>
@@ -187,6 +188,12 @@ FEATURES_HTML = """
 # Newest first. Older releases are summarized at a higher level than the current one -
 # see the git history/README for exact commit-level detail on those.
 CHANGELOG_HTML = """
+<h3>Unreleased</h3>
+<p><u>New</u></p>
+<ul>
+<li>TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing</li>
+</ul>
+
 <h3>v2.3.0</h3>
 <p><u>New</u></p>
 <ul>

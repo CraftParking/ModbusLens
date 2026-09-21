@@ -511,6 +511,8 @@ class ModbusGUI(QMainWindow):
         if self.connection_mode == "serial":
             framer_label = "ASCII" if self.serial_framer == "ascii" else "RTU"
             return f"{self.serial_port} @ {self.baudrate} baud ({framer_label})"
+        if self.tcp_framer == "rtu":
+            return f"{self.target_ip}:{self.target_port} (RTU over TCP)"
         return f"{self.target_ip}:{self.target_port}"
 
     def _build_connection_string(self):
@@ -520,7 +522,7 @@ class ModbusGUI(QMainWindow):
                 f"serial:{self.serial_port}:{self.baudrate}:{self.parity}:"
                 f"{self.bytesize}:{self.stopbits}:{self.target_unit_id}:{self.serial_framer}"
             )
-        return f"{self.target_ip}:{self.target_port}:{self.target_unit_id}"
+        return f"{self.target_ip}:{self.target_port}:{self.target_unit_id}:{self.tcp_framer}"
 
     def _record_connection_history(self):
         """Push the current connection settings to the front of Recent Connections,
@@ -4835,7 +4837,9 @@ class ConnectionSettingsDialog(QDialog):
                 f"{framer_label}, Unit {unit})"
             )
         if len(parts) >= 3:
-            return f"{parts[0]}:{parts[1]} (Unit {parts[2]})"
+            tcp_framer = parts[3] if len(parts) >= 4 else "socket"
+            suffix = ", RTU over TCP" if tcp_framer == "rtu" else ""
+            return f"{parts[0]}:{parts[1]} (Unit {parts[2]}{suffix})"
         return entry
 
     def _populate_history_combo(self):
@@ -4900,6 +4904,10 @@ class ConnectionSettingsDialog(QDialog):
                 self.ip_input.setText(parts[0])
                 self.port_input.setValue(int(parts[1]))
                 self.unit_input.setValue(int(parts[2]))
+                # Older saved entries have no framer field -- they predate RTU-over-TCP
+                # support, so they were always standard Modbus TCP framing.
+                tcp_framer = parts[3] if len(parts) >= 4 else "socket"
+                self.tcp_framer_combo.setCurrentIndex(1 if tcp_framer == "rtu" else 0)
         finally:
             restore_index = self.hist_combo.findData(entry)
             if restore_index >= 0 and self.hist_combo.currentIndex() != restore_index:
