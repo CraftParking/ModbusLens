@@ -51,6 +51,19 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <li>Bit View - a live, per-bit breakdown of a register tag's raw value, each bit individually named; a Bool-format tag can expand its bits inline in the Tags table, with single-bit read-modify-write for Holding Registers</li>
 <li>Create Tags From Scan - generate Tags-tab rows directly from a Scanner result, one per responding address</li>
 <li>Gateway mode (Server tab) - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response instead of simulating one, with a Gateway Activity log showing every relayed request and result</li>
+<li>Devices with their own connections - each device on the new Overview tab (first tab) has its own connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link; per-device Connect/Disconnect plus Connect All / Disconnect All; the top bar shows every device's status and picks the active device that Address Table, Trend, Script and Scanner work on</li>
+<li>Overview cards - live status (online / exception / no response / reconnecting / paused), success rate, latency and pinned values per device; Open Tags, Pause, and Add Device blank, from a Profile, or found by a Unit ID sweep</li>
+<li>Devices in Tags - a Device column and per-device tabs above the Tags table; the same addresses can be used on every device; devices travel in Sessions and Tags CSVs</li>
+</ul>
+<p class="changelog-sub">Fixed</p>
+<ul>
+<li>Replies on a shared line are matched to their request - on an RTU-over-TCP gateway (or RS-485 bus) shared with another master, a reply meant for that master (e.g. a 30-register reply to a 2-register read) was accepted as this request's answer and shown as Success with the wrong data; it's now skipped, stale input is discarded before each request, and the Raw Data RX column shows only the matching reply</li>
+<li>A timeout on a standard Modbus TCP connection whose reply is really raw RTU now says so, pointing at Connection Settings &gt; Framing: RTU over TCP</li>
+<li>Illegal Data Address explainer lists one more cause: a read covering only half of a 32-bit value, which many energy meters refuse</li>
+<li>Share to Community works again - submissions were being rejected with "Submission Failed" after the submission form's hosting plan changed; they now go to the active form</li>
+<li>Raw Data Frame Viewer decodes RTU-over-TCP traffic as RTU frames (unit, function, CRC) - it was applying the Modbus-TCP header layout, showing nonsense like a random Protocol ID</li>
+<li>Auto-reconnect now actually notices a dropped TCP link - the connection stayed flagged as connected after the peer reset it, so the watchdog never retried and every later request failed</li>
+<li>Share to Community failures explain themselves in plain language (connection problem, submission limit reached, or service temporarily unavailable) instead of showing the submission service's raw error; the raw text is still under Show Details and in System Logs</li>
 </ul>
 </article>
 

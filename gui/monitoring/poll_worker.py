@@ -6,13 +6,15 @@ from .read_merge import merge_tag_reads
 
 
 def _read_block(modbus, plan):
+    modbus = plan.get("client") or modbus
+    unit = plan.get("unit")
     if plan["type"] == "Coil":
-        return modbus.read_coils(plan["start"], plan["count"])
+        return modbus.read_coils(plan["start"], plan["count"], unit_id=unit)
     if plan["type"] == "Discrete Input":
-        return modbus.read_discrete_inputs(plan["start"], plan["count"])
+        return modbus.read_discrete_inputs(plan["start"], plan["count"], unit_id=unit)
     if plan["type"] == "Holding Register":
-        return modbus.read_registers(plan["start"], plan["count"])
-    return modbus.read_input_registers(plan["start"], plan["count"])
+        return modbus.read_registers(plan["start"], plan["count"], unit_id=unit)
+    return modbus.read_input_registers(plan["start"], plan["count"], unit_id=unit)
 
 
 class TagPollWorker(QThread):
@@ -79,12 +81,14 @@ class TagPollWorker(QThread):
 
         plans = merge_tag_reads(valid_tags, self.offset_of)
 
-        device_unreachable = False
+        unreachable_links = set()  # Fast LAN Mode: links found unreachable this cycle
         for plan in plans:
             if self.should_stop:
                 break
+            client = plan.get("client") or self.modbus
+            link = id(client)
 
-            if device_unreachable:
+            if link in unreachable_links:
                 failed_count += len(plan["members"])
                 for tag, _local_offset in plan["members"]:
                     self.tag_result.emit(tag, None, 0.0, "unreachable", "", "connection", None, None)
@@ -93,7 +97,8 @@ class TagPollWorker(QThread):
             block_start = plan["start"]
             block_end = plan["start"] + plan["count"] - 1
             cached_values = (
-                self.shared_cache.get(plan["type"], block_start, block_end) if self.shared_cache else None
+                self.shared_cache.get(plan["type"], block_start, block_end, unit=plan.get("unit"), link=link)
+                if self.shared_cache else None
             )
 
             tx_bytes = rx_bytes = None
@@ -106,7 +111,7 @@ class TagPollWorker(QThread):
             else:
                 request_range = {
                     "operation": "read", "space": plan["type"], "start": block_start, "end": block_end,
-                    "tag": f"Merged[{plan['type']}] x{len(plan['members'])}",
+                    "unit": plan.get("unit"), "tag": f"Merged[{plan['type']}] x{len(plan['members'])}",
                 }
                 if not self.reserve_range(request_range):
                     failed_count += len(plan["members"])
@@ -126,22 +131,24 @@ class TagPollWorker(QThread):
                 # around to handling this signal a later block's read (already underway in
                 # this same loop) may have overwritten them, misattributing this block's
                 # actual wire bytes to a different block's Raw Data row.
-                tx_bytes = getattr(self.modbus, "last_tx_bytes", None)
-                rx_bytes = getattr(self.modbus, "last_rx_bytes", None)
+                tx_bytes = getattr(client, "last_tx_bytes", None)
+                rx_bytes = getattr(client, "last_rx_bytes", None)
 
                 if block_values is None:
                     failed_count += len(plan["members"])
-                    last_error = getattr(self.modbus, "last_error", None) or ""
-                    category = getattr(self.modbus, "last_error_category", None) or "other"
+                    last_error = getattr(client, "last_error", None) or ""
+                    category = getattr(client, "last_error_category", None) or "other"
                     for tag, _local_offset in plan["members"]:
                         self.tag_result.emit(tag, None, elapsed_ms, "read_failed", last_error, category, tx_bytes, rx_bytes)
-                    if self.fast_lan_mode and not self.device_reachable(self.modbus):
-                        device_unreachable = True
+                    fast_lan = getattr(client, "fast_lan_mode", self.fast_lan_mode)
+                    if fast_lan and not self.device_reachable(client):
+                        unreachable_links.add(link)
                         self.device_unreachable.emit()
                     continue
 
                 if self.shared_cache:
-                    self.shared_cache.put(plan["type"], block_start, block_end, block_values)
+                    self.shared_cache.put(plan["type"], block_start, block_end, block_values,
+                                          unit=plan.get("unit"), link=link)
 
             for tag, local_offset in plan["members"]:
                 value = block_values[local_offset: local_offset + tag["count"]]

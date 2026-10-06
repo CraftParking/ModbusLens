@@ -15,6 +15,11 @@ class MonitoringManager:
     """Manages Tags monitoring functionality including data caching and synchronization."""
 
     def __init__(self, parent_window):
+        # Per-device poll health for the Overview tab, keyed by device name ("" = the
+        # connection's own unit): ok/fail tag-read counts, last good read time, latency,
+        # last error and the latest cycle's status word.
+        self.device_stats = {}
+        self._cycle_device_results = {}
         self.parent = parent_window
         self._monitoring_write_value_cache = {}
         self._monitoring_read_value_cache = {}  # Store read values for Tags monitoring
@@ -201,12 +206,18 @@ class MonitoringManager:
                 "comment": comment,
                 "enabled": enabled_widget.checkbox.isChecked() if enabled_widget else True,
                 "group": self.tag_groups.get(row, ""),
+                # The tag's device: its Unit ID, and the client of the device's link (None
+                # while that device isn't connected -- polling skips it, writes refuse).
+                "device": self.parent._row_device(row),
+                "unit": self.parent._tag_device_unit(self.parent._row_device(row)),
+                "client": self.parent._device_client(self.parent._row_device(row)),
             })
         return tags
 
-    def add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex="", in_alarm=False, engineering_value=""):
-        """Add or update a tag row in the integrated Tags table."""
-        key = (tag_name, data_type, str(address))
+    def add_monitoring_row(self, tag_name, mode, data_type, address, read_value, write_value, comment, timestamp, raw_hex="", in_alarm=False, engineering_value="", device=""):
+        """Add or update a tag row in the integrated Tags table. `device` is part of a
+        tag's identity: two meters on one line can both have "V_Avg" at 1706."""
+        key = (device, tag_name, data_type, str(address))
         
         # Store read value in cache for Tags monitoring
         if read_value:
@@ -231,7 +242,8 @@ class MonitoringManager:
                 type_widget = target_table.cellWidget(row, 3)
                 address_widget = target_table.cellWidget(row, 4)
                 if (type_widget and type_widget.currentText() == data_type and
-                    address_widget and address_widget.value() == address):
+                    address_widget and address_widget.value() == address and
+                    self.parent._row_device(row) == device):
                     target_row = row
                     break
 
@@ -381,16 +393,19 @@ class MonitoringManager:
         cycle-level wrap-up arrive later via _on_tag_poll_result/_on_poll_cycle_complete,
         reproducing exactly what this loop used to do inline, just off the GUI thread for
         the parts that block (validation, the interlock, and the wire call itself)."""
-        if not self.parent.modbus or not self.parent.monitoring_active:
+        if not self.parent._any_device_connected() or not self.parent.monitoring_active:
             return
         if self._monitoring_poll_in_progress:
             self.parent._log("Safety interlock: skipped monitor tick because previous poll is still running")
             return
 
-        tags = [tag for tag in self.get_monitoring_tags() if tag["mode"] == "Read" and tag["enabled"]]
+        tags = [tag for tag in self.get_monitoring_tags()
+                if tag["mode"] == "Read" and tag["enabled"] and tag.get("client") is not None
+                and not self.parent._device_paused(tag.get("device", ""))]
         if not tags:
             return
 
+        self._cycle_device_results = {}
         self._monitoring_poll_in_progress = True
         self.parent.monitoring_timer.stop()
         self._current_poll_timestamp = time.strftime("%H:%M:%S")
@@ -415,6 +430,7 @@ class MonitoringManager:
         stay off the worker thread."""
         timestamp = self._current_poll_timestamp
         log_timestamp = self._current_poll_log_timestamp
+        self._record_device_result(tag, status, category, elapsed_ms, detail)
 
         if status == "ok":
             display_value = self.format_monitoring_value(tag, value)
@@ -431,13 +447,14 @@ class MonitoringManager:
             )
             self.add_monitoring_row(
                 tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                tag["comment"], timestamp, raw_hex, in_alarm, engineering_value
+                tag["comment"], timestamp, raw_hex, in_alarm, engineering_value, device=tag.get("device", "")
             )
             self._log_row(tag, log_timestamp, display_value, raw_hex)
             return
 
         self.add_monitoring_row(
-            tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "", tag["comment"], timestamp
+            tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "", tag["comment"], timestamp,
+            device=tag.get("device", ""),
         )
         self._log_row(tag, log_timestamp, "ERROR", "")
 
@@ -454,6 +471,38 @@ class MonitoringManager:
             self.parent._log(f"Monitoring error for {tag['name']}: {detail}")
         # status == "unreachable": the one-time transition message already went out via
         # _on_poll_device_unreachable -- nothing more to log for each tag skipped after it.
+
+    def _record_device_result(self, tag, status, category, elapsed_ms, detail):
+        if status == "busy":
+            return  # local interlock contention, says nothing about the device
+        key = tag.get("device", "")
+        stats = self.device_stats.setdefault(key, {"ok": 0, "fail": 0})
+        self._cycle_device_results.setdefault(key, []).append((status, category, detail))
+        if status == "ok":
+            stats["ok"] += 1
+            stats["last_ok"] = time.time()
+            if elapsed_ms:  # 0.0 = served from the shared read cache, no wire time
+                stats["latency_ms"] = elapsed_ms
+        else:
+            stats["fail"] += 1
+            if detail:
+                stats["last_error"] = detail
+
+    def _commit_device_cycle(self):
+        """Turn this cycle's per-device results into one status word per device."""
+        for key, results in self._cycle_device_results.items():
+            failed = [r for r in results if r[0] != "ok"]
+            device_exception = any(r[1] == "device_exception" for r in failed)
+            if not failed:
+                status = "online"
+            elif device_exception:
+                status = "exception"
+            elif len(failed) == len(results):
+                status = "no_response"
+            else:
+                status = "partial"
+            self.device_stats.setdefault(key, {"ok": 0, "fail": 0})["status"] = status
+        self._cycle_device_results = {}
 
     def _on_poll_device_unreachable(self):
         self.parent._log("Fast LAN Mode: device unreachable, skipping remaining tags this cycle")
@@ -486,6 +535,7 @@ class MonitoringManager:
         self._retire_worker(self._poll_worker)
         self._poll_worker = None
         self._monitoring_poll_in_progress = False
+        self._commit_device_cycle()
 
         # Only treat this as a lost-connection-style failure (and count toward auto-stop)
         # when every tag failed -- a single bad tag (e.g. a newly added one with a bad
@@ -514,7 +564,7 @@ class MonitoringManager:
         _on_write_tag_poll_result/_on_write_poll_cycle_complete, reproducing exactly what
         this loop used to do inline, just off the GUI thread for the parts that block
         (validation and the wire call itself)."""
-        if not self.parent.modbus or not self.parent.monitoring_active:
+        if not self.parent._any_device_connected() or not self.parent.monitoring_active:
             return
         if self._write_poll_in_progress:
             self.parent._log("Safety interlock: skipped write-tag poll because previous poll is still running")
@@ -522,7 +572,9 @@ class MonitoringManager:
         if self.parent._modbus_busy:
             return
 
-        tags = [tag for tag in self.get_monitoring_tags() if tag["mode"] == "Write" and tag["enabled"]]
+        tags = [tag for tag in self.get_monitoring_tags()
+                if tag["mode"] == "Write" and tag["enabled"] and tag.get("client") is not None
+                and not self.parent._device_paused(tag.get("device", ""))]
         if not tags:
             return
 
@@ -563,7 +615,7 @@ class MonitoringManager:
             )
             self.add_monitoring_row(
                 tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
-                tag["comment"], timestamp, raw_hex
+                tag["comment"], timestamp, raw_hex, device=tag.get("device", "")
             )
             return
 

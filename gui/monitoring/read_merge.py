@@ -24,8 +24,12 @@ def merge_tag_reads(tags, offset_of):
     does no validation of its own, just grouping. `offset_of(tag)` computes the tag's
     protocol offset (pure, no I/O).
 
+    Tags on different devices never merge -- different Unit IDs (tag["unit"]) are
+    separate request streams even on one shared line, and different links
+    (tag["client"]) are different wires altogether.
+
     Returns a list of plans, one wire request each:
-      {"type": tag_type, "start": offset, "count": n,
+      {"unit": unit or None, "type": tag_type, "start": offset, "count": n,
        "members": [(tag, local_offset), ...]}
     `local_offset` is the index into that block's own returned value list where the
     member tag's data begins, so the caller can slice each tag's values back out."""
@@ -33,10 +37,12 @@ def merge_tag_reads(tags, offset_of):
     for tag in tags:
         start = offset_of(tag)
         end = start + tag["count"] - 1
-        by_type.setdefault(tag["type"], []).append((start, end, tag))
+        client = tag.get("client")
+        by_type.setdefault((id(client), unit_of(tag), tag["type"]), []).append((start, end, tag))
 
     plans = []
-    for tag_type, entries in by_type.items():
+    for (_link, unit, tag_type), entries in by_type.items():
+        client = entries[0][2].get("client")
         entries.sort(key=lambda entry: entry[0])
         max_block = _MAX_BLOCK.get(tag_type, 125)
         block = None  # {"start": int, "end": int, "members": [(tag, start), ...]}
@@ -51,16 +57,22 @@ def merge_tag_reads(tags, offset_of):
                 block["members"].append((tag, start))
             else:
                 if block is not None:
-                    plans.append(_finalize_block(tag_type, block))
+                    plans.append(_finalize_block(unit, tag_type, block, client))
                 block = {"start": start, "end": end, "members": [(tag, start)]}
         if block is not None:
-            plans.append(_finalize_block(tag_type, block))
+            plans.append(_finalize_block(unit, tag_type, block, client))
     return plans
 
 
-def _finalize_block(tag_type, block):
+def unit_of(tag):
+    return tag.get("unit")
+
+
+def _finalize_block(unit, tag_type, block, client=None):
     block_start = block["start"]
     return {
+        "client": client,
+        "unit": unit,
         "type": tag_type,
         "start": block_start,
         "count": block["end"] - block_start + 1,

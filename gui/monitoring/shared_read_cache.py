@@ -23,10 +23,12 @@ class SharedReadCache:
     def __init__(self, ttl_seconds=0.5):
         self._ttl = ttl_seconds
         self._lock = threading.Lock()
-        self._entries = {}  # (space, start, end) -> (monotonic_timestamp, values)
+        # (unit, space, start, end) -> (monotonic_timestamp, values). unit None = the
+        # connection's default unit; two devices on one line can have identical ranges.
+        self._entries = {}
 
-    def get(self, space, start, end):
-        key = (space, start, end)
+    def get(self, space, start, end, unit=None, link=None):
+        key = (link, unit, space, start, end)
         with self._lock:
             entry = self._entries.get(key)
         if entry is None:
@@ -36,9 +38,9 @@ class SharedReadCache:
             return None
         return list(values) if isinstance(values, list) else values
 
-    def put(self, space, start, end, values):
+    def put(self, space, start, end, values, unit=None, link=None):
         if values is None:
             return
-        key = (space, start, end)
+        key = (link, unit, space, start, end)
         with self._lock:
             self._entries[key] = (time.monotonic(), values)

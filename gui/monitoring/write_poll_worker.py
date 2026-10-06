@@ -68,7 +68,7 @@ class WriteTagPollWorker(QThread):
 
             request_range = {
                 "operation": "read", "space": tag["type"],
-                "start": offset, "end": offset + tag["count"] - 1, "tag": tag["name"],
+                "start": offset, "end": offset + tag["count"] - 1, "unit": tag.get("unit"), "tag": tag["name"],
             }
             if not self.reserve_range(request_range):
                 # Matches the pre-threading behavior exactly: a busy range is skipped
@@ -79,7 +79,7 @@ class WriteTagPollWorker(QThread):
 
             start_time = time.perf_counter()
             try:
-                value = self.read_tag_value(tag, modbus=self.modbus)
+                value = self.read_tag_value(tag, modbus=tag.get("client") or self.modbus)
             except Exception as e:
                 tx_bytes = getattr(self.modbus, "last_tx_bytes", None)
                 rx_bytes = getattr(self.modbus, "last_rx_bytes", None)

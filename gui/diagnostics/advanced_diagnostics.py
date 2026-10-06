@@ -27,6 +27,9 @@ EXCEPTION_CODE_DETAILS = {
             "0-based vs. 1-based addressing mismatch -- check the Tags/Address Table addressing toggle",
             "Wrong register space (Coil vs. Holding Register vs. Input Register vs. Discrete Input)",
             "Address plus count exceeds what the device actually exposes",
+            "Read splits a multi-register value -- many meters refuse a read that covers only "
+            "half of a 32-bit value (e.g. Count 1 on a Float32); start at the value's first "
+            "register with Count 2",
             "Device documentation's address numbering differs from the raw wire protocol offset",
         ],
     ),

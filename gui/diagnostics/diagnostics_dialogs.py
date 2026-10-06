@@ -383,6 +383,9 @@ class DiagnosticsDialogs:
         if hasattr(self.parent, 'modbus') and self.parent.modbus is not None:
             if self.parent.modbus.mode == "serial":
                 transport = "ascii" if self.parent.modbus.serial_framer == "ascii" else "rtu"
+            elif getattr(self.parent.modbus, "tcp_framer", "socket") == "rtu":
+                # RTU over TCP: the wire bytes are plain RTU frames (no MBAP header).
+                transport = "rtu"
         # Update the Frame Viewer first -- when it's visible, its TX/RX field tables
         # change height with every row (different frames decode to different field
         # counts), which resizes the table's viewport on the very next layout pass.

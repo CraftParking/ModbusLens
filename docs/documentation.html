@@ -217,7 +217,7 @@ Tags monitoring reacts to a failed poll - see <b>Tags Monitoring</b>.</li>
 <li><b>Framing</b> - <b>Modbus TCP (standard)</b> is the default MBAP framing almost every device
 uses. Switch to <b>RTU over TCP</b> only for a transparent serial-to-Ethernet gateway (e.g. a
 Waveshare RS485-TO-ETH running in TCP Server/passthrough mode) that tunnels raw RTU frames
-(with CRC16) over a plain TCP socket instead of translating them to real Modbus-TCP framing.</li>
+(with CRC16) over a plain TCP socket instead of translating them to real Modbus-TCP framing. Many of these gateways forward every reply to every connected client, so if another master (a SCADA, Node-RED, ...) polls the same gateway, its replies reach ModbusLens too - they're recognised and skipped, since a reply has to match the request's function code and register count (or write echo). A reply from the same unit with the same function and count can't be told apart in RTU, which carries no transaction ID, so keep polling slow on a shared bus.</li>
 </ul>
 
 <h3>Modbus Serial (RTU/ASCII)</h3>
@@ -320,6 +320,30 @@ the Script console. <b>Ctrl+scroll wheel</b> over the log zooms its text size in
 </article>
 
 <article class="doc-section" id="tags-monitoring">
+<h2>Overview</h2>
+<p>The first tab, and the place devices are set up. A <b>device</b> is one Modbus unit: a name,
+its own connection (Modbus TCP - IP, port, framing including RTU over TCP - or a serial port with
+its baud rate and framing) and its Unit ID. <b>Add Device</b> opens the device dialog, whose
+<b>Connection Settings...</b> button is the usual connection dialog; <b>Add from Profile...</b>
+creates a device with a saved profile's tags; <b>Find Devices...</b> asks each Unit ID in a range
+over the active device's connection and adds the units that answer (with that same connection).
+Devices with identical connection settings - several meters behind one gateway, or on one RS-485
+port - automatically share one link, and are polled one at a time over it; a serial port can only
+carry one set of line settings.</p>
+<p>Each device gets a card: its connection, Unit ID and tag count, a status (<b>Disconnected</b>,
+<b>Connection failed</b>, <b>Reconnecting</b>, <b>Connected</b>, <b>Online</b>, <b>Device
+exception</b>, <b>Partly failing</b>, <b>No response</b>, <b>Paused</b>), success rate, last good
+read, latency, the last error, and a few <b>pinned values</b> (its first four tags until you
+choose others with <b>Pin Values...</b>). <b>Connect/Disconnect</b> works per device, <b>Open
+Tags</b> jumps to its tab in Tags, <b>Pause</b> leaves it out of polling, and the card menu sets it
+as the active device, edits or removes it. Start/Stop Monitoring and the interval are the same as
+in Tags.</p>
+<p>The bar at the top of the window shows every device with its status; the highlighted one is
+the <b>active device</b> - click another to switch. Address Table, Trend, Script, Scanner and the
+Diagnostics tools work on the active device, and <b>Device Settings</b> edits its connection (while
+it's disconnected). <b>Connect All</b> / <b>Disconnect All</b> act on every device. A link that
+drops is reconnected automatically with back-off. The device list is saved automatically and in
+Sessions; an older session's single connection becomes a device called "Device 1".</p>
 <h2>Tags Monitoring</h2>
 <p>The Tags tab lets you name individual points scattered across different addresses and types,
 and watch or write them all at once - unlike the Address Table, which is one contiguous range.
@@ -343,6 +367,16 @@ selecting it or clicking anything - mirrors the type-and-Enter workflow classic 
 Poll use. Goes through the exact same confirmation and safety interlock as Write Selected.</li>
 <li><b>Comment</b> and <b>Timestamp</b>.</li>
 </ul>
+
+<h3>Devices in Tags</h3>
+<p>Every tag belongs to a device (see <b>Overview</b>). With more than one device, the Tags table
+shows a <b>Device</b> column next to Tag Name and a row of device tabs above it: <b>All</b>, one tab
+per device, and <b>+</b> to add another. A device tab only shows that device's tags, and a tag you
+add while it's open belongs to that device; right-click a device tab to edit or remove the device.
+The same address can be used on every device - two identical meters simply share one register map.
+Tags CSV exports carry <b>Device</b> and <b>Unit ID</b> columns, so an import recreates missing
+devices (on the active device's connection); an older CSV without them loads onto the active
+device. Profiles stay device-independent: they describe a device type, not where it's connected.</p>
 
 <h3>Naming a tag</h3>
 <p>A tag name can only use letters, numbers, and underscores - no spaces or other symbols, and it
@@ -649,7 +683,7 @@ passthrough. This is how you make a serial-only device (an old PLC, energy meter
 reachable from anywhere on the network, without buying dedicated gateway hardware.</p>
 <p>Fill in the <b>Downstream Serial Device</b> group (COM Port, Baud, Parity, Stop Bits, Byte
 Size, Framing) the same way you would in Connection Settings' Serial section, then <b>Start
-Server</b> as usual. The <b>Gateway Activity</b> table replaces Data Space View while running,
+Server</b> as usual. The COM Port box also accepts a pyserial URL such as <code>socket://192.168.1.254:4196</code> for a device behind a transparent serial-to-Ethernet converter (raw RTU over TCP) - baud/parity are then set on the converter itself, not here. The <b>Gateway Activity</b> table replaces Data Space View while running,
 logging every relayed request live: time, direction, function, address, and result - including a
 real device exception (e.g. Illegal Data Address) passed straight through, or, if the downstream
 device doesn't respond or the serial connection itself is down, the standard Modbus gateway

@@ -54,8 +54,15 @@ COMMUNITY_INDEX_URL = COMMUNITY_BASE_URL + "index.json"
 # (50 submissions/month free) for a 10x higher free cap (500/month) with no
 # card required and no default Origin/Referer domain restriction to trip up a
 # desktop app's header-less POST.
+def _without_device_fields(mw):
+    """The live Tags as profile rows, minus Device/Unit ID: a profile describes a device
+    *type*, while which unit it sits at is per-installation."""
+    fields = getattr(mw, "DEVICE_ROW_FIELDS", ())
+    return [{k: v for k, v in row.items() if k not in fields} for row in mw._build_tag_export_rows()]
+
+
 COMMUNITY_FORM_ENDPOINT = "https://api.staticforms.dev/submit"
-COMMUNITY_FORM_API_KEY = "sf_a3b1de6a563204f0d607ae19"
+COMMUNITY_FORM_API_KEY = "sf_bcbc80673c44a67501b9b103"
 
 
 def _slugify(name):
@@ -1274,7 +1281,7 @@ class DeviceProfilesPanel(QWidget):
         mw = self.parent_window
         if mw is None:
             return
-        available_tags = mw._build_tag_export_rows()
+        available_tags = _without_device_fields(mw)
         dialog = CreateProfileDialog(
             self._colors(), self._button_style(), available_tags, parent=self,
             input_style=self._input_style(),
@@ -1319,7 +1326,7 @@ class DeviceProfilesPanel(QWidget):
         if profile is None or mw is None:
             return
         old_path = profile["_path"]
-        available_tags = mw._build_tag_export_rows()
+        available_tags = _without_device_fields(mw)
         dialog = CreateProfileDialog(
             self._colors(), self._button_style(), available_tags, preset=profile, parent=self,
             input_style=self._input_style(),
@@ -1443,10 +1450,37 @@ class DeviceProfilesPanel(QWidget):
         if mw is not None and hasattr(mw, "_log"):
             mw._log(f"Submitted profile '{name}' to the Community list for review")
 
+    @staticmethod
+    def _describe_share_failure(error):
+        """User-facing text for a failed submission. The raw error is either the
+        submission service's own JSON reply (it was reached, but refused) or a
+        network-level error (it was never reached). Its wording is written for the
+        service's account holder -- e.g. "upgrade to Starter to use multiple forms"
+        when the maintainer's plan stopped accepting this app's form key -- which
+        means nothing to a user and isn't theirs to fix, so it's only kept as detail."""
+        try:
+            reply = json.loads(error)
+        except (ValueError, TypeError):
+            reply = None
+        if not isinstance(reply, dict):
+            return ("Couldn't reach the Community submission service. Check your "
+                    "internet connection and try again.")
+        message = str(reply.get("error") or reply.get("message") or "").lower()
+        if any(word in message for word in ("rate", "quota", "too many", "monthly")):
+            return ("The Community list has received its maximum number of submissions "
+                    "for now. Please try again later.")
+        return ("Community submissions are temporarily unavailable -- this is a problem "
+                "on the ModbusLens side, not with your profile or connection. Your "
+                "profile is still saved locally; please try again later, or check for "
+                "a ModbusLens update.")
+
     def _on_share_failed(self, url, error):
         self.share_btn.setEnabled(True)
         self.share_btn.setText("Share to Community")
-        QMessageBox.warning(
-            self, "Submission Failed",
-            f"Couldn't submit this profile ({error}). Check your connection and try again.",
-        )
+        mw = self.parent_window
+        if mw is not None and hasattr(mw, "_log"):
+            mw._log(f"Community submission failed: {error}")
+        box = QMessageBox(QMessageBox.Warning, "Submission Failed",
+                          self._describe_share_failure(error), QMessageBox.Ok, self)
+        box.setDetailedText(error)
+        box.exec()

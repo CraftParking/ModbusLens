@@ -8,6 +8,37 @@ from pymodbus.pdu.file_message import FileRecord
 logger = logging.getLogger(__name__)
 
 
+def _crc16(data):
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc
+
+
+def _looks_like_rtu(data):
+    """True if a CRC-valid Modbus RTU frame (a read reply, write echo, or exception)
+    appears anywhere in data -- i.e. bytes that arrived on a standard Modbus-TCP
+    connection are really raw RTU from a transparent serial-to-Ethernet gateway."""
+    if not data:
+        return False
+    for i in range(len(data) - 4):
+        fc = data[i + 1]
+        if fc in (1, 2, 3, 4):
+            n = 3 + data[i + 2] + 2
+        elif fc in (5, 6, 15, 16):
+            n = 8
+        elif 0x81 <= fc <= 0x90:
+            n = 5
+        else:
+            continue
+        frame = data[i:i + n]
+        if len(frame) == n and _crc16(frame[:-2]) == frame[-2] | (frame[-1] << 8):
+            return True
+    return False
+
+
 class ModbusClient:
     """Wraps a pymodbus TCP or serial (RTU/ASCII) client behind one interface.
 
@@ -59,6 +90,15 @@ class ModbusClient:
         # rather than a stale value left over from a previous, unrelated transaction.
         self.last_tx_bytes: Optional[bytes] = None
         self.last_rx_bytes: Optional[bytes] = None
+        # Replies that arrived during a request but didn't match it (wrong function code,
+        # register count, or write echo) -- another master's traffic on a shared line,
+        # e.g. a transparent RTU-over-TCP gateway that forwards every reply to every
+        # connected client. Skipped instead of being taken as this request's answer.
+        self._pending_request = None
+        self._foreign_replies_this_request = 0
+        self.foreign_replies_skipped = 0
+        self.stale_bytes_discarded = 0
+        self._last_discarded = b""
 
     def _trace_packet(self, sending, data):
         if sending:
@@ -70,6 +110,12 @@ class ModbusClient:
     def _reset_trace(self):
         self.last_tx_bytes = None
         self.last_rx_bytes = None
+
+    def _unit(self, unit_id=None):
+        """The Modbus unit/device ID for one request: an explicit per-call unit_id (a
+        device on a shared line -- several units behind one gateway or RS-485 bus), else
+        the connection's own default unit_id."""
+        return self.unit_id if unit_id is None else unit_id
 
     def set_write_bound(self, address, minimum, maximum):
         self.write_bounds[address] = (minimum, maximum)
@@ -107,10 +153,144 @@ class ModbusClient:
         - "rejected": a write bound violation caught locally, before anything reached
           the wire.
         - "other": anything else."""
+        if category == "timeout":
+            message += self._timeout_hint()
+        elif category == "connection" and self._connected and self.client is not None:
+            # The link itself failed (e.g. WinError 10053, the peer reset the socket). pymodbus
+            # never recovers that socket on its own and is_connected() would keep saying True,
+            # so the auto-reconnect watchdog would never notice -- mark it down and close it;
+            # the watchdog's connect() then builds a fresh one.
+            self._connected = False
+            try:
+                self.client.close()
+            except Exception:
+                pass
         self.last_error = message
         self.last_exception_code = exception_code
         self.last_error_category = category
         logger.error(message)
+
+    def _timeout_hint(self):
+        """Extra context for a no-valid-reply failure, when the wire bytes explain it."""
+        hints = []
+        if self._foreign_replies_this_request:
+            hints.append(
+                f"ignored {self._foreign_replies_this_request} reply(s) that didn't match this "
+                "request -- another master is sharing this connection/bus"
+            )
+        if self.mode == "tcp" and self.tcp_framer != "rtu" and (
+                _looks_like_rtu(self.last_rx_bytes) or _looks_like_rtu(self._last_discarded)):
+            hints.append(
+                "the reply looks like Modbus RTU with no Modbus-TCP header -- try Connection "
+                "Settings > Framing: RTU over TCP"
+            )
+        return f" ({'; '.join(hints)})" if hints else ""
+
+    def _install_reply_guard(self):
+        """Wrap the pymodbus client so every request, whatever the function code:
+        - starts with stale input discarded (a late reply to an earlier, timed-out request,
+          or another master's traffic that arrived in between), and
+        - only accepts a reply that actually answers it. pymodbus matches RTU replies on
+          unit ID alone (RTU has no transaction ID), so on a shared line another master's
+          reply from the same unit was being returned as this request's result -- e.g. a
+          30-register reply to a 2-register read, shown as Success with the wrong data."""
+        client = self.client
+        framer = getattr(client, "framer", None)
+        original_handle = getattr(framer, "handleFrame", None)
+        original_execute = getattr(client, "execute", None)
+        if original_handle is None or original_execute is None:
+            return
+
+        def handle_frame(data, exp_devid, exp_tid):
+            used_total = 0
+            while True:
+                used, pdu = original_handle(data[used_total:], exp_devid, exp_tid)
+                used_total += used
+                if pdu is None or self._reply_matches(pdu):
+                    if pdu is not None:
+                        self.last_rx_bytes = self._frame_bytes(framer, pdu, data, used_total)
+                    return used_total, pdu
+                self._foreign_replies_this_request += 1
+                self.foreign_replies_skipped += 1
+                logger.info(
+                    f"Skipped a reply that doesn't match the pending request "
+                    f"(function 0x{pdu.function_code:02X}) -- another master's traffic"
+                )
+                if not used:
+                    return used_total, None
+
+        def execute(no_response_expected, request):
+            self._discard_stale_input()
+            self._pending_request = request
+            self._foreign_replies_this_request = 0
+            try:
+                return original_execute(no_response_expected, request)
+            finally:
+                self._pending_request = None
+
+        framer.handleFrame = handle_frame
+        client.execute = execute
+
+    def _reply_matches(self, pdu):
+        request = self._pending_request
+        if request is None:
+            return True
+        fc = request.function_code
+        if pdu.function_code == (fc | 0x80):
+            return True  # the device's exception response to this request
+        if pdu.function_code != fc:
+            return False
+        count = getattr(request, "read_count" if fc == 23 else "count", None)
+        if fc in (3, 4, 23):
+            return len(getattr(pdu, "registers", [])) == count
+        if fc in (1, 2):
+            # Bits come back padded to whole bytes.
+            return len(getattr(pdu, "bits", [])) == (count + 7) // 8 * 8
+        if fc in (5, 6, 15, 16):
+            # A write response echoes the request's address (and, for 15/16, its count).
+            if getattr(pdu, "address", None) != request.address:
+                return False
+            return fc in (5, 6) or getattr(pdu, "count", None) == count
+        return True
+
+    @staticmethod
+    def _frame_bytes(framer, pdu, data, end):
+        """Just the accepted reply's own bytes, for the Raw Data RX column -- not the
+        whole receive buffer, which on a shared line can hold several other replies."""
+        try:
+            length = len(framer.buildFrame(pdu))
+        except Exception:
+            return bytes(data[:end])
+        return bytes(data[max(0, end - length):end])
+
+    def _discard_stale_input(self):
+        sock = getattr(self.client, "socket", None)
+        if sock is None:
+            return
+        discarded = 0
+        self._last_discarded = b""
+        try:
+            if self.mode == "serial":
+                discarded = sock.in_waiting
+                if discarded:
+                    sock.reset_input_buffer()
+            else:
+                sock.setblocking(False)
+                while True:
+                    try:
+                        chunk = sock.recv(4096)
+                    except (BlockingIOError, InterruptedError):
+                        break
+                    if not chunk:
+                        break
+                    discarded += len(chunk)
+                    # Kept (bounded) so _timeout_hint can still spot raw RTU in it.
+                    self._last_discarded = (self._last_discarded + chunk)[-1024:]
+        except OSError:
+            return
+        if discarded:
+            self.stale_bytes_discarded += discarded
+            logger.info(f"Discarded {discarded} stale byte(s) before sending a new request")
 
     @staticmethod
     def _categorize_exception(exc):
@@ -151,6 +331,7 @@ class ModbusClient:
                     source_address=(self.source_address, 0) if self.source_address else None,
                 )
 
+            self._install_reply_guard()
             self._connected = self.client.connect()
             if self._connected:
                 self.last_error = None
@@ -201,13 +382,13 @@ class ModbusClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disconnect()
 
-    def read_coils(self, address, count):
+    def read_coils(self, address, count, unit_id=None):
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return None
         self._reset_trace()
         try:
-            result = self.client.read_coils(address, count=count, device_id=self.unit_id)
+            result = self.client.read_coils(address, count=count, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -224,13 +405,13 @@ class ModbusClient:
             self._set_error(f"Exception reading coils: {e}", category=self._categorize_exception(e))
             return None
 
-    def read_discrete_inputs(self, address, count):
+    def read_discrete_inputs(self, address, count, unit_id=None):
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return None
         self._reset_trace()
         try:
-            result = self.client.read_discrete_inputs(address, count=count, device_id=self.unit_id)
+            result = self.client.read_discrete_inputs(address, count=count, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -247,13 +428,13 @@ class ModbusClient:
             self._set_error(f"Exception reading discrete inputs: {e}", category=self._categorize_exception(e))
             return None
 
-    def read_registers(self, address, count):
+    def read_registers(self, address, count, unit_id=None):
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return None
         self._reset_trace()
         try:
-            result = self.client.read_holding_registers(address, count=count, device_id=self.unit_id)
+            result = self.client.read_holding_registers(address, count=count, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -270,13 +451,13 @@ class ModbusClient:
             self._set_error(f"Exception reading registers: {e}", category=self._categorize_exception(e))
             return None
 
-    def read_input_registers(self, address, count):
+    def read_input_registers(self, address, count, unit_id=None):
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return None
         self._reset_trace()
         try:
-            result = self.client.read_input_registers(address, count=count, device_id=self.unit_id)
+            result = self.client.read_input_registers(address, count=count, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -293,13 +474,13 @@ class ModbusClient:
             self._set_error(f"Exception reading input registers: {e}", category=self._categorize_exception(e))
             return None
 
-    def write_coil(self, address, value):
+    def write_coil(self, address, value, unit_id=None):
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return False
         self._reset_trace()
         try:
-            result = self.client.write_coil(address, value, device_id=self.unit_id)
+            result = self.client.write_coil(address, value, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -316,7 +497,7 @@ class ModbusClient:
             self._set_error(f"Exception writing coil: {e}", category=self._categorize_exception(e))
             return False
 
-    def write_register(self, address, value):
+    def write_register(self, address, value, unit_id=None):
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return False
@@ -326,7 +507,7 @@ class ModbusClient:
             return False
         self._reset_trace()
         try:
-            result = self.client.write_register(address, value, device_id=self.unit_id)
+            result = self.client.write_register(address, value, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -343,13 +524,13 @@ class ModbusClient:
             self._set_error(f"Exception writing register: {e}", category=self._categorize_exception(e))
             return False
 
-    def write_coils(self, address, values):
+    def write_coils(self, address, values, unit_id=None):
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return False
         self._reset_trace()
         try:
-            result = self.client.write_coils(address, values, device_id=self.unit_id)
+            result = self.client.write_coils(address, values, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -366,7 +547,7 @@ class ModbusClient:
             self._set_error(f"Exception writing coils: {e}", category=self._categorize_exception(e))
             return False
 
-    def write_registers(self, address, values):
+    def write_registers(self, address, values, unit_id=None):
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return False
@@ -376,7 +557,7 @@ class ModbusClient:
             return False
         self._reset_trace()
         try:
-            result = self.client.write_registers(address, values, device_id=self.unit_id)
+            result = self.client.write_registers(address, values, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -400,7 +581,7 @@ class ModbusClient:
     # connection-check/error-categorization/trace-reset convention every other
     # method here already follows.
 
-    def read_exception_status(self):
+    def read_exception_status(self, unit_id=None):
         """FC07 -- an 8-bit vendor-specific status byte, a lightweight "is anything
         wrong" poll some devices support without a full register read."""
         if not self.is_connected():
@@ -408,7 +589,7 @@ class ModbusClient:
             return None
         self._reset_trace()
         try:
-            result = self.client.read_exception_status(device_id=self.unit_id)
+            result = self.client.read_exception_status(device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -425,7 +606,7 @@ class ModbusClient:
             self._set_error(f"Exception reading exception status: {e}", category=self._categorize_exception(e))
             return None
 
-    def diag_query_data(self, message: bytes):
+    def diag_query_data(self, message: bytes, unit_id=None):
         """FC08 sub-function 0x00 (Return Query Data) -- a pure loopback test: the
         device must echo `message` back byte-for-byte. Good for confirming a serial
         link is alive without touching any real register."""
@@ -434,7 +615,7 @@ class ModbusClient:
             return None
         self._reset_trace()
         try:
-            result = self.client.diag_query_data(msg=message, device_id=self.unit_id)
+            result = self.client.diag_query_data(msg=message, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -451,7 +632,7 @@ class ModbusClient:
             self._set_error(f"Exception in diagnostic query data: {e}", category=self._categorize_exception(e))
             return None
 
-    def diag_restart_communication(self, clear_log=True):
+    def diag_restart_communication(self, clear_log=True, unit_id=None):
         """FC08 sub-function 0x01 (Restart Communications Option) -- asks the device
         to reinitialize its comm port. `clear_log` also clears its event log/counters,
         matching the Modbus spec's own toggle for this sub-function."""
@@ -460,7 +641,7 @@ class ModbusClient:
             return False
         self._reset_trace()
         try:
-            result = self.client.diag_restart_communication(clear_log, device_id=self.unit_id)
+            result = self.client.diag_restart_communication(clear_log, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -477,7 +658,7 @@ class ModbusClient:
             self._set_error(f"Exception restarting communication: {e}", category=self._categorize_exception(e))
             return False
 
-    def diag_read_diagnostic_register(self):
+    def diag_read_diagnostic_register(self, unit_id=None):
         """FC08 sub-function 0x02 (Return Diagnostic Register) -- device-specific
         status bits (e.g. listen-only mode); meaning beyond raw bits is vendor-defined."""
         if not self.is_connected():
@@ -485,7 +666,7 @@ class ModbusClient:
             return None
         self._reset_trace()
         try:
-            result = self.client.diag_read_diagnostic_register(device_id=self.unit_id)
+            result = self.client.diag_read_diagnostic_register(device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -502,14 +683,14 @@ class ModbusClient:
             self._set_error(f"Exception reading diagnostic register: {e}", category=self._categorize_exception(e))
             return None
 
-    def diag_clear_counters(self):
+    def diag_clear_counters(self, unit_id=None):
         """FC08 sub-function 0x0A (Clear Counters and Diagnostic Register)."""
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return False
         self._reset_trace()
         try:
-            result = self.client.diag_clear_counters(device_id=self.unit_id)
+            result = self.client.diag_clear_counters(device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -526,7 +707,7 @@ class ModbusClient:
             self._set_error(f"Exception clearing counters: {e}", category=self._categorize_exception(e))
             return False
 
-    def get_comm_event_counter(self):
+    def get_comm_event_counter(self, unit_id=None):
         """FC11 -- a free-running event counter devices bump on every completed
         transaction, plus a ready/busy status flag. Returns
         {"status": bool, "count": int} or None on failure."""
@@ -535,7 +716,7 @@ class ModbusClient:
             return None
         self._reset_trace()
         try:
-            result = self.client.diag_get_comm_event_counter(device_id=self.unit_id)
+            result = self.client.diag_get_comm_event_counter(device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -552,7 +733,7 @@ class ModbusClient:
             self._set_error(f"Exception reading comm event counter: {e}", category=self._categorize_exception(e))
             return None
 
-    def get_comm_event_log(self):
+    def get_comm_event_log(self, unit_id=None):
         """FC12 -- like get_comm_event_counter, plus a short history of recent bus
         events. Returns {"status", "event_count", "message_count", "events"} or None."""
         if not self.is_connected():
@@ -560,7 +741,7 @@ class ModbusClient:
             return None
         self._reset_trace()
         try:
-            result = self.client.diag_get_comm_event_log(device_id=self.unit_id)
+            result = self.client.diag_get_comm_event_log(device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -582,7 +763,7 @@ class ModbusClient:
             self._set_error(f"Exception reading comm event log: {e}", category=self._categorize_exception(e))
             return None
 
-    def report_device_id(self):
+    def report_device_id(self, unit_id=None):
         """FC17 (Report Server ID, historically "Report Slave ID") -- a vendor-defined
         identifier string plus a run/stop indicator. Returns
         {"identifier": bytes, "status": bool} or None."""
@@ -591,7 +772,7 @@ class ModbusClient:
             return None
         self._reset_trace()
         try:
-            result = self.client.report_device_id(device_id=self.unit_id)
+            result = self.client.report_device_id(device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -608,7 +789,7 @@ class ModbusClient:
             self._set_error(f"Exception reporting device ID: {e}", category=self._categorize_exception(e))
             return None
 
-    def read_file_record(self, requests):
+    def read_file_record(self, requests, unit_id=None):
         """FC20 -- reads one or more records out of the device's file storage (a
         second, separate address space from registers/coils, rare outside energy
         meters and similar data loggers). `requests` is a list of
@@ -630,7 +811,7 @@ class ModbusClient:
                 FileRecord(file_number=file_number, record_number=record_number, record_length=record_length * 2)
                 for file_number, record_number, record_length in requests
             ]
-            result = self.client.read_file_record(records, device_id=self.unit_id)
+            result = self.client.read_file_record(records, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -654,7 +835,7 @@ class ModbusClient:
             self._set_error(f"Exception reading file record: {e}", category=self._categorize_exception(e))
             return None
 
-    def write_file_record(self, requests):
+    def write_file_record(self, requests, unit_id=None):
         """FC21 -- writes one or more records into the device's file storage.
         `requests` is a list of (file_number, record_number, record_data) tuples,
         where record_data is raw bytes (an even number of bytes -- one 16-bit
@@ -669,7 +850,7 @@ class ModbusClient:
                 FileRecord(file_number=file_number, record_number=record_number, record_data=record_data)
                 for file_number, record_number, record_data in requests
             ]
-            result = self.client.write_file_record(records, device_id=self.unit_id)
+            result = self.client.write_file_record(records, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -686,7 +867,7 @@ class ModbusClient:
             self._set_error(f"Exception writing file record: {e}", category=self._categorize_exception(e))
             return False
 
-    def mask_write_register(self, address, and_mask, or_mask):
+    def mask_write_register(self, address, and_mask, or_mask, unit_id=None):
         """FC22 -- sets a register to (current_value AND and_mask) OR (or_mask AND
         NOT and_mask) atomically on the device, so setting a few bits doesn't race
         against another master's write to the same register between a read and a
@@ -698,7 +879,7 @@ class ModbusClient:
         self._reset_trace()
         try:
             result = self.client.mask_write_register(
-                address=address, and_mask=and_mask, or_mask=or_mask, device_id=self.unit_id
+                address=address, and_mask=and_mask, or_mask=or_mask, device_id=self._unit(unit_id)
             )
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
@@ -716,7 +897,7 @@ class ModbusClient:
             self._set_error(f"Exception in mask write register: {e}", category=self._categorize_exception(e))
             return None
 
-    def read_fifo_queue(self, address):
+    def read_fifo_queue(self, address, unit_id=None):
         """FC24 -- reads a FIFO queue's current contents (up to 31 16-bit values)
         without removing them, from a pointer register at `address`. Used by devices
         that buffer captured values (e.g. event timestamps) faster than a master
@@ -726,7 +907,7 @@ class ModbusClient:
             return None
         self._reset_trace()
         try:
-            result = self.client.read_fifo_queue(address=address, device_id=self.unit_id)
+            result = self.client.read_fifo_queue(address=address, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(
@@ -743,7 +924,7 @@ class ModbusClient:
             self._set_error(f"Exception reading FIFO queue: {e}", category=self._categorize_exception(e))
             return None
 
-    def read_device_information(self, read_code=None, object_id=0):
+    def read_device_information(self, read_code=None, object_id=0, unit_id=None):
         """FC43/14 (Read Device Identification) -- vendor name/product code/version
         and similar text objects, a standardized alternative to a vendor-specific
         register for "what device am I talking to." read_code selects Basic (0x01),
@@ -757,7 +938,7 @@ class ModbusClient:
             return None
         self._reset_trace()
         try:
-            result = self.client.read_device_information(read_code=read_code, object_id=object_id, device_id=self.unit_id)
+            result = self.client.read_device_information(read_code=read_code, object_id=object_id, device_id=self._unit(unit_id))
             if result.isError():
                 exception_code = getattr(result, "exception_code", None)
                 self._set_error(

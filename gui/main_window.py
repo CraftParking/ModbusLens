@@ -22,9 +22,9 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QComboBox, QSpinBox, QDoubleSpinBox, QTabWidget, QGroupBox,
     QApplication, QMessageBox, QDialog, QCheckBox,
-    QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton, QInputDialog
+    QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton, QInputDialog, QTabBar
 )
-from PySide6.QtCore import Qt, QTimer, QEvent, Signal
+from PySide6.QtCore import Qt, QTimer, QEvent, Signal, QItemSelectionModel
 from PySide6.QtGui import QIcon, QActionGroup, QShortcut, QKeySequence, QColor
 
 # Add the gui directory to the path for relative imports
@@ -34,6 +34,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from widgets.status_indicator import StatusIndicator
 from widgets.address_table import AddressTableWidget
 from widgets.device_profiles import DeviceProfilesPanel
+from widgets.tag_devices import ADD_DEVICE_SENTINEL, TAG_DEVICE_COLUMN
+from device_manager import DeviceManagerMixin
+from device_links import normalize_connection
+from widgets.overview_widget import OverviewWidget, DeviceStatusBar
 from widgets.trend_widget import TrendWidget
 from widgets.server_widget import ServerWidget
 from widgets.script_widget import ScriptWidget, validate_tag_name
@@ -227,7 +231,7 @@ class GroupHeaderWidget(QWidget):
         self.clicked.emit(self.group_name)
 
 
-class ModbusGUI(QMainWindow):
+class ModbusGUI(DeviceManagerMixin, QMainWindow):
     _open_windows = []  # keeps extra connection windows alive (see _new_connection_window)
 
     WATCHDOG_HEALTHY_INTERVAL_MS = 3000  # how often to check a connection that's currently fine
@@ -280,6 +284,11 @@ class ModbusGUI(QMainWindow):
         # itself is built below, since its Group column combo reads tag_group_names.
         self.tag_group_names = []
         self.collapsed_groups = set()
+        # Devices, each with its own connection + Unit ID (see device_manager.py). Filled
+        # by _init_devices() at the end of __init__ -- there's always at least one.
+        self.tag_devices = []
+        self.active_device = None
+        self._tag_device_filter = None  # Tags device tab: None = All, else a device name
 
         # Shared between Tag Monitoring's poll worker and Trend's own poll timer so the
         # exact same register range configured in both doesn't cost two wire round-trips
@@ -359,6 +368,7 @@ class ModbusGUI(QMainWindow):
         self._setup_status_bar()
         self._connect_signals()
         self._load_settings()
+        self._init_devices()
         
     def _setup_window(self):
         """Setup main window properties."""
@@ -464,38 +474,44 @@ class ModbusGUI(QMainWindow):
         main_layout.setSpacing(15)
 
         # 1. Status Section (Left)
+        # The classic single-connection indicator/label are still updated by older code
+        # paths, but the bar now shows every device instead (DeviceStatusBar).
         self.status_indicator = StatusIndicator(dark=(self._theme_mode == "dark"))
+        self.status_indicator.setVisible(False)
         main_layout.addWidget(self.status_indicator)
+        self.device_status_bar = DeviceStatusBar(self)
+        main_layout.addWidget(self.device_status_bar, 1)
 
         # Separator
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
         sep.setFrameShadow(QFrame.Sunken)
         sep.setStyleSheet(f"color: {self._c['border_light']};")
+        sep.setVisible(False)
         main_layout.addWidget(sep)
 
         # 2. Connection Info Label
         self.connection_info_label = QLabel()
         self.connection_info_label.setStyleSheet(f"color: {self._c['text_dim']}; font-weight: 500; font-size: 12px;")
         self._update_connection_info()
+        self.connection_info_label.setVisible(False)
         main_layout.addWidget(self.connection_info_label)
-        
-        main_layout.addStretch()
 
         # 3. Control Buttons
-        self.settings_btn = QPushButton("Settings")
-        self.settings_btn.setFixedSize(90, 30)
+        self.settings_btn = QPushButton("Device Settings")
+        self.settings_btn.setToolTip("Connection settings of the active device (the highlighted one)")
+        self.settings_btn.setFixedSize(110, 30)
         self.settings_btn.setStyleSheet(self._get_button_style(small=True))
         self.settings_btn.clicked.connect(self._show_connection_settings)
         main_layout.addWidget(self.settings_btn)
 
-        self.connect_btn = QPushButton("Connect") 
-        self.connect_btn.setFixedSize(90, 30)
+        self.connect_btn = QPushButton("Connect All")
+        self.connect_btn.setFixedSize(100, 30)
         self.connect_btn.setStyleSheet(self._get_button_style(small=True))
         main_layout.addWidget(self.connect_btn) 
  
-        self.disconnect_btn = QPushButton("Disconnect") 
-        self.disconnect_btn.setFixedSize(90, 30)
+        self.disconnect_btn = QPushButton("Disconnect All")
+        self.disconnect_btn.setFixedSize(110, 30)
         self.disconnect_btn.setStyleSheet(self._get_button_style(small=True))
         self.disconnect_btn.setEnabled(False) 
         main_layout.addWidget(self.disconnect_btn) 
@@ -561,6 +577,10 @@ class ModbusGUI(QMainWindow):
                 background-color: {self._c["hover_strong"]};
             }}
         """)
+
+        # Overview tab -- every device on this connection at a glance (first tab).
+        self.overview_widget = OverviewWidget(self)
+        self.tab_widget.addTab(self.overview_widget, "Overview")
 
         # Address Table tab (ModScan-like interface)
         self._setup_address_table_tab()
@@ -709,8 +729,8 @@ class ModbusGUI(QMainWindow):
         tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
 
         self.monitoring_tag_table = TagTableWidget(self)
-        self.monitoring_tag_table.setColumnCount(15)
-        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Group", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale", "Enabled"])
+        self.monitoring_tag_table.setColumnCount(16)
+        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Group", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale", "Enabled", "Device"])
         self._update_tag_address_header()
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
         self.monitoring_tag_table.setColumnWidth(12, 130)
@@ -730,6 +750,8 @@ class ModbusGUI(QMainWindow):
         # none of the snap-back-and-rebuild machinery the row reorder above does (there, row
         # order is semantically meaningful).
         self.monitoring_tag_table.horizontalHeader().setSectionsMovable(True)
+        self.monitoring_tag_table.horizontalHeader().moveSection(TAG_DEVICE_COLUMN, 1)
+        self.monitoring_tag_table.setColumnHidden(TAG_DEVICE_COLUMN, True)  # until a device exists
         self.monitoring_tag_table.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
         self.monitoring_tag_table.horizontalHeader().customContextMenuRequested.connect(self._show_tag_column_picker)
         self.monitoring_tag_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -743,6 +765,15 @@ class ModbusGUI(QMainWindow):
         self.monitoring_tag_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel) 
         self.monitoring_tag_table.setStyleSheet(self._get_table_style())
         self.monitoring_tag_table.itemSelectionChanged.connect(self._on_tag_table_selection_changed)
+        # One tab per device -- a filter over the single Tags table, not separate tables
+        # (scaling/bit names/groups are all keyed by table row). Hidden until a device exists.
+        self.tag_device_tabs = QTabBar()
+        self.tag_device_tabs.setExpanding(False)
+        self.tag_device_tabs.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tag_device_tabs.customContextMenuRequested.connect(self._show_tag_device_tab_menu)
+        self.tag_device_tabs.currentChanged.connect(self._on_tag_device_tab_changed)
+        self.tag_device_tabs.setVisible(False)
+        tag_layout.addWidget(self.tag_device_tabs)
         tag_layout.addWidget(self.monitoring_tag_table)
         tag_layout.setStretchFactor(self.monitoring_tag_table, 1)  # Make table expand
 
@@ -754,6 +785,13 @@ class ModbusGUI(QMainWindow):
         self.add_tag_btn.setStyleSheet(self._get_button_style())
         self.add_tag_btn.setMinimumWidth(100)
         first_row_layout.addWidget(self.add_tag_btn)
+
+        self.add_device_btn = QPushButton("Add Device")
+        self.add_device_btn.setStyleSheet(self._get_button_style())
+        self.add_device_btn.setMinimumWidth(100)
+        self.add_device_btn.setToolTip("Add another Modbus unit on this same connection (e.g. a second meter behind the same gateway)")
+        self.add_device_btn.clicked.connect(lambda: self._add_tag_device_interactive())
+        first_row_layout.addWidget(self.add_device_btn)
 
         self.remove_tag_btn = QPushButton("Remove Selected Tag")
         self.remove_tag_btn.setStyleSheet(self._get_button_style())
@@ -1033,6 +1071,9 @@ class ModbusGUI(QMainWindow):
             w.addItem(ADD_GROUP_SENTINEL, ADD_GROUP_SENTINEL)
             index = w.findData(value or "")
             w.setCurrentIndex(index if index >= 0 else 0)
+        elif widget_type == "device_combo":
+            w = QComboBox()
+            self._fill_device_combo(w, value or "")
         elif widget_type == "format_combo":
             w = QComboBox()
             w.addItems([
@@ -1070,7 +1111,7 @@ class ModbusGUI(QMainWindow):
 
     def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None,
                              comment="", insert_row=None, read_value="", raw_hex="", write_value="", timestamp="",
-                             engineering_value="", enabled=True, group=""):
+                             engineering_value="", enabled=True, group="", device=None):
         # An explicit insert_row is used when rebuilding a row that's being dragged to a new
         # position (see _move_tag_row) -- otherwise fall back to the normal Add Tag behavior.
         if insert_row is None:
@@ -1136,6 +1177,13 @@ class ModbusGUI(QMainWindow):
             "(Write Selected, one-shot write via Enter) still work regardless of this."
         )
         self.monitoring_tag_table.setCellWidget(insert_row, 14, CheckboxCell(enabled_widget))  # Enabled
+
+        if not device:
+            # A new tag added while a device's tab is open belongs to that device.
+            device = self._default_tag_device()
+        device_widget = self._create_monitoring_tag_widget("device_combo", device)
+        self.monitoring_tag_table.setCellWidget(insert_row, TAG_DEVICE_COLUMN, device_widget)
+        device_widget.currentIndexChanged.connect(self._on_monitoring_tag_device_changed)
 
         # Keep "count" valid for 32-bit formats (U32/S32/F32 require even register count).
         if hasattr(format_widget, "currentTextChanged"):
@@ -1210,6 +1258,7 @@ class ModbusGUI(QMainWindow):
             "timestamp": timestamp_widget.text() if timestamp_widget else "",
             "engineering_value": eng_value_widget.text() if eng_value_widget else "",
             "enabled": enabled_widget.checkbox.isChecked() if enabled_widget else True,
+            "device": self._row_device(row),
         }
 
     def _move_tag_row(self, source_row, target_row):
@@ -1361,20 +1410,49 @@ class ModbusGUI(QMainWindow):
                 if was_expanded:
                     self._insert_bit_child_rows(insert_row)
 
-        for group_key in self.collapsed_groups:
-            self._set_group_rows_hidden(group_key, True)
+        self._apply_tag_row_visibility()
 
         # A drag would just get visually undone by the next regroup -- see _move_tag_row.
         self._apply_tag_row_drag_movable()
         self._refresh_bit_row_header_labels()
 
     def _set_group_rows_hidden(self, group_key, hidden):
-        """Hide/show every tag row currently belonging to group_key (its own header row
-        is untouched -- that one always stays visible so it can be clicked to expand
-        again)."""
-        for row, group in self.monitoring_manager.tag_groups.items():
-            if group == group_key:
-                self.monitoring_tag_table.setRowHidden(row, hidden)
+        """Kept for callers that collapse/expand one group: visibility now has two
+        inputs (collapsed groups AND the device tab), so it's always recomputed whole."""
+        self._apply_tag_row_visibility()
+
+    def _apply_tag_row_visibility(self):
+        """The single place Tags rows get hidden/shown. A tag row is hidden when its group
+        is collapsed or it belongs to another device than the open device tab; an inline
+        bit row follows its parent tag; a group header is shown only while at least one
+        of its tags belongs to the open device (collapsed or not -- the header is how a
+        collapsed group gets expanded again)."""
+        table = self.monitoring_tag_table
+        manager = self.monitoring_manager
+        device_filter = self._tag_device_filter
+        header_rows = manager.group_header_rows
+        bit_rows = manager.tag_bit_rows
+
+        def device_matches(row):
+            return device_filter is None or self._row_device(row) == device_filter
+
+        hidden = {}
+        groups_with_matches = set()
+        for row in range(table.rowCount()):
+            if row in header_rows or row in bit_rows:
+                continue
+            group = manager.tag_groups.get(row, "")
+            matches = device_matches(row)
+            if matches:
+                groups_with_matches.add(group)
+            hidden[row] = (not matches) or group in self.collapsed_groups
+        for row in range(table.rowCount()):
+            if row in header_rows:
+                table.setRowHidden(row, header_rows[row] not in groups_with_matches)
+            elif row in bit_rows:
+                table.setRowHidden(row, hidden.get(bit_rows[row]["parent_row"], False))
+            else:
+                table.setRowHidden(row, hidden[row])
 
     def _toggle_tag_group_collapsed(self, group_key):
         """A group header was clicked -- flip its collapsed state. Cheap: just a
@@ -1644,6 +1722,8 @@ class ModbusGUI(QMainWindow):
         if address is None:
             return
 
+        # Per device: two meters on one line legitimately share the same register map.
+        device = self._row_device(row)
         used = set()
         for other_row in range(self.monitoring_tag_table.rowCount()):
             if other_row == row:
@@ -1652,7 +1732,7 @@ class ModbusGUI(QMainWindow):
             other_addr = self.monitoring_tag_table.cellWidget(other_row, 4)
             if not (other_type and other_addr):
                 continue
-            if other_type.currentText() != tag_type:
+            if other_type.currentText() != tag_type or self._row_device(other_row) != device:
                 continue
             used.add(int(other_addr.value()))
 
@@ -2114,7 +2194,7 @@ class ModbusGUI(QMainWindow):
                     protocol_offset = self._tag_user_address_to_offset(tag)
 
                     start_time = time.perf_counter()
-                    success = self.modbus.write_register(protocol_offset, new_raw & 0xFFFF)
+                    success = self._tag_client(tag).write_register(protocol_offset, new_raw & 0xFFFF, unit_id=tag.get("unit"))
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                     self._display_raw_data(
                         f"Tag[{display_name}] Write", [new_raw & 0xFFFF] if success else None, elapsed_ms,
@@ -2302,6 +2382,14 @@ class ModbusGUI(QMainWindow):
         self.tcp_framer = vals['tcp_framer']
         self.fast_lan_mode = vals['fast_lan_mode']
         self.interface_ip = vals['interface_ip']
+        # These are the *active device's* settings now (Device Settings / Find Devices /
+        # Recent Connections all land here) -- store them on it.
+        device = self._device(self.active_device) if self.active_device else None
+        if device is not None:
+            device["connection"] = normalize_connection(vals)
+            device["unit"] = int(vals['unit'])
+            self._refresh_tag_device_ui()
+            self._sync_active_device()
 
     def _show_connection_settings(self, serial_overrides=None, tcp_overrides=None):
         """Show the connection settings dialog."""
@@ -2318,139 +2406,6 @@ class ModbusGUI(QMainWindow):
             self._save_settings()
         elif dialog.find_devices_requested_mode is not None:
             self._find_devices(dialog.find_devices_requested_mode)
-
-    def _connect(self):
-        """Connect to Modbus server."""
-        target = self._target_description()
-        unit_id = self.target_unit_id
-        try:
-            self.status_indicator.set_connection_info(f"Connecting to {target}...")
-            self.status_indicator.set_status("connecting")
-            self._set_connection_controls(connected=False, connecting=True)
-
-            if self.connection_mode == "serial":
-                self.modbus = ModbusClient(
-                    unit_id=unit_id, mode="serial", serial_port=self.serial_port,
-                    baudrate=self.baudrate, parity=self.parity, stopbits=self.stopbits, bytesize=self.bytesize,
-                    serial_framer=self.serial_framer,
-                )
-            elif self.fast_lan_mode:
-                self.modbus = ModbusClient(
-                    self.target_ip, self.target_port, unit_id, timeout=0.2, retries=0,
-                    source_address=self.interface_ip, tcp_framer=self.tcp_framer,
-                )
-            else:
-                self.modbus = ModbusClient(
-                    self.target_ip, self.target_port, unit_id,
-                    source_address=self.interface_ip, tcp_framer=self.tcp_framer,
-                )
-
-            if self.modbus.connect():
-                conn_info = f"{target} (Unit {unit_id})"
-                self.status_indicator.set_connection_info(conn_info)
-                self.status_indicator.set_status("connected")
-                self.connection_status.setText(f"Connected: {conn_info}")
-                self._set_connection_controls(connected=True)
-                self._write_confirm_suppressed = False
-                self._apply_pending_write_bounds()
-
-                self._record_connection_history()
-                self._save_settings()
-
-                self._log(f"Connected to Modbus server at {target} (Unit ID: {unit_id})")
-                self._reconnect_attempt = 0
-                self._reconnecting = False
-                self._reconnect_watchdog_timer.start(self.WATCHDOG_HEALTHY_INTERVAL_MS)
-            else:
-                self.status_indicator.set_status("error")
-                self.status_indicator.set_connection_info("Connection failed")
-                self._set_connection_controls(connected=False)
-                self._log("Failed to connect to Modbus server")
-                self._show_connection_error_dialog(target, unit_id, "Connection failed")
-
-        except Exception as e:
-            self.status_indicator.set_status("error")
-            self.status_indicator.set_connection_info("Error encountered")
-            self._set_connection_controls(connected=False)
-            self._log(f"Connection error: {e}")
-            self._show_connection_error_dialog(target, unit_id, str(e))
-
-    def _disconnect(self):
-        """Disconnect from Modbus server."""
-        # A user-initiated disconnect should never trigger auto-reconnect -- stop the
-        # watchdog before clearing self.modbus, since it checks that for its own "still
-        # relevant?" guard.
-        self._reconnect_watchdog_timer.stop()
-        self._reconnecting = False
-        self._reconnect_attempt = 0
-        self._monitoring_paused_by_disconnect = False
-
-        # A Scanner worker thread, or Tag Monitoring's poll worker, may still be mid-read
-        # on self.modbus -- stop and wait for each before tearing the connection down,
-        # otherwise it can hit a closed/replaced client from another thread.
-        if hasattr(self, 'register_scanner_widget'):
-            self.register_scanner_widget.stop_all_scans()
-        self.monitoring_manager.wait_for_idle()
-
-        if self.modbus:
-            self.modbus.disconnect()
-            self.modbus = None
-
-        self.status_indicator.set_status("disconnected")
-        self.status_indicator.set_connection_info("")
-        self.connection_status.setText("Not Connected")
-
-        self._set_connection_controls(connected=False)
-
-        if self.monitoring_active:
-            self._stop_monitoring()
-
-        self._log("Disconnected from Modbus server")
-
-    def _check_connection_watchdog(self):
-        """Runs on its own timer after a successful connect(). While the connection is
-        healthy this just re-arms itself; if it finds the connection dropped, it retries
-        with exponential backoff until it recovers, and restarts Tags monitoring if that
-        was auto-stopped by the drop (see the failed_count == len(tags) paths)."""
-        if not self.modbus:
-            return  # user disconnected, or another window's connection object -- nothing to watch
-
-        if self.modbus.is_connected():
-            if self._reconnecting:
-                self._on_reconnected()
-            self._reconnect_watchdog_timer.start(self.WATCHDOG_HEALTHY_INTERVAL_MS)
-            return
-
-        self._reconnecting = True
-        self._reconnect_attempt += 1
-        target = self._target_description()
-        self.status_indicator.set_connection_info(f"Reconnecting to {target} (attempt {self._reconnect_attempt})...")
-        self.status_indicator.set_status("connecting")
-        self._log(f"Connection lost - reconnect attempt {self._reconnect_attempt}")
-
-        if self.modbus.connect():
-            self._on_reconnected()
-            self._reconnect_watchdog_timer.start(self.WATCHDOG_HEALTHY_INTERVAL_MS)
-        else:
-            delay = min(
-                self.RECONNECT_BASE_DELAY_MS * (2 ** (self._reconnect_attempt - 1)),
-                self.RECONNECT_MAX_DELAY_MS,
-            )
-            self._reconnect_watchdog_timer.start(delay)
-
-    def _on_reconnected(self):
-        self._reconnecting = False
-        self._reconnect_attempt = 0
-        conn_info = f"{self._target_description()} (Unit {self.target_unit_id})"
-        self.status_indicator.set_connection_info(conn_info)
-        self.status_indicator.set_status("connected")
-        self.connection_status.setText(f"Connected: {conn_info}")
-        self._set_connection_controls(connected=True)
-        self._log("Reconnected to Modbus server")
-
-        if self._monitoring_paused_by_disconnect:
-            self._monitoring_paused_by_disconnect = False
-            self._start_monitoring()
 
     def _show_connection_error_dialog(self, target_description, unit_id, error_message):
         """Show connection error dialog with detailed information."""
@@ -2505,7 +2460,9 @@ Unit ID: {unit_id}<br><br>
 
     TAG_ROW_FIELDS = ['Tag Name', 'Group', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment', 'Enabled',
                       'Scale Enabled', 'Scale Mode', 'Raw Min', 'Raw Max', 'Scaled Min',
-                      'Scaled Max', 'Factor', 'Value Type', 'Bit Names']
+                      'Scaled Max', 'Factor', 'Value Type', 'Bit Names', 'Device', 'Unit ID']
+    # Per-installation, not part of a device *type* -- left out of saved Profiles.
+    DEVICE_ROW_FIELDS = ('Device', 'Unit ID')
 
     def _build_tag_export_rows(self):
         """The Tags table as a list of plain dicts, one per tag, in the exact shape both
@@ -2534,6 +2491,10 @@ Unit ID: {unit_id}<br><br>
                 'Factor': scaling.get('factor', '') if scaling else '',
                 'Value Type': scaling.get('value_type', '') if scaling else '',
                 'Bit Names': json.dumps(bit_names) if bit_names else '',
+                # Unit ID travels with the name so an import elsewhere can recreate the
+                # device; blank for the connection's own unit.
+                'Device': tag.get('device', ''),
+                'Unit ID': tag['unit'] if tag.get('unit') is not None else '',
             })
         return rows
 
@@ -2566,10 +2527,16 @@ Unit ID: {unit_id}<br><br>
         self.monitoring_manager.expanded_bit_tags.clear()
         self._bit_child_last_raw.clear()
 
+        # Old exports have no Device/Unit ID columns -- every tag then simply stays on
+        # the connection's own unit, exactly like before devices existed.
+        self._ensure_tag_devices((r.get('Device', ''), r.get('Unit ID', '')) for r in rows)
+        known_devices = {d["name"] for d in self.tag_devices}
+
         imported_count = 0
         for row in rows:
             try:
                 new_row = self.monitoring_tag_table.rowCount()
+                device = (row.get('Device') or '').strip()
                 # Older exports have no "Enabled"/"Group" column -- absent means every tag
                 # was implicitly enabled/ungrouped, since neither concept existed yet.
                 enabled = str(row.get('Enabled', 'True')).strip().lower() in ('true', '1', 'yes')
@@ -2586,6 +2553,7 @@ Unit ID: {unit_id}<br><br>
                     comment=row.get('Comment', '').strip(),
                     enabled=enabled,
                     group=group,
+                    device=device if device in known_devices else "",
                 )
                 imported_count += 1
             except (ValueError, KeyError) as e:
@@ -2640,9 +2608,10 @@ Unit ID: {unit_id}<br><br>
             self._rebuild_tag_table_grouped()
 
         self._refresh_bit_row_header_labels()
+        self._refresh_tag_device_ui()
         return imported_count
 
-    def _import_additional_tag_rows(self, rows):
+    def _import_additional_tag_rows(self, rows, device=None):
         """Add `rows` (the same per-tag dict shape _build_tag_export_rows produces) as
         NEW tags alongside whatever's already in the Tags table, instead of
         _apply_imported_tag_rows' clear-and-repopulate -- used by the Profiles tab's
@@ -2655,13 +2624,16 @@ Unit ID: {unit_id}<br><br>
         # last selected row) -- clear it first so every row in this batch lands at the end,
         # in order, regardless of whatever happened to be selected before this ran.
         self.monitoring_tag_table.clearSelection()
-        existing_names = {t['name'] for t in self.monitoring_manager.get_monitoring_tags()}
+        # Rows land on `device` (default: whichever device tab is open). A tag only counts
+        # as already present on that same device -- two meters both get their own "V1".
+        target_device = self._default_tag_device() if device is None else device
+        existing_names = {(t['name'], t.get('device', '')) for t in self.monitoring_manager.get_monitoring_tags()}
 
         imported_count = 0
         skipped_count = 0
         for row in rows:
             name = row.get('Tag Name', '').strip()
-            if name and name in existing_names:
+            if name and (name, target_device) in existing_names:
                 skipped_count += 1
                 continue
 
@@ -2680,8 +2652,9 @@ Unit ID: {unit_id}<br><br>
                     comment=row.get('Comment', '').strip(),
                     enabled=str(row.get('Enabled', 'True')).strip().lower() in ('true', '1', 'yes'),
                     group=group,
+                    device=target_device,
                 )
-                existing_names.add(name)
+                existing_names.add((name, target_device))
                 imported_count += 1
             except (ValueError, KeyError) as e:
                 self._log(f"Skipping invalid row: {e}")
@@ -3096,7 +3069,18 @@ Unit ID: {unit_id}<br><br>
             self._write_confirm_suppressed = True
         return confirmed
 
+    def _tag_client(self, tag):
+        """The client a tag's requests go through: its device's link. Raises if that
+        device isn't connected -- never fall back to another device's link."""
+        client = tag.get("client")
+        if client is None and "device" in tag:
+            client = self._device_client(tag["device"])
+        if client is None:
+            raise ValueError(f"device '{tag.get('device', '?')}' is not connected")
+        return client
+
     def _write_tag(self, tag):
+        client = self._tag_client(tag)
         if tag["type"] in ("Discrete Input", "Input Register"):
             raise ValueError(f"{tag['type']} is read-only")
 
@@ -3112,7 +3096,7 @@ Unit ID: {unit_id}<br><br>
                 if current_value == desired_value:
                     return True, desired_value, "Skipped write; value already matches"
 
-                if not self.modbus.write_coil(protocol_offset, desired_value):
+                if not client.write_coil(protocol_offset, desired_value, unit_id=tag.get("unit")):
                     return False, desired_value, "Write failed"
 
                 verified_value = self._read_tag_value(tag)
@@ -3125,7 +3109,7 @@ Unit ID: {unit_id}<br><br>
             if current_values == values:
                 return True, values, "Skipped write; values already match"
 
-            if not self.modbus.write_coils(protocol_offset, values):
+            if not client.write_coils(protocol_offset, values, unit_id=tag.get("unit")):
                 return False, values, "Write failed"
 
             verified_values = self._read_tag_value(tag)
@@ -3147,10 +3131,10 @@ Unit ID: {unit_id}<br><br>
             return True, self._format_written_value(tag, desired_registers), "Skipped write; value already matches"
 
         if tag["count"] == 1:
-            if not self.modbus.write_register(protocol_offset, desired_registers[0]):
+            if not client.write_register(protocol_offset, desired_registers[0], unit_id=tag.get("unit")):
                 return False, self._format_written_value(tag, desired_registers), "Write failed"
         else:
-            if not self.modbus.write_registers(protocol_offset, desired_registers):
+            if not client.write_registers(protocol_offset, desired_registers, unit_id=tag.get("unit")):
                 return False, self._format_written_value(tag, desired_registers), "Write failed"
 
         verified_registers = self._read_tag_value(tag)
@@ -3173,16 +3157,17 @@ Unit ID: {unit_id}<br><br>
         self.modbus can be swapped out by a disconnect/reconnect on the GUI thread while
         such a worker is still mid-read, same reasoning TagPollWorker already applies to
         the read-mode poll (see poll_worker.py)."""
-        modbus = modbus if modbus is not None else self.modbus
+        modbus = modbus if modbus is not None else self._tag_client(tag)
         try:
             protocol_offset = self._tag_user_address_to_offset(tag)
         except ValueError as e:
             raise ValueError(f"Address error for tag {tag['name']}: {e}")
 
+        unit = tag.get("unit")
         if tag["type"] == "Coil":
-            value = modbus.read_coils(protocol_offset, tag["count"])
+            value = modbus.read_coils(protocol_offset, tag["count"], unit_id=unit)
         elif tag["type"] == "Holding Register":
-            value = modbus.read_registers(protocol_offset, tag["count"])
+            value = modbus.read_registers(protocol_offset, tag["count"], unit_id=unit)
         else:
             raise ValueError(f"{tag['type']} cannot be written")
 
@@ -3379,6 +3364,7 @@ Unit ID: {unit_id}<br><br>
             "space": tag["type"],
             "start": start_offset,
             "end": start_offset + tag["count"] - 1,
+            "unit": tag.get("unit"),
             "tag": tag["name"],
         }
 
@@ -3410,6 +3396,12 @@ Unit ID: {unit_id}<br><br>
 
     def _ranges_overlap(self, left, right):
         if left["space"] != right["space"]:
+            return False
+        # Different devices on one shared line never overlap. A missing/None unit means
+        # "the connection's default unit", so it's only known to differ from an explicit
+        # one when both are given -- otherwise assume the same device, the safe side.
+        left_unit, right_unit = left.get("unit"), right.get("unit")
+        if left_unit is not None and right_unit is not None and left_unit != right_unit:
             return False
         return left["start"] <= right["end"] and right["start"] <= left["end"]
 
@@ -3475,11 +3467,13 @@ Unit ID: {unit_id}<br><br>
         seen = {}
         duplicates = []
         for tag in tags:
-            key = (tag["type"], self._tag_user_address_to_offset(tag))
+            # Per device -- two meters on one line legitimately share the same addresses.
+            key = (tag.get("device", ""), tag["type"], self._tag_user_address_to_offset(tag))
             if key in seen:
                 other = seen[key]
+                where = f" on {tag['device']}" if tag.get("device") else ""
                 duplicates.append(
-                    f"{tag['type']} address {tag['address']}: {other['name']} and {tag['name']}"
+                    f"{tag['type']} address {tag['address']}{where}: {other['name']} and {tag['name']}"
                 )
             else:
                 seen[key] = tag
@@ -3489,9 +3483,10 @@ Unit ID: {unit_id}<br><br>
         overlaps = []
         by_type = {}
         for tag in tags:
-            by_type.setdefault(tag["type"], []).append(tag)
+            # Per device, like _find_duplicate_tag_addresses.
+            by_type.setdefault((tag.get("device", ""), tag["type"]), []).append(tag)
 
-        for tag_type, group in by_type.items():
+        for (_device, tag_type), group in by_type.items():
             ranges = []
             for tag in group:
                 start = self._tag_user_address_to_offset(tag)
@@ -3657,12 +3652,26 @@ Unit ID: {unit_id}<br><br>
                     values.append(raw_int - (1 << bit_width) if raw_int & sign_bit else raw_int)
                 else:
                     struct_fmt = ">f" if base_format == "F32" else ">d"
-                    values.append(struct.unpack(struct_fmt, raw_int.to_bytes(word_width * 2, "big"))[0])
+                    value = struct.unpack(struct_fmt, raw_int.to_bytes(word_width * 2, "big"))[0]
+                    if base_format == "F32":
+                        # A float32 only carries ~7 significant digits; without this, widening
+                        # it to a Python float displays artifacts like 226.02723693847656
+                        # (long enough to get clipped in the Tags table's Read Value column).
+                        value = float(f"{value:.7g}")
+                    values.append(value)
             return values
 
         return [int(r) & 0xFFFF for r in registers]
 
     def _check_connection(self):
+        """True when at least one device is connected (each tag then uses its own
+        device's link -- see _device_client)."""
+        if self._any_device_connected():
+            return True
+        QMessageBox.warning(self, "Not Connected", "Connect a device first (Overview tab, or Connect All).")
+        return False
+
+    def _check_active_connection(self):
         """Check if connected to Modbus server."""
         if not self.modbus or not self.modbus.is_connected():
             QMessageBox.warning(self, "Not Connected", "Please connect to a Modbus server first.")
@@ -3873,6 +3882,7 @@ Unit ID: {unit_id}<br><br>
                 "fast_lan_mode": self.fast_lan_mode,
                 "interface_ip": self.interface_ip,
             },
+            "devices": [dict(d) for d in self.tag_devices],
             "tags": self._build_tag_export_rows(),
             "address_table": self._build_address_table_data(),
             # Write bounds only ever exist on the live ModbusClient instance (see
@@ -3888,14 +3898,32 @@ Unit ID: {unit_id}<br><br>
         live attributes _connect() reads -- Load Session deliberately does not itself
         connect, the same way applying a Recent Connections entry doesn't, so an
         accidental load can't reach real equipment on its own."""
-        connection = data.get("connection")
-        if connection:
-            self._apply_connection_settings(connection)
-            self._update_connection_info()
-
+        # A session replaces the device list -- close every link first.
+        if self._connected_devices:
+            self._disconnect()
+        connection = data.get("connection") or {}
+        session_conn = normalize_connection(connection) if connection else self._legacy_connection()
+        self.tag_devices = []
+        self._tag_device_filter = None
+        # Each saved device keeps its own connection; devices from sessions saved before
+        # per-device connections existed (and the "connection unit" tags of those) all
+        # get the session's connection.
+        for saved in (data.get("devices") or []):
+            if isinstance(saved, dict):
+                self._add_device_record(saved, default_connection=session_conn)
+        if not self.tag_devices or any(not (r.get("Device") or "").strip() for r in (data.get("tags") or [])):
+            unit = connection.get("unit", self.target_unit_id) if connection else self.target_unit_id
+            if not any(d["unit"] == int(unit) and d["connection"] == session_conn for d in self.tag_devices):
+                name, n = "Device 1", 2
+                while self._device(name):
+                    name, n = f"Device {n}", n + 1
+                self.tag_devices.insert(0, {"name": name, "unit": int(unit), "connection": session_conn})
+        self.active_device = self.tag_devices[0]["name"]
+        self._sync_active_device()
         tags = data.get("tags")
         if tags is not None:
             self._apply_imported_tag_rows(tags)
+        self._refresh_tag_device_ui()
 
         self._apply_address_table_data(data.get("address_table"))
 
