@@ -1276,7 +1276,7 @@ class ScriptWidget(QWidget):
             target_mode,
             self._log_console,
             getattr(self.parent_window, "_display_raw_data", None),
-            getattr(self.parent_window, "_get_monitoring_tags", None),
+            self._script_tags if hasattr(self.parent_window, "_get_monitoring_tags") else None,
             getattr(self.parent_window, "_reserve_range", None),
             getattr(self.parent_window, "_release_range", None),
             self._record_assert_result,
@@ -1291,6 +1291,12 @@ class ScriptWidget(QWidget):
         self.editor.setReadOnly(True)
         self._log_console(f"Script started (target: {self.target_combo.currentText()})")
         self._resume()
+
+    def _script_tags(self):
+        """Tags for name lookups, the active device's first: a script talks to the active
+        device, and two meters usually share tag names (both have a V1)."""
+        active = getattr(self.parent_window, "active_device", None)
+        return sorted(self.parent_window._get_monitoring_tags(), key=lambda t: t.get("device") != active)
 
     def _resume(self):
         if not self.running or self.runner is None:

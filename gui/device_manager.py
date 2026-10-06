@@ -16,7 +16,6 @@ import json
 import os
 import sys
 
-from PySide6.QtCore import QItemSelectionModel
 from PySide6.QtWidgets import QComboBox, QDialog, QLineEdit, QMenu, QMessageBox
 
 from app_paths import app_data_dir
@@ -368,6 +367,8 @@ class DeviceManagerMixin:
             self.active_device = renamed[self.active_device]
         self._rebuild_tag_device_tabs()
         self._apply_tag_row_visibility()
+        if hasattr(self, "diagnostics_dialogs"):
+            self.diagnostics_dialogs.refresh_device_filter(renamed)
         self._save_devices()
         if hasattr(self, "device_status_bar"):
             self.device_status_bar.refresh()
@@ -529,12 +530,7 @@ class DeviceManagerMixin:
                 return
         self._disconnect_device(name)
         if choice == "delete" and rows:
-            table = self.monitoring_tag_table
-            table.clearSelection()
-            flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
-            for row in rows:
-                table.selectionModel().select(table.model().index(row, 0), flags)
-            self._remove_monitoring_tag()
+            self._remove_tag_rows(rows)
         elif choice == "keep":
             for row in rows:
                 combo = self.monitoring_tag_table.cellWidget(row, TAG_DEVICE_COLUMN)
@@ -550,6 +546,44 @@ class DeviceManagerMixin:
                 self._ensure_unique_monitoring_tag_address(row)
         self._sync_active_device()
         self._log(f"Removed device '{name}'" + (" and its tags" if choice == "delete" else f"; its tags moved to {heir}"))
+
+    def _remove_all_tag_devices(self, confirm=True):
+        """Overview's Remove All Devices: disconnect and delete every device and all their
+        tags, leaving a blank "Device 1" (there is always one) on the active device's
+        connection settings. Returns True if done."""
+        tag_count = sum(1 for r in range(self.monitoring_tag_table.rowCount())
+                        if r not in self.monitoring_manager.group_header_rows
+                        and r not in self.monitoring_manager.tag_bit_rows)
+        if confirm:
+            box = QMessageBox(self)
+            box.setWindowTitle("Remove All Devices")
+            box.setIcon(QMessageBox.Warning)
+            box.setText(f"Remove all {len(self.tag_devices)} device(s) and their {tag_count} tag(s)?")
+            box.setInformativeText(
+                "Every device is disconnected and deleted, along with all of its tags, alarms, "
+                "scaling and pinned values. This can't be undone -- Export CSV or Save Session first "
+                "if you might need them.\n\nYou'll start again with one blank device (Device 1) "
+                "using the active device's connection settings.")
+            remove_btn = box.addButton("Remove All Devices", QMessageBox.DestructiveRole)
+            box.addButton(QMessageBox.Cancel)
+            box.setDefaultButton(QMessageBox.Cancel)
+            box.exec()
+            if box.clickedButton() is not remove_btn:
+                return False
+        conn = self._device_connection(self.active_device)
+        self._disconnect()
+        self._remove_tag_rows([r for r in range(self.monitoring_tag_table.rowCount())
+                               if r not in self.monitoring_manager.group_header_rows
+                               and r not in self.monitoring_manager.tag_bit_rows])
+        self.monitoring_manager.tag_alarms.clear()
+        self.monitoring_manager.device_stats.clear()
+        self.tag_devices = [{"name": "Device 1", "unit": 1, "connection": conn}]
+        self.active_device = "Device 1"
+        self._tag_device_filter = None
+        self._refresh_tag_device_ui()
+        self._sync_active_device()
+        self._log(f"Removed all devices and {tag_count} tag(s); started over with Device 1")
+        return True
 
     def _ensure_tag_devices(self, entries, connection=None):
         """Create devices referenced by imported rows that don't exist yet. entries:

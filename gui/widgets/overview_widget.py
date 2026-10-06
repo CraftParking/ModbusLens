@@ -110,6 +110,14 @@ class DeviceCard(QFrame):
         self.status_label = QLabel()
         self.status_label.setStyleSheet("font-weight: 600;")
         top.addWidget(self.status_label)
+        # One click to make this the active device (also in the menu); shows "Active"
+        # and is disabled on the card that already is.
+        self.active_btn = QPushButton("Set Active")
+        self.active_btn.setStyleSheet(button_style)
+        self.active_btn.setCursor(Qt.PointingHandCursor)
+        self.active_btn.clicked.connect(lambda: self.make_active.emit(self.key))
+        top.addWidget(self.active_btn)
+        self._update_active_btn()
         if True:
             menu_btn = QToolButton()
             menu_btn.setText("⋮")
@@ -174,6 +182,17 @@ class DeviceCard(QFrame):
             f" QLabel {{ background: transparent; border: none; font-weight: normal; }}"
         )
         self.setToolTip("Active device" if active else "")
+        self._update_active_btn()
+
+    def _update_active_btn(self):
+        btn = getattr(self, "active_btn", None)
+        if btn is None:
+            return
+        btn.setText("\u2713 Active" if self._active else "Set Active")
+        btn.setEnabled(not self._active)
+        btn.setToolTip("Address Table, Trend, Script, Scanner and Diagnostics use this device"
+                       if self._active else "Make this the active device -- the one Address Table, "
+                       "Trend, Script, Scanner and Diagnostics work with")
 
     def update_view(self, title, subtitle, status, detail, values, paused, connected=False):
         self.connect_btn.setText("Disconnect" if connected or status == "reconnecting" else "Connect")
@@ -531,6 +550,12 @@ class OverviewWidget(QWidget):
             btn.clicked.connect(slot)
             add_row.addWidget(btn)
         add_row.addStretch()
+        remove_all_btn = QPushButton("Remove All Devices")
+        remove_all_btn.setStyleSheet(button_style)
+        remove_all_btn.setMinimumWidth(150)
+        remove_all_btn.setToolTip("Disconnect and delete every device and all their tags (asks first)")
+        remove_all_btn.clicked.connect(self._remove_all)
+        add_row.addWidget(remove_all_btn)
         devices_layout.addLayout(add_row)
 
         self.empty_label = QLabel(
@@ -697,6 +722,10 @@ class OverviewWidget(QWidget):
             self.mw._disconnect_device(key)
         else:
             self.mw._connect_device(key)
+        self.refresh()
+
+    def _remove_all(self):
+        self.mw._remove_all_tag_devices()
         self.refresh()
 
     def _add_blank(self):

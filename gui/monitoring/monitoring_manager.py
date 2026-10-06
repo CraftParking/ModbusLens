@@ -423,6 +423,30 @@ class MonitoringManager:
         self._poll_worker = worker
         worker.start()
 
+    def _relocate_tag(self, tag):
+        """`tag` as it is in the table now, or None if it's gone. A poll cycle snapshots
+        tags (with their row index) when it starts; an import, regroup or remove while it's
+        in flight shifts rows, and the stale index would pick up another tag's scaling,
+        alarm or Bit View cache."""
+        table = self.parent.monitoring_tag_table
+
+        def matches(row):
+            if row in self.group_header_rows or row in self.tag_bit_rows:
+                return False
+            name_widget, type_widget, address_widget = (table.cellWidget(row, c) for c in (0, 3, 4))
+            return (name_widget is not None and type_widget is not None and address_widget is not None
+                    and name_widget.text().strip() == tag["name"]
+                    and type_widget.currentText() == tag["type"]
+                    and address_widget.value() == tag["address"]
+                    and self.parent._row_device(row) == tag.get("device", ""))
+
+        row = tag["row"]
+        if not (0 <= row < table.rowCount() and matches(row)):
+            row = next((r for r in range(table.rowCount()) if matches(r)), None)
+            if row is None:
+                return None
+        return tag if row == tag["row"] else {**tag, "row": row}
+
     def _on_tag_poll_result(self, tag, value, elapsed_ms, status, detail, category, tx_bytes, rx_bytes):
         """GUI-thread handler for one tag's result from the poll worker -- does exactly
         what the old inline loop body did after getting a value back, since all of this
@@ -431,6 +455,9 @@ class MonitoringManager:
         timestamp = self._current_poll_timestamp
         log_timestamp = self._current_poll_log_timestamp
         self._record_device_result(tag, status, category, elapsed_ms, detail)
+        tag = self._relocate_tag(tag)
+        if tag is None:
+            return  # removed (or renamed/re-addressed) since this cycle started
 
         if status == "ok":
             display_value = self.format_monitoring_value(tag, value)
@@ -443,7 +470,7 @@ class MonitoringManager:
                 self.tag_last_raw[tag["row"]] = value if isinstance(value, list) else [value]
             self.parent._display_raw_data(
                 f"Tag[{tag['name']}]", value, elapsed_ms, function_code_for(tag["type"], is_write=False),
-                tx_bytes=tx_bytes, rx_bytes=rx_bytes,
+                tx_bytes=tx_bytes, rx_bytes=rx_bytes, device=tag.get("device", ""),
             )
             self.add_monitoring_row(
                 tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",
@@ -463,7 +490,7 @@ class MonitoringManager:
             self.parent._log(f"Monitoring read failed for {tag['name']} at {tag['address']}{extra}")
             self.parent._display_raw_data(
                 f"Tag[{tag['name']}]", None, elapsed_ms, function_code_for(tag["type"], is_write=False),
-                error_category=category, tx_bytes=tx_bytes, rx_bytes=rx_bytes,
+                error_category=category, tx_bytes=tx_bytes, rx_bytes=rx_bytes, device=tag.get("device", ""),
             )
         elif status == "busy":
             self.parent._log(f"Safety interlock: skipped read for {tag['name']} because the range is busy")
@@ -600,6 +627,9 @@ class MonitoringManager:
         table or Raw Data tab at all -- it just logs and leaves the row at its
         last-known value."""
         if status == "ok":
+            tag = self._relocate_tag(tag)
+            if tag is None:
+                return
             timestamp = self._current_write_poll_timestamp
             display_value = self.parent._format_monitoring_value(tag, value)
             raw_hex = self.format_raw_hex(tag, value)
@@ -611,7 +641,7 @@ class MonitoringManager:
             self.parent._display_raw_data(
                 f"Tag[{tag['name']}] (write-mode, current value)", value, elapsed_ms,
                 function_code_for(tag["type"], is_write=False),
-                tx_bytes=tx_bytes, rx_bytes=rx_bytes,
+                tx_bytes=tx_bytes, rx_bytes=rx_bytes, device=tag.get("device", ""),
             )
             self.add_monitoring_row(
                 tag["name"], tag["mode"], tag["type"], tag["address"], display_value, "",

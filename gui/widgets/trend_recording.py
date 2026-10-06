@@ -248,7 +248,8 @@ class TrendRecordingWindow(QDialog):
     def _snapshot_active_pens(self):
         return [
             {
-                "slot": pen.slot, "name": pen.name, "label": pen.label, "type": pen.type,
+                "slot": pen.slot, "name": pen.name, "label": pen.display_name() if pen.device else pen.label,
+                "device": pen.device, "type": pen.type,
                 "address": pen.address, "count": pen.count, "format": pen.format,
                 "index": pen.index, "scale_mode": pen.scale_mode, "color": pen.color.name(),
             }

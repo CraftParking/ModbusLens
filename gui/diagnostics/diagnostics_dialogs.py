@@ -20,9 +20,14 @@ DEFAULT_RAW_TABLE_FONT_PX = 11
 
 RAW_DATA_COLUMNS = [
     "Time", "Operation", "Value", "Raw (Hex)", "TX Bytes", "RX Bytes", "Status", "Exception", "Latency (ms)",
+    "Device",
 ]
 STATUS_COLUMN = 6
 EXCEPTION_COLUMN = 7
+# Appended last so every existing column index stays put; shown second (after Time) and
+# only while there are 2+ devices -- same as the Tags table's Device column.
+DEVICE_COLUMN = 9
+ALL_DEVICES = "All devices"
 
 
 def _format_wire_bytes(data):
@@ -63,6 +68,7 @@ class DiagnosticsDialogs:
         self.logs_dialog = None
         self.filter_text = ""
         self.filter_status = "All"
+        self.filter_device = None  # None = all devices, else a device name
 
     def _log_text_style(self, font_px=DEFAULT_LOG_FONT_PX):
         c = self.parent._colors()
@@ -117,9 +123,11 @@ class DiagnosticsDialogs:
             # Interactive (not Stretch) since TX/RX Bytes need room to vary with frame size --
             # forcing every column to share the width equally would crush the hex dumps.
             table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-            column_widths = [70, 170, 130, 130, 190, 190, 70, 220, 90]
+            column_widths = [70, 170, 130, 130, 190, 190, 70, 220, 90, 110]
             for col, width in enumerate(column_widths):
                 table.setColumnWidth(col, width)
+            table.horizontalHeader().moveSection(DEVICE_COLUMN, 1)
+            table.setColumnHidden(DEVICE_COLUMN, True)  # until there are 2+ devices
             table.setEditTriggers(QTableWidget.NoEditTriggers)
             table.setSelectionBehavior(QTableWidget.SelectRows)
             table.setAlternatingRowColors(True)
@@ -218,6 +226,14 @@ class DiagnosticsDialogs:
         self.filter_status_combo.currentTextChanged.connect(self._on_filter_changed)
         filter_layout.addWidget(self.filter_status_combo)
         apply_dropdown_delegate(self.filter_status_combo, getattr(self.parent, "_theme_mode", "light"))
+
+        self.filter_device_combo = QComboBox()
+        self.filter_device_combo.setStyleSheet(self.parent._get_input_style())
+        self.filter_device_combo.setMinimumWidth(140)
+        self.filter_device_combo.setToolTip("Show only this device's transactions")
+        self.filter_device_combo.currentIndexChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.filter_device_combo)
+        apply_dropdown_delegate(self.filter_device_combo, getattr(self.parent, "_theme_mode", "light"))
         layout.addWidget(filter_group)
 
         # Use the pre-initialized raw data table
@@ -226,7 +242,7 @@ class DiagnosticsDialogs:
         if self.parent.raw_data_table.parent():
             self.parent.raw_data_table.setParent(None)
         layout.addWidget(self.parent.raw_data_table)
-        self._apply_raw_data_filter()
+        self.refresh_device_filter()
 
         # Buttons
         button_layout = QHBoxLayout()
@@ -269,11 +285,48 @@ class DiagnosticsDialogs:
     def _on_filter_changed(self, _value=None):
         self.filter_text = self.filter_input.text().strip().lower()
         self.filter_status = self.filter_status_combo.currentText()
+        combo = getattr(self, "filter_device_combo", None)
+        if combo is not None and combo.count():
+            self.filter_device = combo.currentData()
+        self._apply_raw_data_filter()
+
+    def refresh_device_filter(self, renamed=None):
+        """Re-sync the Device filter + column with the device list (called whenever it
+        changes): both are shown only with 2+ devices. Keeps the current choice across a
+        rename; falls back to All devices if that device was removed."""
+        devices = [d["name"] for d in getattr(self.parent, "tag_devices", [])]
+        if renamed and self.filter_device in renamed:
+            self.filter_device = renamed[self.filter_device]
+        if self.filter_device not in devices:
+            self.filter_device = None
+        multi = len(devices) > 1
+        table = getattr(self.parent, "raw_data_table", None)
+        if table is not None:
+            if renamed:
+                for row in range(table.rowCount()):
+                    item = table.item(row, DEVICE_COLUMN)
+                    if item is not None and item.text() in renamed:
+                        item.setText(renamed[item.text()])
+            table.setColumnHidden(DEVICE_COLUMN, not multi)
+        combo = getattr(self, "filter_device_combo", None)
+        if combo is not None:
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(ALL_DEVICES, None)
+            for name in devices:
+                combo.addItem(name, name)
+            combo.setCurrentIndex(max(combo.findData(self.filter_device), 0))
+            combo.setVisible(multi)
+            combo.blockSignals(False)
         self._apply_raw_data_filter()
 
     def _row_matches_filter(self, table, row):
         if self.filter_status != "All" and table.item(row, STATUS_COLUMN).text() != self.filter_status:
             return False
+        if self.filter_device is not None:
+            item = table.item(row, DEVICE_COLUMN)
+            if item is None or item.text() != self.filter_device:
+                return False
         if self.filter_text:
             # Search Operation (tag name/address), Value, and Exception -- "did this tag
             # show up", "did this value show up", or "did this exception show up" are all
@@ -293,7 +346,7 @@ class DiagnosticsDialogs:
             table.setRowHidden(row, not self._row_matches_filter(table, row))
 
     def add_raw_data_row(self, timestamp, title, data, elapsed_ms, error_text, tx_bytes=None, rx_bytes=None,
-                          exception_text="", exception_tooltip=""):
+                          exception_text="", exception_tooltip="", device=""):
         """Append one transaction row to the Raw Data table. exception_text is the decoded
         Modbus exception description (e.g. "Illegal Data Address - ...") when the device
         itself replied with an exception response -- left blank for a plain communications
@@ -326,6 +379,7 @@ class DiagnosticsDialogs:
         table.insertRow(row)
         columns = (
             timestamp, title, value_text, hex_text, tx_text, rx_text, status_text, exception_text, latency_text,
+            device or "",
         )
         for col, text in enumerate(columns):
             item = QTableWidgetItem(text)

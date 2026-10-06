@@ -1202,9 +1202,20 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         self._ensure_unique_monitoring_tag_address(insert_row)
         self._update_tag_name_column_width()
 
-        # Auto-select the newly inserted row
-        self.monitoring_tag_table.selectRow(insert_row)
-        self.monitoring_tag_table.setCurrentCell(insert_row, 0)
+        # A row for another device than the open device tab (an Add Device from Profile
+        # while a different tab is open) or in a collapsed group starts hidden -- callers
+        # that don't regroup afterward would otherwise show it in the wrong tab.
+        filter_device = self._tag_device_filter
+        hidden = (filter_device is not None and self._row_device(insert_row) != filter_device)             or (group or "") in self.collapsed_groups
+        self.monitoring_tag_table.setRowHidden(insert_row, hidden)
+
+        # Auto-select the newly inserted row -- unless it's hidden: a selected row the user
+        # can't see would be what Remove Tag/Write Selected act on next.
+        if hidden:
+            self.monitoring_tag_table.clearSelection()
+        else:
+            self.monitoring_tag_table.selectRow(insert_row)
+            self.monitoring_tag_table.setCurrentCell(insert_row, 0)
 
         # Row numbers embedded in any qualifying row's "▶/▼ N" vertical-header label go
         # stale the moment a row is inserted above them (Qt shifts the header *item* down
@@ -1765,8 +1776,13 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         self._bit_view_dialogs.clear()
 
     def _remove_monitoring_tag(self):
+        self._remove_tag_rows(self._get_selected_tag_rows())
+
+    def _remove_tag_rows(self, rows):
+        """Remove these tag rows (visible or not -- Remove Device deletes a device's tags
+        while another device's tab is open) plus their inline bit rows."""
         self._close_all_bit_view_dialogs()
-        selected_rows = set(self._get_selected_tag_rows())
+        selected_rows = set(rows)
         # Pull in any selected row's inline bit-child rows too, so they're deleted alongside
         # their parent in the same descending-order pass below instead of being orphaned --
         # computed up front, before anything is actually removed, so later index shifts from
@@ -2198,7 +2214,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
                     elapsed_ms = (time.perf_counter() - start_time) * 1000
                     self._display_raw_data(
                         f"Tag[{display_name}] Write", [new_raw & 0xFFFF] if success else None, elapsed_ms,
-                        function_code_for(tag["type"], is_write=True, count=1),
+                        function_code_for(tag["type"], is_write=True, count=1), device=tag.get("device"),
                     )
                     if not success:
                         self._log(f"Write failed: {display_name}")
@@ -2285,7 +2301,11 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         excludes group header rows -- those aren't tags, and selecting one shouldn't let
         Remove Tag/Write Selected/Copy act on it. Also excludes inline bit-child rows, which
         aren't independent tags either."""
-        selected = {index.row() for index in self.monitoring_tag_table.selectedIndexes()}
+        table = self.monitoring_tag_table
+        # Hidden rows too (another device's tab, a collapsed group): Select All, or a row
+        # selected before switching device tabs, must never let Remove Tag/Write Selected
+        # touch tags that aren't on screen.
+        selected = {index.row() for index in table.selectedIndexes() if not table.isRowHidden(index.row())}
         return selected - set(self.monitoring_manager.group_header_rows) - set(self.monitoring_manager.tag_bit_rows)
 
     def _on_tag_table_selection_changed(self):
@@ -2553,7 +2573,9 @@ Unit ID: {unit_id}<br><br>
                     comment=row.get('Comment', '').strip(),
                     enabled=enabled,
                     group=group,
-                    device=device if device in known_devices else "",
+                    # Not "" -- that means "the open device tab" for a new tag, which would
+                    # put a whole Device-less (older) import on whatever tab was open.
+                    device=device if device in known_devices else self.active_device,
                 )
                 imported_count += 1
             except (ValueError, KeyError) as e:
@@ -2704,6 +2726,18 @@ Unit ID: {unit_id}<br><br>
         self._refresh_bit_row_header_labels()
         return imported_count, skipped_count
 
+    def _import_tag_rows_into_device(self, rows, device):
+        """Replace `device`'s tags with `rows`, ignoring any Device/Unit ID columns in them
+        and leaving every other device's tags alone. Returns (imported, replaced)."""
+        manager = self.monitoring_manager
+        old_rows = [r for r in range(self.monitoring_tag_table.rowCount())
+                    if r not in manager.group_header_rows and r not in manager.tag_bit_rows
+                    and self._row_device(r) == device]
+        self._remove_tag_rows(old_rows)
+        imported, _skipped = self._import_additional_tag_rows(rows, device=device)
+        self._apply_tag_row_visibility()
+        return imported, len(old_rows)
+
     def _export_tags_csv(self):
         """Export tags to CSV file."""
         try:
@@ -2764,8 +2798,22 @@ Unit ID: {unit_id}<br><br>
                         "CSV file must contain columns: Tag Name, Mode, Type, Address, Count, Format, Comment")
                     return
 
-                imported_count = self._apply_imported_tag_rows(list(reader))
+                rows = list(reader)
 
+            device = self._tag_device_filter
+            if device:
+                # A device's tab is open: the file is that device's tag list (the same
+                # meter-model CSV gets imported once per meter) -- replace only its tags.
+                imported_count, replaced = self._import_tag_rows_into_device(rows, device)
+                self._log(f"Imported {imported_count} tags into {device} from {file_path}"
+                          + (f" (replaced its {replaced} previous tags)" if replaced else ""))
+                QMessageBox.information(self, "Import Complete",
+                    f"Successfully imported {imported_count} tags into {device}!"
+                    + (f"\n\nIts {replaced} previous tag(s) were replaced; other devices' tags are unchanged."
+                       if replaced else ""))
+                return
+
+            imported_count = self._apply_imported_tag_rows(rows)
             self._log(f"Imported {imported_count} tags from {file_path}")
             QMessageBox.information(self, "Import Complete",
                 f"Successfully imported {imported_count} tags from CSV file!")
@@ -2997,6 +3045,7 @@ Unit ID: {unit_id}<br><br>
                     self._display_raw_data(
                         f"Tag[{tag['name']}] Write", written_value if success else None, elapsed_ms,
                         function_code_for(tag["type"], is_write=True, count=tag.get("count", 1)),
+                        device=tag.get("device"),
                     )
 
                     if success:
@@ -3692,7 +3741,7 @@ Unit ID: {unit_id}<br><br>
                 scrollbar.setValue(scrollbar.maximum())
 
     def _display_raw_data(self, title, data, elapsed_ms=None, function_info=None, error_category=None,
-                           tx_bytes=None, rx_bytes=None):
+                           tx_bytes=None, rx_bytes=None, device=None):
         """Log one Modbus transaction to the Raw Data tab: what was requested, its raw
         value(s) in decimal and hex, whether it succeeded, how long it took, and (when the
         caller knows it) which function code was actually used.
@@ -3748,6 +3797,9 @@ Unit ID: {unit_id}<br><br>
             self.diagnostics_dialogs.add_raw_data_row(
                 timestamp, title, data, elapsed_ms, error_text, tx_bytes, rx_bytes, exception_text,
                 exception_tooltip,
+                # Tags pass their own device; everything else (Address Table, Script...)
+                # goes through the active device.
+                device=device if device is not None else getattr(self, "active_device", ""),
             )
 
     def _format_exception_tooltip(self, exception_code):

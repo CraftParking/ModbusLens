@@ -49,6 +49,8 @@ class TrendPen:
         self.slot = slot
         self.enabled = False
         self.name = ""  # the bound tag's exact name -- used to match Tags-tab scaling config, not for display
+        self.device = ""  # the bound tag's device -- two meters can both have a "V1"; reads go to this one
+        self.show_device = False  # set by TrendWidget while there are 2+ devices (see display_name)
         self.label = ""  # optional custom display name; falls back to `name` when blank (see display_name)
         self.type = "Holding Register"
         self.address = 0
@@ -63,7 +65,22 @@ class TrendPen:
         return self.enabled and bool(self.name)
 
     def display_name(self):
-        return self.label.strip() or self.name
+        if self.label.strip():
+            return self.label.strip()
+        return f"{self.name} ({self.device})" if self.show_device and self.device else self.name
+
+
+def tag_key(tag):
+    """A tag's identity across devices: (device, name)."""
+    return (tag.get("device", ""), tag["name"])
+
+
+def _multi_device(tags):
+    return len({t.get("device", "") for t in tags}) > 1
+
+
+def tag_title(tag, show_device):
+    return f"{tag['name']}  ({tag['device']})" if show_device and tag.get("device") else tag["name"]
 
 
 class ColorButton(QPushButton):
@@ -117,9 +134,26 @@ class TagPickerDialog(QDialog):
         hint.setStyleSheet("color: #888888; font-size: 11px;")
         layout.addWidget(hint)
 
+        # Two meters usually share a register map, so the same names appear once per
+        # device: label each row with its device and offer a device filter.
+        self._multi = _multi_device(tags)
+        self.device_combo = None
+        if self._multi:
+            self.resize(320, 420)
+            device_row = QHBoxLayout()
+            device_row.addWidget(QLabel("Device:"))
+            self.device_combo = QComboBox()
+            self.device_combo.addItem("All devices", None)
+            for device in dict.fromkeys(t.get("device", "") for t in tags):
+                self.device_combo.addItem(device, device)
+            self.device_combo.currentIndexChanged.connect(self._apply_device_filter)
+            device_row.addWidget(self.device_combo, 1)
+            layout.addLayout(device_row)
+
         self.list_widget = QListWidget()
-        for tag in tags:
-            item = QListWidgetItem(tag["name"])
+        ordered = sorted(tags, key=lambda t: t.get("device", "")) if self._multi else tags
+        for tag in ordered:
+            item = QListWidgetItem(tag_title(tag, self._multi))
             item.setData(Qt.UserRole, tag)
             self.list_widget.addItem(item)
         self.list_widget.itemDoubleClicked.connect(self._accept_item)
@@ -137,6 +171,16 @@ class TagPickerDialog(QDialog):
         button_row.addWidget(ok_btn)
         button_row.addWidget(cancel_btn)
         layout.addLayout(button_row)
+
+    def set_device_filter(self, device):
+        if self.device_combo is not None:
+            self.device_combo.setCurrentIndex(max(self.device_combo.findData(device), 0))
+
+    def _apply_device_filter(self, _index=None):
+        device = self.device_combo.currentData() if self.device_combo is not None else None
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            item.setHidden(device is not None and item.data(Qt.UserRole).get("device", "") != device)
 
     def _accept_item(self, item):
         self._chosen = item.data(Qt.UserRole)
@@ -161,11 +205,14 @@ class TagPickerDialog(QDialog):
 
 
 class TagPickerCell(QWidget):
-    def __init__(self, tags, initial_tag_name=None, main_window=None, parent=None):
+    def __init__(self, tags, initial_tag_name=None, main_window=None, parent=None, initial_device=None):
         super().__init__(parent)
         self._tags = tags
         self._main_window = main_window
-        self._tag = next((t for t in tags if t["name"] == initial_tag_name), None)
+        self._multi = _multi_device(tags)
+        # Pens saved before devices existed have no device: first tag with that name.
+        self._tag = next((t for t in tags if t["name"] == initial_tag_name
+                          and (not initial_device or t.get("device", "") == initial_device)), None)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
@@ -183,7 +230,7 @@ class TagPickerCell(QWidget):
 
     def _refresh_label(self):
         if self._tag:
-            self.label.setText(self._tag["name"])
+            self.label.setText(tag_title(self._tag, self._multi))
             self.label.setStyleSheet("")
         else:
             self.label.setText("Add Tag")
@@ -191,6 +238,8 @@ class TagPickerCell(QWidget):
 
     def _open_picker(self):
         dialog = TagPickerDialog(self._tags, self.window())
+        if self._tag:
+            dialog.set_device_filter(self._tag.get("device", ""))
         if dialog.exec() != QDialog.Accepted:
             return
         if dialog.wants_add_tag():
@@ -238,7 +287,7 @@ class AddPenDialog(QDialog):
             enabled_cell_layout.setContentsMargins(0, 0, 0, 0)
             table.setCellWidget(row, 0, enabled_cell)
 
-            name_cell = TagPickerCell(tags, pen.name or None, main_window)
+            name_cell = TagPickerCell(tags, pen.name or None, main_window, initial_device=pen.device)
             table.setCellWidget(row, 1, name_cell)
 
             label_edit = QLineEdit(pen.label)
@@ -298,12 +347,14 @@ class AddPenDialog(QDialog):
             tag = widgets["name"].current_tag()
             if tag:
                 pen.name = tag["name"]
+                pen.device = tag.get("device", "")
                 pen.type = tag["type"]
                 pen.address = tag["address"]
                 pen.count = tag["count"]
                 pen.format = tag["format"]
             else:
                 pen.name = ""
+                pen.device = ""
             pen.label = widgets["label"].text().strip()
             pen.index = widgets["index"].value()
             pen.scale_mode = widgets["scale"].currentText()
@@ -786,7 +837,9 @@ class TrendWidget(QWidget):
 
     def _sync_series(self):
         """Add/remove/restyle chart series so they match the current pen configuration."""
+        show_device = len(getattr(self.parent_window, "tag_devices", [])) > 1
         for pen in self.pens:
+            pen.show_device = show_device
             if pen.is_active():
                 if pen.series is None:
                     series = QLineSeries()
@@ -938,8 +991,7 @@ class TrendWidget(QWidget):
         self.add_pen_btn.setEnabled(True)
 
     def _check_connection(self):
-        modbus = getattr(self.parent_window, "modbus", None)
-        if modbus and modbus.is_connected():
+        if self._any_connected():
             return True
         QMessageBox.warning(self, "Not Connected", "Connect to a Modbus server before starting the trend.")
         return False
@@ -950,9 +1002,29 @@ class TrendWidget(QWidget):
 
     # --- Polling ---
 
+    def _any_connected(self):
+        any_connected = getattr(self.parent_window, "_any_device_connected", None)
+        if any_connected is not None:
+            return any_connected()
+        modbus = getattr(self.parent_window, "modbus", None)
+        return bool(modbus and modbus.is_connected())
+
+    def _pen_client(self, pen, default):
+        """(modbus, unit, link) a pen reads through: its own device's link + Unit ID, or the
+        active device for a pen without one. modbus is None while that device is offline."""
+        mw = self.parent_window
+        if not pen.device or not hasattr(mw, "_device_client") or mw._device(pen.device) is None:
+            return default, None, None
+        client = mw._device_client(pen.device)
+        if client is None:
+            return None, None, None
+        from device_links import DeviceView
+        unit = mw._tag_device_unit(pen.device)
+        return DeviceView(client, unit), unit, id(client)
+
     def _poll_pens(self):
         modbus = getattr(self.parent_window, "modbus", None)
-        if not modbus or not modbus.is_connected():
+        if not self._any_connected():
             self._stop_trend()
             QMessageBox.warning(self, "Trend Stopped", "Trend was stopped because the Modbus connection is not active.")
             return
@@ -966,7 +1038,10 @@ class TrendWidget(QWidget):
         for pen in self.pens:
             if not (pen.is_active() and pen.series is not None):
                 continue
-            value = self._read_pen_value(modbus, pen)
+            pen_modbus, unit, link = self._pen_client(pen, modbus)
+            if pen_modbus is None:
+                continue  # its device is offline
+            value = self._read_pen_value(pen_modbus, pen, unit=unit, link=link)
             if value is None:
                 continue
             pen.series.append(now_ms, value)
@@ -983,7 +1058,7 @@ class TrendWidget(QWidget):
             self._update_stats_table()
             self.sample_tick.emit(now_ms, tick_values)
 
-    def _read_pen_value(self, modbus, pen):
+    def _read_pen_value(self, modbus, pen, unit=None, link=None):
         try:
             # pen.address is the same user-facing address a Tag shows (e.g. "1" with
             # 1-based addressing) -- it needs the same conversion Tags/Address Table
@@ -998,7 +1073,7 @@ class TrendWidget(QWidget):
             # same reasoning as the poll worker's own cache check: nothing touches the wire.
             block_end = address + pen.count - 1
             shared_cache = getattr(self.parent_window, "_shared_read_cache", None)
-            data = shared_cache.get(pen.type, address, block_end) if shared_cache else None
+            data = shared_cache.get(pen.type, address, block_end, unit=unit, link=link) if shared_cache else None
 
             if data is None:
                 # Join the same busy/overlap interlock Tags/Address Table reads and writes
@@ -1031,7 +1106,7 @@ class TrendWidget(QWidget):
                 if data is None:
                     return None
                 if shared_cache:
-                    shared_cache.put(pen.type, address, block_end, data)
+                    shared_cache.put(pen.type, address, block_end, data, unit=unit, link=link)
 
             if pen.type in ("Coil", "Discrete Input"):
                 first = data[0] if isinstance(data, list) else data
@@ -1074,7 +1149,8 @@ class TrendWidget(QWidget):
         manager = getattr(self.parent_window, "monitoring_manager", None)
         if getter is None or manager is None:
             return None
-        tag = next((t for t in getter() if t["name"] == pen.name), None)
+        tag = next((t for t in getter() if t["name"] == pen.name
+                    and (not pen.device or t.get("device", "") == pen.device)), None)
         if tag is None:
             return None
         config = manager.tag_scaling.get(tag["row"])
