@@ -201,6 +201,7 @@ CHANGELOG_HTML = """
 <li>Devices with their own connections - each device on the new Overview tab (first tab) has its own connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link; per-device Connect/Disconnect plus Connect All / Disconnect All; the top bar shows every device's status</li>
 <li>Device dropdowns instead of an "active device" - Address Table, Script, Scanner and Diagnostic Functions each pick their own device; scripts can switch device with a DEVICE line</li>
 <li>Trend pages - several graphs, each with its own 20 pens, all polled while the trend runs; pens read from their own tag's device and show it in the legend</li>
+<li>Address Table live monitoring and Tags monitoring run at the same time - they take turns on the connection instead of stopping each other</li>
 <li>Bigger Trend graph - View Range on one row above the graph, the stats table only as tall as its pens, tighter chart margins, and Hide Stats available in the tab too (not just when detached)</li>
 <li>Profiles tab laid out like the other tabs - a Profile Library box with the Local/Community switch, and Local/Community Profiles boxes with their buttons above the profile cards</li>
 <li>Raw Data Device column and filter; Remove All Devices on the Overview; tag pickers (Trend pens, Script Insert Tag) show each tag's device</li>
@@ -215,6 +216,7 @@ CHANGELOG_HTML = """
 <li>Illegal Data Address explainer lists one more cause: a read covering only half of a 32-bit value, which many energy meters refuse</li>
 <li>Share to Community works again - submissions were being rejected with "Submission Failed" after the submission form's hosting plan changed; they now go to the active form</li>
 <li>Raw Data Frame Viewer decodes RTU-over-TCP traffic as RTU frames (unit, function, CRC) - it was applying the Modbus-TCP header layout, showing nonsense like a random Protocol ID</li>
+<li>Raw Data Frame Viewer no longer flickers or pops its TX/RX tables out as empty "ModbusLens" windows once the table reaches 1000 rows - the selection no longer rolls onto each new row, and the viewer only redraws when the selected frame actually changes</li>
 <li>Script tag-name reads/writes hit the right register - a tag's 1-based Address was sent as the raw protocol offset, one register too high</li>
 <li>Write All and Remove All Tags act on the open device tab only (every device only on the All tab); Scanner's Create Tags uses the function that was actually scanned; closing a window or New Session disconnects every device</li>
 <li>Connection Settings (Tools menu, Find Devices and Serial Discovery "Apply") always asks which device it's for instead of silently editing one</li>

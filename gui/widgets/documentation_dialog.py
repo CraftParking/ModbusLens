@@ -312,10 +312,10 @@ address 99 is outside the configured write bound [0, 100]"</i>.</p>
 
 <h3>Live Monitoring</h3>
 <p>For Read functions, check <b>Enable Live Monitoring</b> and set an interval (100-10000 ms,
-default 1000) to keep polling the whole range automatically. Address Table monitoring and Tags
-monitoring don't run together: switching to the Address Table tab stops Tags monitoring, and
-switching to the Tags tab stops Live Monitoring here, so the two don't compete for the
-connection. (Tags monitoring is what feeds the Overview cards.)</p>
+default 1000) to keep polling the whole range automatically. It runs alongside Tags monitoring
+and Trend - each request waits its turn on the connection - so you can watch one device's range
+here while Tags keeps polling every device, and both show up in the Raw Data tab. It keeps
+running while you look at other tabs.</p>
 
 <h3>Status Log</h3>
 <p>The panel on the right shows what the table is doing - reads, writes, and any errors,

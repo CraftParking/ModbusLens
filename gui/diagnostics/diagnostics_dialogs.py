@@ -395,6 +395,14 @@ class DiagnosticsDialogs:
 
         overflow = table.rowCount() - MAX_RAW_DATA_ROWS
         if overflow > 0:
+            if table.currentRow() == 0:
+                # The selected transaction is the one falling off: clear the selection
+                # (the Frame Viewer keeps showing it) rather than letting it roll onto
+                # the next row on every new transaction.
+                table.blockSignals(True)
+                table.clearSelection()
+                table.setCurrentCell(-1, -1)
+                table.blockSignals(False)
             table.removeRow(0)  # oldest row falls off the front, not the one just added
 
         if was_at_bottom:

@@ -2931,31 +2931,18 @@ Unit ID: {unit_id}<br><br>
             tab_text = self.tab_widget.tabText(index)
             self._log(f"Switched to tab: {tab_text}")
             
-            # Smart interlock: auto-disable instead of stopping all monitoring
-            if tab_text == "Address Table":
-                # Auto-stop tag monitoring when going to address table
-                if hasattr(self, 'tag_start_monitoring_btn'):
-                    if not self.tag_start_monitoring_btn.isEnabled():
-                        # Tag monitoring is active, stop it
-                        self.tag_stop_monitoring_btn.click()
-                
-                # Enable address table monitoring controls if connected
+            # Address Table live monitoring and Tags monitoring run side by side: every
+            # request takes the shared busy interlock (_reserve_range), so they simply take
+            # turns on the connection. Switching tabs only refreshes control states.
+            if tab_text in ("Address Table", "Tags"):
                 if hasattr(self, 'address_table_widget'):
                     self.address_table_widget.update_monitoring_availability()
-            
-            elif tab_text == "Tags":
-                # Auto-disable live monitoring when going to tags tab
-                if hasattr(self, 'address_table_widget'):
-                    if self.address_table_widget.monitoring_checkbox.isChecked():
-                        # Uncheck to disable live monitoring
-                        self.address_table_widget.monitoring_checkbox.setChecked(False)
-                    self.address_table_widget.update_monitoring_availability()
-
+            if tab_text == "Tags":
                 # Enable tag monitoring controls -- but not if monitoring is already
                 # running, or returning to this tab would wrongly re-enable Start and
                 # make an active monitoring session look stopped.
                 if hasattr(self, 'tag_start_monitoring_btn'):
-                    if hasattr(self, 'modbus') and self.modbus and self.modbus.is_connected():
+                    if self._any_device_connected():
                         self.tag_start_monitoring_btn.setEnabled(not self.monitoring_active)
                 if hasattr(self, 'tag_stop_monitoring_btn'):
                     self.tag_stop_monitoring_btn.setEnabled(self.monitoring_active)
@@ -3509,13 +3496,6 @@ Unit ID: {unit_id}<br><br>
         """Start real-time data monitoring with interlock."""
         if not self._check_connection():
             return
-
-        # Auto-turn off address table monitoring when starting tag monitoring
-        if hasattr(self, 'address_table_widget'):
-            if self.address_table_widget.monitoring_checkbox.isChecked():
-                # Address table monitoring is active, turn it off
-                self.address_table_widget.monitoring_checkbox.setChecked(False)
-                self._log("Auto-turned off address table monitoring")
 
         tags = self._get_monitoring_tags()
         read_tags = [tag for tag in tags if tag["mode"] == "Read"]

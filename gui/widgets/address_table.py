@@ -435,12 +435,6 @@ class AddressTableWidget(QWidget):
                         self.monitoring_checkbox.setChecked(False)
                         return
 
-                # Auto-stop tag monitoring since only one live poll should run at a time
-                if hasattr(self.parent_window, 'tag_start_monitoring_btn'):
-                    if not self.parent_window.tag_start_monitoring_btn.isEnabled():
-                        self.parent_window.tag_stop_monitoring_btn.click()
-                        self.log("Auto-stopped tag monitoring")
-
                 self.interval_input.setEnabled(True)
                 self.start_monitoring()
             else:

@@ -246,28 +246,31 @@ class FrameViewerPanel(QWidget):
             item = layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.setParent(None)
+                # Not setParent(None): a parentless widget is a top-level window, which
+                # flashed up as empty "ModbusLens" windows while rows streamed in.
+                widget.hide()
                 widget.deleteLater()
 
     def _populate_side(self, layout, direction, decoded):
         c = self._colors
 
-        dir_label = QLabel(direction)
+        parent = layout.parentWidget()  # create children in place -- never as top-level windows
+        dir_label = QLabel(direction, parent)
         dir_label.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {c['heading']};")
         layout.addWidget(dir_label)
 
         if decoded.get("error"):
-            status = QLabel(decoded["error"])
+            status = QLabel(decoded["error"], parent)
             status.setStyleSheet(f"color: {c['log_error']}; font-size: 10px;")
             status.setWordWrap(True)
             layout.addWidget(status)
         elif decoded["success"] and direction == "RX":
-            status = QLabel("OK")
+            status = QLabel("OK", parent)
             status.setStyleSheet(f"color: {c['log_connect']}; font-size: 10px;")
             layout.addWidget(status)
 
         fields = decoded.get("fields", [])
-        table = QTableWidget(len(fields), 2)
+        table = QTableWidget(len(fields), 2, parent)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -355,6 +358,11 @@ class FrameViewerPanel(QWidget):
         tx_text = table.item(row, 4).text() if table.item(row, 4) else ""
         rx_text = table.item(row, 5).text() if table.item(row, 5) else ""
 
+        key = (tx_text, rx_text, transport)
+        if key == getattr(self, "_shown_key", None):
+            return  # same transaction, just at a new row index -- nothing to redraw
+        self._shown_key = key
+
         tx_bytes = self._parse_hex_bytes(tx_text) if tx_text else None
         rx_bytes = self._parse_hex_bytes(rx_text) if rx_text else None
 
@@ -389,6 +397,7 @@ class FrameViewerPanel(QWidget):
 
     def clear(self):
         """Clear the panel back to placeholder state."""
+        self._shown_key = None
         self._clear_layout(self._tx_layout)
         self._clear_layout(self._rx_layout)
         self._tx_container.setVisible(False)

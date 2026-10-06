@@ -46,6 +46,21 @@ class TagPollWorker(QThread):
     device_unreachable = Signal()  # Fast LAN Mode: emitted once per cycle, at most
     cycle_complete = Signal(int, int)  # failed_count, total_count
 
+    BUSY_WAIT_S = 1.5  # how long a block waits for another poller (Address Table, Trend) to finish
+    BUSY_POLL_S = 0.02
+
+    def _reserve_with_wait(self, request_range):
+        """Take the shared interlock, waiting briefly while another poller -- Address
+        Table live monitoring or Trend, on the GUI thread -- has a request in flight, so
+        running them side by side just takes turns instead of skipping this block."""
+        deadline = time.perf_counter() + self.BUSY_WAIT_S
+        while True:
+            if self.reserve_range(request_range):
+                return True
+            if self.should_stop or time.perf_counter() >= deadline:
+                return False
+            time.sleep(self.BUSY_POLL_S)
+
     def __init__(self, tags, modbus, offset_of, validate_tag, reserve_range, release_range,
                  device_reachable, fast_lan_mode, shared_cache=None):
         super().__init__()
@@ -113,7 +128,7 @@ class TagPollWorker(QThread):
                     "operation": "read", "space": plan["type"], "start": block_start, "end": block_end,
                     "unit": plan.get("unit"), "tag": f"Merged[{plan['type']}] x{len(plan['members'])}",
                 }
-                if not self.reserve_range(request_range):
+                if not self._reserve_with_wait(request_range):
                     failed_count += len(plan["members"])
                     for tag, _local_offset in plan["members"]:
                         self.tag_result.emit(tag, None, 0.0, "busy", "", "busy", None, None)
