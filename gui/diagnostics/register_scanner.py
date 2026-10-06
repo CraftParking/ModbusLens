@@ -467,6 +467,7 @@ class RegisterScannerWidget(QWidget):
         self.create_tags_btn.setEnabled(False)
 
         self._scanned_device = self.device_selector.device()
+        self._scanned_function = self.addr_function_combo.currentText()
         self.device_selector.combo.setEnabled(False)
         self.address_worker = AddressScanWorker(
             modbus, self.addr_function_combo.currentText(), start, end,
@@ -531,7 +532,7 @@ class RegisterScannerWidget(QWidget):
         if not merged:
             return
 
-        function_name = self.addr_function_combo.currentText()
+        function_name = getattr(self, "_scanned_function", None) or self.addr_function_combo.currentText()
         dialog = CreateTagsFromScanDialog(function_name, merged, self)
         if dialog.exec() != QDialog.Accepted:
             return

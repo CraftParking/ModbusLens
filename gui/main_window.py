@@ -416,7 +416,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
 
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
-        tools_menu.addAction("Connection Settings", self._show_connection_settings)
+        tools_menu.addAction("Connection Settings", self._device_settings_clicked)
         tools_menu.addAction("Data Templates", self._manage_templates)
         tools_menu.addSeparator()
         tools_menu.addAction("IP Configuration", self._show_ip_config)
@@ -791,7 +791,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         self.add_device_btn = QPushButton("Add Device")
         self.add_device_btn.setStyleSheet(self._get_button_style())
         self.add_device_btn.setMinimumWidth(100)
-        self.add_device_btn.setToolTip("Add another Modbus unit on this same connection (e.g. a second meter behind the same gateway)")
+        self.add_device_btn.setToolTip("Add another device -- its own name, connection and Unit ID (e.g. a second meter behind the same gateway)")
         self.add_device_btn.clicked.connect(lambda: self._add_tag_device_interactive())
         first_row_layout.addWidget(self.add_device_btn)
 
@@ -2270,11 +2270,27 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
                 self._updating_tag_table = False
 
     def _remove_all_monitoring_tags(self):
-        """Remove all tags from the monitoring table."""
+        """Remove all tags -- or, with a device tab open, all of that device's tags."""
+        device = self._tag_device_filter
+        if device is not None:
+            manager = self.monitoring_manager
+            rows = [r for r in range(self.monitoring_tag_table.rowCount())
+                    if r not in manager.group_header_rows and r not in manager.tag_bit_rows
+                    and self._row_device(r) == device]
+            if not rows:
+                return
+            reply = QMessageBox.question(
+                self, "Remove All Tags",
+                f"Remove all {len(rows)} tag(s) of {device}? Other devices' tags are kept.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self._remove_tag_rows(rows)
+                self._log(f"All tags of {device} removed")
+            return
         reply = QMessageBox.question(
             self,
             "Remove All Tags",
-            "Are you sure you want to remove all tags?",
+            "Are you sure you want to remove all tags (every device's)?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
@@ -2417,8 +2433,30 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             self._refresh_tag_device_ui()
             self._sync_active_device()
 
-    def _show_connection_settings(self, serial_overrides=None, tcp_overrides=None):
-        """Show the connection settings dialog."""
+    def _show_connection_settings(self, serial_overrides=None, tcp_overrides=None, device=None):
+        """Show the connection settings dialog for one device. Without `device` (Find
+        Devices / Serial Discovery "Apply to Connection Settings"), ask which device the
+        found settings are for when there are several; a connected device can't be edited."""
+        if device is None:
+            device = self._ask_device_for_settings()
+            if device is None:
+                return
+        if device in self._connected_devices:
+            QMessageBox.information(self, "Connection Settings", f"Disconnect {device} before changing its settings.")
+            return
+        # The dialog reads/writes the classic attrs, which mirror the default device: point
+        # them at `device` for the edit, then back (the default stays the first device).
+        default_device = self.active_device
+        self.active_device = device
+        self._sync_active_device()
+        try:
+            self._run_connection_settings_dialog(serial_overrides, tcp_overrides)
+        finally:
+            if self._device(default_device) is not None:
+                self.active_device = default_device
+            self._sync_active_device()
+
+    def _run_connection_settings_dialog(self, serial_overrides=None, tcp_overrides=None):
         dialog = ConnectionSettingsDialog(
             self, self.connection_history, self,
             serial_overrides=serial_overrides, tcp_overrides=tcp_overrides,
@@ -2960,7 +2998,12 @@ Unit ID: {unit_id}<br><br>
         if not self._check_connection():
             return
 
-        all_rows = set(range(self.monitoring_tag_table.rowCount()))
+        # With a device tab open, only that device's tags -- never a device the user isn't
+        # looking at (collapsed groups still count; they're the user's own tags).
+        manager = self.monitoring_manager
+        all_rows = {r for r in range(self.monitoring_tag_table.rowCount())
+                    if r not in manager.group_header_rows and r not in manager.tag_bit_rows
+                    and (self._tag_device_filter is None or self._row_device(r) == self._tag_device_filter)}
         if not all_rows:
             QMessageBox.warning(self, "No Tags", "There are no tags to write.")
             return
@@ -3871,7 +3914,7 @@ Unit ID: {unit_id}<br><br>
         """Start a new session."""
         if self.monitoring_active:
             self._stop_monitoring()
-        if self.modbus:
+        if self._connected_devices or self.link_pool.links:
             self._disconnect()
         self._clear_monitoring_results()
         # Clear logs if they exist
@@ -4194,7 +4237,7 @@ Unit ID: {unit_id}<br><br>
             self.serial_discovery.stop_all_scans()
         if self.monitoring_active:
             self._stop_monitoring()
-        if self.modbus:
+        if self._connected_devices or self.link_pool.links:
             self._disconnect()
         if hasattr(self, 'server_widget') and self.server_widget.running:
             self.server_widget._stop_server()

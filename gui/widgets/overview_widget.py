@@ -521,7 +521,7 @@ class OverviewWidget(QWidget):
             ("Add Device", self._add_blank, 120, "A device by name and Unit ID; add its tags afterwards"),
             ("Add from Profile...", self._add_from_profile, 150, "A device with a saved profile's tags"),
             ("Find Devices...", self._add_from_sweep, 130,
-             "Unit ID sweep over the current connection -- lists every unit that answers"),
+             "Unit ID sweep over a connected device's connection -- lists every unit that answers"),
         ):
             btn = QPushButton(text)
             btn.setStyleSheet(button_style)
@@ -539,9 +539,8 @@ class OverviewWidget(QWidget):
         devices_layout.addLayout(add_row)
 
         self.empty_label = QLabel(
-            "No devices yet.\n\nTags without a device are polled on the connection's own Unit ID. "
-            "Add a device for each unit on this connection -- e.g. two meters at Unit IDs 1 and 2 "
-            "behind one gateway."
+            "No devices yet.\n\nAdd a device for each Modbus unit -- e.g. two meters at Unit IDs 1 "
+            "and 2 behind one gateway."
         )
         self.empty_label.setAlignment(Qt.AlignCenter)
         self.empty_label.setWordWrap(True)

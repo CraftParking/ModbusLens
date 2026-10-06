@@ -6,17 +6,17 @@ least one device: a fresh window starts with "Device 1" built from the classic
 connection settings, and old sessions/CSVs migrate onto it. Devices with identical
 connection settings share one link (see device_links.LinkPool).
 
-The *active* device (picked in the top status bar) is what the single-device tools use:
-`self.modbus` is a DeviceView of it, and the classic connection attributes
-(connection_mode, target_ip, target_unit_id, ...) mirror its settings, so Address Table,
-Trend, Script, Scanner and Diagnostics keep working unchanged.
+Each tool picks its own device (widgets/device_selector.py); there is no user-facing active
+device. `active_device` survives internally as the *default* device: `self.modbus` is a
+DeviceView of it and the classic connection attributes (connection_mode, target_ip, ...)
+mirror its settings for the Connection Settings dialog and other legacy single-device code.
 """
 
 import json
 import os
 import sys
 
-from PySide6.QtWidgets import QComboBox, QDialog, QLineEdit, QMenu, QMessageBox
+from PySide6.QtWidgets import QComboBox, QDialog, QInputDialog, QLineEdit, QMenu, QMessageBox
 
 from app_paths import app_data_dir
 from device_links import DeviceView, LinkPool, describe, link_key, normalize_connection
@@ -170,6 +170,20 @@ class DeviceManagerMixin:
     # when nothing else says, whose settings the classic single-connection attributes
     # (connection_mode, target_ip, ... and self.modbus) mirror for the Connection
     # Settings dialog, connection history and other legacy single-device code.
+    def _ask_device_for_settings(self):
+        """Which device a Connection Settings change is for: the only device, else the
+        user's pick among the disconnected ones (None = cancelled / nothing editable)."""
+        if len(self.tag_devices) == 1:
+            return self.tag_devices[0]["name"]
+        free = [d["name"] for d in self.tag_devices if d["name"] not in self._connected_devices]
+        if not free:
+            QMessageBox.information(self, "Connection Settings",
+                                    "Every device is connected -- disconnect the one to change first.")
+            return None
+        labels = {f"{n} -- {describe(self._device_connection(n))}, Unit {self._tag_device_unit(n)}": n for n in free}
+        choice, ok = QInputDialog.getItem(self, "Connection Settings", "Apply to which device?", list(labels), 0, False)
+        return labels[choice] if ok else None
+
     def _device_settings_clicked(self):
         """Top bar Device Settings: edit one device's connection (pick which when there
         are several; connected devices are disabled -- disconnect first)."""
@@ -191,9 +205,7 @@ class DeviceManagerMixin:
         if name in self._connected_devices:
             QMessageBox.information(self, "Device Settings", f"Disconnect {name} before changing its settings.")
             return
-        self.active_device = name
-        self._sync_active_device()
-        self._show_connection_settings()
+        self._show_connection_settings(device=name)
 
     def _sync_active_device(self):
         """Point the classic single-connection state at the default device."""
@@ -628,7 +640,7 @@ class DeviceManagerMixin:
             box.exec()
             if box.clickedButton() is not remove_btn:
                 return False
-        conn = self._device_connection(self.active_device)
+        conn = self._device_connection(self.tag_devices[0]["name"])
         self._disconnect()
         self._remove_tag_rows([r for r in range(self.monitoring_tag_table.rowCount())
                                if r not in self.monitoring_manager.group_header_rows

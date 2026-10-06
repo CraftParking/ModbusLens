@@ -2,7 +2,7 @@ import csv
 import os
 import time
 
-from PySide6.QtCore import Qt, QTimer, QDateTime, QEvent, QPointF, Signal
+from PySide6.QtCore import Qt, QTimer, QDateTime, QEvent, QMargins, QPointF, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
@@ -587,6 +587,9 @@ class TrendWidget(QWidget):
         chart = QChart()
         chart.legend().setVisible(True)
         chart.legend().setAlignment(Qt.AlignBottom)
+        chart.setMargins(QMargins(4, 4, 8, 0))
+        chart.layout().setContentsMargins(0, 0, 0, 0)
+        chart.setBackgroundRoundness(0)
         axis_x = QDateTimeAxis()
         axis_x.setFormat("HH:mm:ss")
         axis_x.setTitleText(self.graph_settings["x_title"])
@@ -793,9 +796,7 @@ class TrendWidget(QWidget):
         self.page_tabs.tabBarDoubleClicked.connect(
             lambda i: self._rename_page(self.pages[i]) if 0 <= i < len(self.pages) else None)
         self.page_tabs.currentChanged.connect(self._on_page_tab_changed)
-        layout.addWidget(self.page_tabs)
         self.page_stack = QStackedWidget()
-        layout.addWidget(self.page_stack, 1)
         self._hover_x_ms = None
         now = QDateTime.currentDateTime()
 
@@ -803,12 +804,10 @@ class TrendWidget(QWidget):
         self.history_scrollbar.setEnabled(False)
         self._updating_scrollbar = False
         self.history_scrollbar.valueChanged.connect(self._on_scrollbar_moved)
-        layout.addWidget(self.history_scrollbar)
 
+        # One row, above the graph, so the graph gets every pixel that's left.
         view_range_group = QGroupBox("View Range")
-        view_range_layout = QVBoxLayout(view_range_group)
-
-        bottom = QHBoxLayout()
+        bottom = QHBoxLayout(view_range_group)
         bottom.addWidget(QLabel("Time Window:"))
         self.window_combo = QComboBox()
         for label, seconds in TIME_WINDOWS:
@@ -818,27 +817,9 @@ class TrendWidget(QWidget):
         apply_dropdown_delegate(self.window_combo, getattr(self.parent_window, "_theme_mode", "light"))
         self.window_combo.currentIndexChanged.connect(self._on_window_changed)
         bottom.addWidget(self.window_combo)
+        bottom.addSpacing(12)
+        history_row = bottom
 
-        bottom.addStretch()
-
-        self.auto_scroll_checkbox = QCheckBox("Auto Scroll")
-        self.auto_scroll_checkbox.setChecked(self._auto_scroll_enabled)
-        self.auto_scroll_checkbox.toggled.connect(self._on_auto_scroll_toggled)
-        bottom.addWidget(self.auto_scroll_checkbox)
-
-        self.zoom_in_btn = QPushButton("Zoom In")
-        self.zoom_in_btn.setStyleSheet(self._button_style())
-        self.zoom_in_btn.clicked.connect(lambda: self._zoom(0.5))
-        bottom.addWidget(self.zoom_in_btn)
-
-        self.zoom_out_btn = QPushButton("Zoom Out")
-        self.zoom_out_btn.setStyleSheet(self._button_style())
-        self.zoom_out_btn.clicked.connect(lambda: self._zoom(2.0))
-        bottom.addWidget(self.zoom_out_btn)
-
-        view_range_layout.addLayout(bottom)
-
-        history_row = QHBoxLayout()
         history_row.addWidget(QLabel("From:"))
         self.from_datetime_edit = QDateTimeEdit(now.addSecs(-self.window_seconds))
         self.from_datetime_edit.setCalendarPopup(True)
@@ -857,37 +838,62 @@ class TrendWidget(QWidget):
         self.go_to_range_btn.setStyleSheet(self._button_style())
         self.go_to_range_btn.clicked.connect(self._go_to_range)
         history_row.addWidget(self.go_to_range_btn)
-        history_row.addStretch()
 
-        view_range_layout.addLayout(history_row)
-        layout.addWidget(view_range_group)
+        bottom.addStretch()
 
-        stats_header_row = QHBoxLayout()
-        stats_header_row.addStretch()
-        # Only useful (and only shown) in the detached floating window, where hiding this
-        # table gives the graph itself more room -- the docked tab is never short on space.
+        self.auto_scroll_checkbox = QCheckBox("Auto Scroll")
+        self.auto_scroll_checkbox.setChecked(self._auto_scroll_enabled)
+        self.auto_scroll_checkbox.toggled.connect(self._on_auto_scroll_toggled)
+        bottom.addWidget(self.auto_scroll_checkbox)
+
+        self.zoom_in_btn = QPushButton("Zoom In")
+        self.zoom_in_btn.setStyleSheet(self._button_style())
+        self.zoom_in_btn.clicked.connect(lambda: self._zoom(0.5))
+        bottom.addWidget(self.zoom_in_btn)
+
+        self.zoom_out_btn = QPushButton("Zoom Out")
+        self.zoom_out_btn.setStyleSheet(self._button_style())
+        self.zoom_out_btn.clicked.connect(lambda: self._zoom(2.0))
+        bottom.addWidget(self.zoom_out_btn)
+
+        # Hides the Min/Max/Average table to give the graph the whole height.
         self.stats_toggle_btn = QPushButton("▼ Hide Stats")
         self.stats_toggle_btn.setStyleSheet(self._button_style())
         self.stats_toggle_btn.clicked.connect(self._toggle_stats_table)
-        self.stats_toggle_btn.setVisible(False)
-        stats_header_row.addWidget(self.stats_toggle_btn)
-        layout.addLayout(stats_header_row)
+        bottom.addWidget(self.stats_toggle_btn)
+        layout.addWidget(view_range_group)
+        layout.addWidget(self.page_tabs)
 
         self.stats_table = QTableWidget(0, 5)
         self.stats_table.setHorizontalHeaderLabels(["Pen", "Value", "Minimum", "Maximum", "Average"])
         self.stats_table.verticalHeader().setVisible(False)
         self.stats_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.stats_table.setSelectionMode(QAbstractItemView.NoSelection)
-        self.stats_table.setMaximumHeight(160)
         self.stats_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+
+        # Graph takes every pixel left; the stats table is only ever as tall as its rows
+        # (see _fit_stats_table), and Hide Stats gives the graph the whole height.
+        layout.addWidget(self.page_stack, 1)
+        layout.addWidget(self.history_scrollbar)
         layout.addWidget(self.stats_table)
+        self._fit_stats_table()
 
         self._add_page()
 
     def _toggle_stats_table(self):
-        visible = not self.stats_table.isVisible()
+        visible = self.stats_table.isHidden()
         self.stats_table.setVisible(visible)
         self.stats_toggle_btn.setText("▼ Hide Stats" if visible else "▶ Show Stats")
+
+    def _fit_stats_table(self):
+        """Cap the stats table at the height of its header + rows (at least one row,
+        at most 6) so an almost-empty table doesn't take space from the graph."""
+        table = self.stats_table
+        row_h = table.verticalHeader().defaultSectionSize()
+        rows = min(max(table.rowCount(), 1), 6)
+        height = table.horizontalHeader().sizeHint().height() + rows * row_h + 2 * table.frameWidth() + 2
+        table.setMinimumHeight(table.horizontalHeader().sizeHint().height() + row_h + 2 * table.frameWidth())
+        table.setMaximumHeight(height)
 
     # --- Detach / re-dock ---
 
@@ -927,7 +933,6 @@ class TrendWidget(QWidget):
 
         self._detach_window = window
         self.detach_btn.setEnabled(False)
-        self.stats_toggle_btn.setVisible(True)
         # QTabWidget.removeTab() hides whatever widget was in that tab -- reparenting it
         # into the new window doesn't undo that, so without this it floats invisibly.
         self.show()
@@ -954,8 +959,7 @@ class TrendWidget(QWidget):
 
         self._detach_placeholder = None
         self.detach_btn.setEnabled(True)
-        self.stats_toggle_btn.setVisible(False)
-        if not self.stats_table.isVisible():
+        if self.stats_table.isHidden():
             self._toggle_stats_table()  # always land back on the docked tab fully expanded
 
         if not from_close_event:
@@ -1462,7 +1466,9 @@ class TrendWidget(QWidget):
         xmax = self.axis_x.max().toMSecsSinceEpoch()
         active_pens = [pen for pen in self.pens if pen.is_active() and pen.series is not None]
 
-        self.stats_table.setRowCount(len(active_pens))
+        if self.stats_table.rowCount() != len(active_pens):
+            self.stats_table.setRowCount(len(active_pens))
+            self._fit_stats_table()
         for row, pen in enumerate(active_pens):
             in_view = [pt.y() for pt in pen.series.points() if xmin <= pt.x() <= xmax]
 

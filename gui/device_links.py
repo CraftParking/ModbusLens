@@ -8,9 +8,8 @@ ONE ModbusClient: a serial port can only be opened once, and small gateways (e.g
 Waveshare RS485-TO-ETH) only accept a few TCP connections. Requests on a shared link go
 one at a time, each carrying its own device's Unit ID.
 
-The single-device tools (Address Table, Trend, Script, Scanner, Diagnostics) keep talking
-to `main_window.modbus` exactly as before; that is now a DeviceView of the *active*
-device -- its link's client with the device's Unit ID filled in on every request.
+Tools talk to a device through a DeviceView -- its link's client with the device's Unit ID
+filled in on every request (each tool's Device selector, Trend pens, Tags polling).
 """
 
 import time

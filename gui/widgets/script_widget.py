@@ -500,7 +500,7 @@ class ScriptRunner:
 
     def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None,
                  tags_getter=None, reserve_range=None, release_range=None, result_callback=None,
-                 device=None, device_resolver=None, device_modbus_getter=None):
+                 device=None, device_resolver=None, device_modbus_getter=None, address_converter=None):
         self.modbus_getter = modbus_getter
         # Multi-device: the script talks to `device` (the Script tab's Device selector) until
         # a DEVICE line switches it. device_resolver(name) -> canonical name or None;
@@ -509,6 +509,8 @@ class ScriptRunner:
         self.device = device
         self.device_resolver = device_resolver
         self.device_modbus_getter = device_modbus_getter
+        # Tag -> raw 0-based protocol offset (honours the Tags tab's 1-/0-based setting).
+        self.address_converter = address_converter or (lambda tag: int(tag["address"]))
         self.server_getter = server_getter
         self.target_mode = target_mode  # "client" or "server"
         self.tags_getter = tags_getter or (lambda: [])
@@ -755,7 +757,10 @@ class ScriptRunner:
             tag = self._find_tag(args["tag_name"])
             if tag is None:
                 raise ScriptError(f"unknown tag '{args['tag_name']}'")
-            return tag["type"], tag["address"]
+            try:
+                return tag["type"], self.address_converter(tag)
+            except ValueError as e:
+                raise ScriptError(f"tag '{args['tag_name']}': {e}")
         return args["type"], args["address"]
 
     def _require_modbus(self):
@@ -912,7 +917,7 @@ class ScriptWidget(QWidget):
         self.target_combo.addItem("Client Connection", "client")
         self.target_combo.addItem("Server (Local)", "server")
         self.target_combo.setToolTip(
-            "Client Connection: WRITE/READ talk to the remote device via the Connection tab.\n"
+            "Client Connection: WRITE/READ talk to the device picked in Device (a DEVICE line switches it).\n"
             "Server (Local): WRITE/READ act directly on this app's own Server tab datastore, "
             "letting a script simulate a device instead of controlling one."
         )
@@ -1349,6 +1354,7 @@ class ScriptWidget(QWidget):
             device=self.device_selector.device() if target_mode == "client" else None,
             device_resolver=self._resolve_device_name,
             device_modbus_getter=getattr(self.parent_window, "_device_view", None),
+            address_converter=getattr(self.parent_window, "_tag_user_address_to_offset", None),
         )
         self.runner.load(instructions)
         self._reset_variables_panel(collect_variable_names(instructions))

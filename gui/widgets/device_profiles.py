@@ -866,31 +866,51 @@ class DeviceProfilesPanel(QWidget):
 
     def _build_ui(self):
         c = self._colors()
+        # Laid out like the other tabs (Overview, Tags, Trend): titled group boxes on the
+        # window background.
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        library_group = QGroupBox("Profile Library")
+        library_group.setStyleSheet(self._groupbox_style())
+        library_layout = QHBoxLayout(library_group)
+        library_layout.setContentsMargins(15, 20, 15, 15)
 
         # Local / Community mode toggle -- two mutually-exclusive checkable buttons
         # acting as a simple segmented control, rather than a combo box, since there
         # are exactly two modes and both should stay visible at all times.
-        toggle_row = QHBoxLayout()
+        toggle_row = library_layout
         self.local_btn = QPushButton("Local")
         self.community_btn = QPushButton("Community")
         for btn in (self.local_btn, self.community_btn):
             btn.setCheckable(True)
             btn.setStyleSheet(self._button_style())
+            btn.setMinimumWidth(110)
             toggle_row.addWidget(btn)
-        toggle_row.addStretch()
+        toggle_row.addSpacing(16)
+        self.mode_hint = QLabel()
+        self.mode_hint.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-weight: normal;")
+        toggle_row.addWidget(self.mode_hint, 1)
         self.local_btn.setChecked(True)
         self.local_btn.clicked.connect(lambda: self._set_mode("local"))
         self.community_btn.clicked.connect(lambda: self._set_mode("community"))
-        layout.addLayout(toggle_row)
+        layout.addWidget(library_group)
 
         self.local_page = self._build_local_page()
         self.community_page = self._build_community_page()
-        layout.addWidget(self.local_page)
-        layout.addWidget(self.community_page)
+        layout.addWidget(self.local_page, 1)
+        layout.addWidget(self.community_page, 1)
         self.community_page.setVisible(False)
+        self._update_mode_hint("local")
+
+    LOCAL_HINT = ("Device templates saved on this PC - an Address Table range plus a Tags list. "
+                  "Double-click a profile to view it and choose which tags to import.")
+    COMMUNITY_HINT = ("Profiles shared by other ModbusLens users and checked by a maintainer. "
+                      "Double-click one to preview, apply or download it.")
+
+    def _update_mode_hint(self, mode):
+        self.mode_hint.setText(self.LOCAL_HINT if mode == "local" else self.COMMUNITY_HINT)
 
     def _set_mode(self, mode):
         is_local = mode == "local"
@@ -898,15 +918,20 @@ class DeviceProfilesPanel(QWidget):
         self.community_btn.setChecked(not is_local)
         self.local_page.setVisible(is_local)
         self.community_page.setVisible(not is_local)
+        self._update_mode_hint(mode)
         if not is_local and not self._community_loaded and not self._community_loading:
             self._fetch_community_index()
 
     def _build_local_page(self):
         c = self._colors()
-        page = QWidget()
+        page = QGroupBox("Local Profiles")
+        page.setStyleSheet(self._groupbox_style())
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(15, 20, 15, 15)
         layout.setSpacing(10)
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(10)
+        layout.addLayout(actions_row)
 
         self.empty_label = QLabel("No profiles saved yet -- use \"Create New Profile\" to create one.")
         self.empty_label.setAlignment(Qt.AlignCenter)
@@ -934,11 +959,7 @@ class DeviceProfilesPanel(QWidget):
         self._cards = []
         self._selected_path = None
 
-        hint_label = QLabel("Double-click a profile to view it and choose which tags to import.")
-        hint_label.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-size: 11px;")
-        layout.addWidget(hint_label)
-
-        btn_row = QHBoxLayout()
+        btn_row = actions_row
         self.save_btn = QPushButton("Create New Profile")
         self.save_btn.setStyleSheet(self._button_style())
         self.save_btn.clicked.connect(self._save_current_as_profile)
@@ -964,17 +985,20 @@ class DeviceProfilesPanel(QWidget):
         self.refresh_btn.setStyleSheet(self._button_style())
         self.refresh_btn.clicked.connect(self.refresh_local_profiles)
         btn_row.addWidget(self.refresh_btn)
-        layout.addLayout(btn_row)
 
         self._update_button_states()
         return page
 
     def _build_community_page(self):
         c = self._colors()
-        page = QWidget()
+        page = QGroupBox("Community Profiles")
+        page.setStyleSheet(self._groupbox_style())
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(15, 20, 15, 15)
         layout.setSpacing(10)
+        community_actions = QHBoxLayout()
+        community_actions.addStretch()
+        layout.addLayout(community_actions)
 
         self.community_status_label = QLabel("")
         self.community_status_label.setAlignment(Qt.AlignCenter)
@@ -1008,17 +1032,11 @@ class DeviceProfilesPanel(QWidget):
         self.community_cards_scroll.setVisible(False)
         layout.addWidget(self.community_cards_scroll, 1)
 
-        hint_label = QLabel("Double-click a profile to view it, apply its tags, or download it.")
-        hint_label.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-size: 11px;")
-        layout.addWidget(hint_label)
 
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
         self.community_refresh_btn = QPushButton("Refresh")
         self.community_refresh_btn.setStyleSheet(self._button_style())
         self.community_refresh_btn.clicked.connect(self._fetch_community_index)
-        btn_row.addWidget(self.community_refresh_btn)
-        layout.addLayout(btn_row)
+        community_actions.addWidget(self.community_refresh_btn)
 
         return page
 

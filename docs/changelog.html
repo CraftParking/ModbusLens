@@ -44,7 +44,7 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <div class="changelog-stack">
 
 <article class="panel-card changelog-card reveal">
-<h3>Unreleased</h3>
+<h3>v2.4.0 <span class="version-tag is-upcoming">Upcoming</span></h3>
 <p class="changelog-sub">New</p>
 <ul>
 <li>TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing</li>
@@ -54,6 +54,8 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <li>Devices with their own connections - each device on the new Overview tab (first tab) has its own connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link; per-device Connect/Disconnect plus Connect All / Disconnect All; the top bar shows every device's status</li>
 <li>Device dropdowns instead of an "active device" - Address Table, Script, Scanner and Diagnostic Functions each pick their own device; scripts can switch device with a DEVICE line</li>
 <li>Trend pages - several graphs, each with its own 20 pens, all polled while the trend runs; pens read from their own tag's device and show it in the legend</li>
+<li>Bigger Trend graph - View Range on one row above the graph, the stats table only as tall as its pens, tighter chart margins, and Hide Stats available in the tab too (not just when detached)</li>
+<li>Profiles tab laid out like the other tabs - a Profile Library box with the Local/Community switch, and Local/Community Profiles boxes with their buttons above the profile cards</li>
 <li>Raw Data Device column and filter; Remove All Devices on the Overview; tag pickers (Trend pens, Script Insert Tag) show each tag's device</li>
 <li>Import CSV on a device's Tags tab imports into that device only</li>
 <li>Overview cards - live status (online / exception / no response / reconnecting / paused), success rate, latency and pinned values per device; Open Tags, Pause, and Add Device blank, from a Profile, or found by a Unit ID sweep</li>
@@ -66,6 +68,10 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <li>Illegal Data Address explainer lists one more cause: a read covering only half of a 32-bit value, which many energy meters refuse</li>
 <li>Share to Community works again - submissions were being rejected with "Submission Failed" after the submission form's hosting plan changed; they now go to the active form</li>
 <li>Raw Data Frame Viewer decodes RTU-over-TCP traffic as RTU frames (unit, function, CRC) - it was applying the Modbus-TCP header layout, showing nonsense like a random Protocol ID</li>
+<li>Script tag-name reads/writes hit the right register - a tag's 1-based Address was sent as the raw protocol offset, one register too high</li>
+<li>Write All and Remove All Tags act on the open device tab only (every device only on the All tab); Scanner's Create Tags uses the function that was actually scanned; closing a window or New Session disconnects every device</li>
+<li>Connection Settings (Tools menu, Find Devices and Serial Discovery "Apply") always asks which device it's for instead of silently editing one</li>
+<li>Documentation brought up to date with multiple devices - Getting Started, Menus, Connecting, Overview, Scripting (DEVICE, limits, syntax) and Troubleshooting rewritten; the website docs gained the missing Overview topic</li>
 <li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer - it could silently move a tag to another device or shift its Address by one (reading half of one 32-bit value and half of the next, so values looked corrupt and meters reported exceptions); the wheel now just scrolls (same for Trend's pen grid)</li>
 <li>Tags no longer leak between devices or go missing - tags added for one device could show in another device's tab, a hidden row could be removed by Remove Tag, and a poll result arriving during an import could apply another tag's scaling or alarm</li>
 <li>Auto-reconnect now actually notices a dropped TCP link - the connection stayed flagged as connected after the peer reset it, so the watchdog never retried and every later request failed</li>
