@@ -32,6 +32,8 @@
 
 ## Highlights
 
+- Multiple devices in one window - an Overview tab with a live card per device (status, success rate, latency, pinned values); each device has its own connection and Unit ID, and devices behind one gateway share one link
+- Per-device Tags (device tabs, Import CSV per meter), Trend pens, Raw Data filter, and a Device picker in Address Table, Script (plus a `DEVICE` command), Scanner and diagnostics
 - Modbus TCP and Modbus Serial (RTU or ASCII framing) client, switchable per connection
 - Fast parallel network scan, sized to your actual subnet mask - a full /24 in about a second, each hit already Modbus-verified
 - Fast LAN Mode - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off
@@ -41,7 +43,7 @@
 - Continuous live scanning (no repeated manual scans)
 - Clean, non-spam device listing
 - Integrated diagnostics + communication
-- Trend graphing with up to 20 tag-based pens, detachable into its own resizable, always-on-top window
+- Trend graphing with pages of up to 20 tag-based pens each, detachable into its own resizable, always-on-top window
 - Act as a Modbus TCP slave for testing your own SCADA/PLC programs
 - Talk to multiple devices at once, each in its own window
 - Simple scripting for repeatable write/wait/read test sequences, against either a live device or ModbusLens's own Server simulator
@@ -55,6 +57,12 @@
 ---
 
 ## Screenshots
+
+### Overview - Multiple Devices
+<p align="center">
+  <img src="assets/Overview.png" width="90%">
+</p>
+<p align="center"><em>Every device at a glance - two energy meters behind one RS485-to-Ethernet gateway, each with its own Unit ID, live status, read success rate, latency and pinned values.</em></p>
 
 ### Main Interface
 <p align="center">

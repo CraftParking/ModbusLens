@@ -104,6 +104,35 @@ class DeviceManagerMixin:
         link = self.link_pool.links.get(link_key(self._device_connection(name)))
         return link.client if link and link.client else None
 
+    def _device_view(self, name):
+        """A DeviceView (the device's link + its Unit ID) for `name`, or None while it
+        isn't connected -- what each tool's Device selector talks through."""
+        client = self._device_client(name)
+        unit = self._tag_device_unit(name)
+        return DeviceView(client, unit) if client is not None and unit is not None else None
+
+    def _describe_device(self, name):
+        device = self._device(name)
+        if device is None:
+            return ""
+        return f"{name} -- {describe(normalize_connection(device['connection']))}, Unit {device['unit']}"
+
+    def _refresh_device_selectors(self, renamed=None):
+        for selector in list(getattr(self, "_device_selectors", [])):
+            try:
+                selector.refresh(renamed)
+            except RuntimeError:  # its widget was deleted
+                self._device_selectors.remove(selector)
+
+    def _serial_port_in_use(self, port):
+        """True if a connected device's link holds this COM port open."""
+        port = (port or "").strip().upper()
+        for name in self._connected_devices:
+            conn = self._device_connection(name)
+            if conn["mode"] == "serial" and (conn["serial_port"] or "").strip().upper() == port:
+                return True
+        return False
+
     def _any_device_connected(self):
         return any(self._device_is_connected(d["name"]) for d in self.tag_devices)
 
@@ -135,18 +164,39 @@ class DeviceManagerMixin:
                 return text
         return ""
 
-    # ---------------------------------------------------------- active device --
-    def _set_active_device(self, name):
-        if self._device(name) is None or name == self.active_device:
+    # --------------------------------------------------------- default device --
+    # There's no user-facing "active device": every tool has its own Device selector.
+    # `active_device` survives internally as the *default* device -- where a tag goes
+    # when nothing else says, whose settings the classic single-connection attributes
+    # (connection_mode, target_ip, ... and self.modbus) mirror for the Connection
+    # Settings dialog, connection history and other legacy single-device code.
+    def _device_settings_clicked(self):
+        """Top bar Device Settings: edit one device's connection (pick which when there
+        are several; connected devices are disabled -- disconnect first)."""
+        if len(self.tag_devices) == 1:
+            name = self.tag_devices[0]["name"]
+        else:
+            menu = QMenu(self)
+            for d in self.tag_devices:
+                action = menu.addAction(f"{d['name']} -- {describe(normalize_connection(d['connection']))}, "
+                                        f"Unit {d['unit']}")
+                action.setData(d["name"])
+                if d["name"] in self._connected_devices:
+                    action.setEnabled(False)
+                    action.setText(action.text() + "  (connected)")
+            chosen = menu.exec(self.settings_btn.mapToGlobal(self.settings_btn.rect().bottomLeft()))
+            if chosen is None:
+                return
+            name = chosen.data()
+        if name in self._connected_devices:
+            QMessageBox.information(self, "Device Settings", f"Disconnect {name} before changing its settings.")
             return
-        if getattr(self, "address_table_widget", None) and self.address_table_widget.monitoring_checkbox.isChecked():
-            self.address_table_widget.monitoring_checkbox.setChecked(False)
         self.active_device = name
         self._sync_active_device()
-        self._log(f"Active device: {name}")
+        self._show_connection_settings()
 
     def _sync_active_device(self):
-        """Point the classic single-connection state at the active device."""
+        """Point the classic single-connection state at the default device."""
         device = self._device(self.active_device)
         if device is None:
             device = self.tag_devices[0]
@@ -163,9 +213,7 @@ class DeviceManagerMixin:
         self._update_connection_info()
         if hasattr(self, "connection_status"):
             n_connected = sum(1 for d in self.tag_devices if self._device_is_connected(d["name"]))
-            self.connection_status.setText(
-                f"{n_connected} of {len(self.tag_devices)} device(s) connected  ·  active: {device['name']} "
-                f"({describe(conn)}, Unit {device['unit']})")
+            self.connection_status.setText(f"{n_connected} of {len(self.tag_devices)} device(s) connected")
         self._refresh_connection_controls()
         if hasattr(self, "device_status_bar"):
             self.device_status_bar.refresh()
@@ -179,7 +227,7 @@ class DeviceManagerMixin:
         # Top bar: Connect All / Disconnect All / Device Settings (of the active device).
         self.connect_btn.setEnabled(any(d["name"] not in self._connected_devices for d in self.tag_devices))
         self.disconnect_btn.setEnabled(bool(self._connected_devices))
-        self.settings_btn.setEnabled(self.active_device not in self._connected_devices)
+        self.settings_btn.setEnabled(any(d["name"] not in self._connected_devices for d in self.tag_devices))
         if hasattr(self, "tag_start_monitoring_btn"):
             self.tag_start_monitoring_btn.setEnabled(any_connected and not self.monitoring_active)
             self.tag_stop_monitoring_btn.setEnabled(self.monitoring_active)
@@ -369,6 +417,7 @@ class DeviceManagerMixin:
         self._apply_tag_row_visibility()
         if hasattr(self, "diagnostics_dialogs"):
             self.diagnostics_dialogs.refresh_device_filter(renamed)
+        self._refresh_device_selectors(renamed)
         self._save_devices()
         if hasattr(self, "device_status_bar"):
             self.device_status_bar.refresh()
@@ -408,6 +457,15 @@ class DeviceManagerMixin:
             if self.tab_widget.tabText(i) == "Tags":
                 self.tab_widget.setCurrentIndex(i)
                 break
+
+    def _show_device_card(self, key):
+        """Top-bar click: open the Overview tab on that device's card."""
+        for i in range(self.tab_widget.count()):
+            if self.tab_widget.tabText(i) == "Overview":
+                self.tab_widget.setCurrentIndex(i)
+                break
+        if hasattr(self, "overview_widget"):
+            self.overview_widget.show_device(key)
 
     def _show_tag_device_tab_menu(self, pos):
         index = self.tag_device_tabs.tabAt(pos)
@@ -563,7 +621,7 @@ class DeviceManagerMixin:
                 "Every device is disconnected and deleted, along with all of its tags, alarms, "
                 "scaling and pinned values. This can't be undone -- Export CSV or Save Session first "
                 "if you might need them.\n\nYou'll start again with one blank device (Device 1) "
-                "using the active device's connection settings.")
+                "using the first device's connection settings.")
             remove_btn = box.addButton("Remove All Devices", QMessageBox.DestructiveRole)
             box.addButton(QMessageBox.Cancel)
             box.setDefaultButton(QMessageBox.Cancel)

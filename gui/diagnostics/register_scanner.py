@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 )
 
 from theme import apply_dropdown_delegate
+from widgets.device_selector import DeviceSelector
 
 # Floor between any two Modbus requests the scanner issues, regardless of how short a
 # probe timeout is configured -- mirrors the Script tab's MIN_STEP_INTERVAL_MS and the
@@ -279,9 +280,14 @@ class RegisterScannerWidget(QWidget):
         c = self.parent_window._colors()
         layout = QVBoxLayout(self)
 
+        status_row = QHBoxLayout()
+        self.device_selector = DeviceSelector(self.parent_window, tooltip="The device to scan")
+        self.device_selector.changed.connect(lambda _name: self.refresh_connection_state())
+        status_row.addWidget(self.device_selector)
         self.status_label = QLabel()
         self.status_label.setStyleSheet(f"color: {c['text_secondary']};")
-        layout.addWidget(self.status_label)
+        status_row.addWidget(self.status_label, 1)
+        layout.addLayout(status_row)
 
         control_group = QGroupBox("Scan Configuration")
         control_layout = QVBoxLayout(control_group)
@@ -371,14 +377,21 @@ class RegisterScannerWidget(QWidget):
         self.output_text.clear()
         self.create_tags_btn.setEnabled(False)
 
+    def _modbus(self):
+        """The device picked in this tab's Device selector (None while it's offline)."""
+        return self.device_selector.modbus()
+
     def refresh_connection_state(self):
-        connected = bool(self.parent_window.modbus and self.parent_window.modbus.is_connected())
+        modbus = self._modbus()
+        connected = bool(modbus and modbus.is_connected())
         in_progress = self._scan_in_progress()
         self.addr_start_btn.setEnabled(connected and not in_progress)
+        self.device_selector.combo.setEnabled(not in_progress)
+        name = self.device_selector.device() or "the device"
         self.status_label.setText(
-            f"Scanning: {self.parent_window.modbus.target_description()} (Unit {self.parent_window.modbus.unit_id})"
+            f"Scanning: {modbus.target_description()} (Unit {modbus.unit_id})"
             if connected else
-            "Not connected -- connect to a device first."
+            f"{name} isn't connected -- connect it first (Overview tab, or Connect All)."
         )
 
     def _pause_shared_connection_monitoring(self):
@@ -420,7 +433,8 @@ class RegisterScannerWidget(QWidget):
             watchdog.stop()
 
     def _start_address_scan(self):
-        if not (self.parent_window.modbus and self.parent_window.modbus.is_connected()):
+        modbus = self._modbus()
+        if not (modbus and modbus.is_connected()):
             self.refresh_connection_state()
             return
         if self._scan_in_progress():
@@ -452,8 +466,10 @@ class RegisterScannerWidget(QWidget):
         self.addr_stop_btn.setEnabled(True)
         self.create_tags_btn.setEnabled(False)
 
+        self._scanned_device = self.device_selector.device()
+        self.device_selector.combo.setEnabled(False)
         self.address_worker = AddressScanWorker(
-            self.parent_window.modbus, self.addr_function_combo.currentText(), start, end,
+            modbus, self.addr_function_combo.currentText(), start, end,
             self.addr_timeout_input.value() / 1000.0,
             reserve_range=getattr(self.parent_window, "_reserve_range", None),
             release_range=getattr(self.parent_window, "_release_range", None),
@@ -491,7 +507,7 @@ class RegisterScannerWidget(QWidget):
         if getattr(self, "_watchdog_was_active", False):
             self._watchdog_was_active = False
             watchdog = getattr(self.parent_window, "_reconnect_watchdog_timer", None)
-            if watchdog is not None and self.parent_window.modbus and self.parent_window.modbus.is_connected():
+            if watchdog is not None and self.parent_window._any_device_connected():
                 watchdog.start(self.parent_window.WATCHDOG_HEALTHY_INTERVAL_MS)
 
         # Resume Trend polling we paused before the scan, same live-connection guard as
@@ -500,7 +516,7 @@ class RegisterScannerWidget(QWidget):
         if getattr(self, "_trend_was_running", False):
             self._trend_was_running = False
             trend_widget = getattr(self.parent_window, "trend_widget", None)
-            if trend_widget is not None and self.parent_window.modbus and self.parent_window.modbus.is_connected():
+            if trend_widget is not None and self.parent_window._any_device_connected():
                 trend_widget.poll_timer.start(trend_widget.interval_input.value())
                 self.output_text.append("Resumed Trend polling.")
 
@@ -526,9 +542,10 @@ class RegisterScannerWidget(QWidget):
         tag_type = _SPACE_LABELS[function_name]
         one_based = getattr(self.parent_window, "tag_address_one_based", True)
 
+        device = getattr(self, "_scanned_device", None) or self.device_selector.device()
         existing_offsets = set()
         for tag in self.parent_window._get_monitoring_tags():
-            if tag["type"] != tag_type:
+            if tag["type"] != tag_type or (device and tag.get("device", "") != device):
                 continue
             try:
                 existing_offsets.add(self.parent_window._tag_user_address_to_offset(tag))
@@ -543,7 +560,8 @@ class RegisterScannerWidget(QWidget):
                 continue
             user_address = protocol_offset + (1 if one_based else 0)
             name = _default_scanned_tag_name(function_name, protocol_offset)
-            self.parent_window._add_monitoring_tag(tag_name=name, tag_type=tag_type, address=user_address, count=1)
+            self.parent_window._add_monitoring_tag(tag_name=name, tag_type=tag_type, address=user_address, count=1,
+                                                   device=device)
             existing_offsets.add(protocol_offset)
             created += 1
 

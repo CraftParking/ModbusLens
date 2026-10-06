@@ -83,6 +83,17 @@ and network diagnostics - in one tool.</p>
 <h2 class="reveal">What it does</h2>
 <div class="feature-grid">
 <article class="panel-card feature-card reveal">
+<p class="eyebrow">MULTI-DEVICE</p>
+<h3>Every device at a glance</h3>
+<ul>
+<li>Overview tab: one card per device - live status, success rate, latency and pinned values</li>
+<li>Each device has its own connection and Unit ID; devices behind one gateway share one link</li>
+<li>Tags, Trend pens and Raw Data are per device, with device tabs and filters</li>
+<li>Address Table, Script, Scanner and diagnostics each pick their own device</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
 <p class="eyebrow">COMMUNICATION</p>
 <h3>Modbus TCP &amp; RTU</h3>
 <ul>
@@ -141,7 +152,7 @@ and network diagnostics - in one tool.</p>
 <p class="eyebrow">TRENDING</p>
 <h3>Trend graphing</h3>
 <ul>
-<li>Up to 20 pens, picked straight from your Tags list</li>
+<li>Pages of up to 20 pens each, picked straight from your Tags list on any device</li>
 <li>Detachable window, zoom/pan, live crosshair and stats</li>
 <li>Record a session and replay it later at 1x-8x speed</li>
 </ul>
@@ -162,7 +173,7 @@ and network diagnostics - in one tool.</p>
 <h3>Scripting</h3>
 <ul>
 <li>Purpose-built test-sequence language - no imports, no exceptions to write</li>
-<li>WRITE, READ, WAIT, LOG, LET, REPEAT, IF, and a live Variables panel</li>
+<li>WRITE, READ, WAIT, LOG, LET, REPEAT, IF, DEVICE, and a live Variables panel</li>
 <li>Target a real connected device or the built-in Server simulator</li>
 </ul>
 </article>
@@ -257,6 +268,10 @@ relying on it.</p>
 <section id="screenshots">
 <h2 class="reveal">Screenshots</h2>
 <div class="shot-stack">
+<figure class="panel-card reveal">
+<img src="assets/overview.png" alt="Overview tab with two meters online, live values and per-device status" tabindex="0" role="button" aria-label="View larger">
+</figure>
+
 <figure class="panel-card reveal">
 <img src="assets/raw_data.png" alt="Raw Data view" tabindex="0" role="button" aria-label="View larger">
 </figure>

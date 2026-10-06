@@ -19,6 +19,7 @@ from log_format import format_log_html
 from modbus_meta import function_code_for
 from theme import apply_dropdown_delegate, get_colors
 from widgets.trend_widget import TagPickerDialog
+from widgets.device_selector import DeviceSelector
 
 HIDE_RUN_WARNING_KEY = "hide_script_run_warning"
 
@@ -374,6 +375,13 @@ def _parse_line(line):
     if upper == "END":
         return Instruction("END")
 
+    if upper.startswith("DEVICE ") or upper == "DEVICE":
+        # Rest of the line, so names with spaces work: DEVICE METER 2 (quotes optional).
+        name = line[6:].strip().strip('"').strip("'").strip()
+        if not name:
+            raise ScriptError("DEVICE requires a device name, e.g. DEVICE METER 2")
+        return Instruction("DEVICE", {"name": name})
+
     if upper.startswith("WRITE "):
         return Instruction("WRITE", _parse_write_args(line[6:].strip()))
 
@@ -491,8 +499,16 @@ class ScriptRunner:
     """Drives a compiled script one instruction at a time; WAIT hands control back instead of blocking."""
 
     def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None,
-                 tags_getter=None, reserve_range=None, release_range=None, result_callback=None):
+                 tags_getter=None, reserve_range=None, release_range=None, result_callback=None,
+                 device=None, device_resolver=None, device_modbus_getter=None):
         self.modbus_getter = modbus_getter
+        # Multi-device: the script talks to `device` (the Script tab's Device selector) until
+        # a DEVICE line switches it. device_resolver(name) -> canonical name or None;
+        # device_modbus_getter(name) -> that device's DeviceView (None while offline).
+        self.start_device = device
+        self.device = device
+        self.device_resolver = device_resolver
+        self.device_modbus_getter = device_modbus_getter
         self.server_getter = server_getter
         self.target_mode = target_mode  # "client" or "server"
         self.tags_getter = tags_getter or (lambda: [])
@@ -519,6 +535,7 @@ class ScriptRunner:
 
     def load(self, instructions):
         self.instructions = instructions
+        self.device = self.start_device
         self.pc = 0
         self.repeat_counters = {}
         self.variables = {}
@@ -553,6 +570,16 @@ class ScriptRunner:
 
         if instr.op == "LOG":
             self.log(str(self._eval(instr.args["expr"])))
+            return None
+
+        if instr.op == "DEVICE":
+            if self.target_mode == "server":
+                raise ScriptError("DEVICE only applies to a Client Connection script")
+            name = self.device_resolver(instr.args["name"]) if self.device_resolver else None
+            if name is None:
+                raise ScriptError(f"unknown device '{instr.args['name']}'")
+            self.device = name
+            self.log(f"DEVICE {name}")
             return None
 
         if instr.op == "LET":
@@ -717,10 +744,11 @@ class ScriptRunner:
         raise ScriptError(f"unknown operator '{op}'")
 
     def _find_tag(self, name):
-        for tag in self.tags_getter():
-            if tag["name"] == name:
-                return tag
-        return None
+        """The current device's tag of that name (two meters both have a V1), else the
+        first tag with that name on any device."""
+        matches = [tag for tag in self.tags_getter() if tag["name"] == name]
+        own = [tag for tag in matches if tag.get("device") == self.device]
+        return (own or matches or [None])[0]
 
     def _resolve_type_address(self, args):
         if "tag_name" in args:
@@ -731,10 +759,23 @@ class ScriptRunner:
         return args["type"], args["address"]
 
     def _require_modbus(self):
+        if self.device is not None and self.device_modbus_getter is not None:
+            modbus = self.device_modbus_getter(self.device)
+            if not modbus or not modbus.is_connected():
+                raise ScriptError(f"{self.device} is not connected")
+            return modbus
         modbus = self.modbus_getter()
         if not modbus or not modbus.is_connected():
             raise ScriptError("not connected to a Modbus server")
         return modbus
+
+    def _raw_data(self, *args):
+        if not self.raw_data_callback:
+            return
+        if self.device is not None:
+            self.raw_data_callback(*args, device=self.device)
+        else:
+            self.raw_data_callback(*args)
 
     def _require_server(self):
         server = self.server_getter()
@@ -773,11 +814,10 @@ class ScriptRunner:
             self.release_range(request_range)
 
         self.log(f"WRITE {data_type} {address} = {value} {'OK' if ok else 'FAILED'}")
-        if self.raw_data_callback:
-            self.raw_data_callback(
-                f"Script WRITE {data_type} {address}", value if ok else None, elapsed_ms,
-                function_code_for(data_type, is_write=True),
-            )
+        self._raw_data(
+            f"Script WRITE {data_type} {address}", value if ok else None, elapsed_ms,
+            function_code_for(data_type, is_write=True),
+        )
 
     def _do_read(self, data_type, address):
         if self.target_mode == "server":
@@ -807,11 +847,10 @@ class ScriptRunner:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
         finally:
             self.release_range(request_range)
-        if self.raw_data_callback:
-            self.raw_data_callback(
-                f"Script READ {data_type} {address}", data, elapsed_ms,
-                function_code_for(data_type, is_write=False),
-            )
+        self._raw_data(
+            f"Script READ {data_type} {address}", data, elapsed_ms,
+            function_code_for(data_type, is_write=False),
+        )
         if data is None:
             return None
         value = data[0] if isinstance(data, list) else data
@@ -879,6 +918,12 @@ class ScriptWidget(QWidget):
         )
         toolbar.addWidget(self.target_combo)
         apply_dropdown_delegate(self.target_combo, getattr(self.parent_window, "_theme_mode", "light"))
+        self.device_selector = DeviceSelector(
+            self.parent_window,
+            tooltip="The device a Client Connection script starts on -- a DEVICE <name> line switches it")
+        toolbar.addWidget(self.device_selector)
+        self.target_combo.currentIndexChanged.connect(
+            lambda _i: self.device_selector.combo.setEnabled(self._target_mode() == "client"))
         toolbar.addSpacing(10)
 
         self.compile_btn = QPushButton("Compile")
@@ -1131,7 +1176,28 @@ class ScriptWidget(QWidget):
 
         menu.exec(self.editor.mapToGlobal(pos))
 
+    def _device_at_cursor(self):
+        """The device a line at the cursor would run against: the last DEVICE line above
+        it, else the Device selector's."""
+        cursor = self.editor.textCursor()
+        lines = self.editor.toPlainText().splitlines()[:cursor.blockNumber()]
+        for line in reversed(lines):
+            stripped = line.strip()
+            if stripped.upper().startswith("DEVICE "):
+                return self._resolve_device_name(stripped[7:].strip().strip('"').strip("'"))
+        return self.device_selector.device()
+
     def _insert_tag_reference(self, tag):
+        device = tag.get("device")
+        if (device and len(getattr(self.parent_window, "tag_devices", [])) > 1
+                and device != self._device_at_cursor()):
+            # Put "DEVICE <name>" on its own line above, so the tag resolves on its device.
+            cursor = self.editor.textCursor()
+            column = cursor.positionInBlock()
+            cursor.movePosition(cursor.MoveOperation.StartOfBlock)
+            cursor.insertText(f"DEVICE {device}\n")
+            cursor.movePosition(cursor.MoveOperation.Right, n=column)
+            self.editor.setTextCursor(cursor)
         self.editor.insertPlainText(tag["name"])
 
     def _open_tag_picker(self):
@@ -1177,10 +1243,10 @@ class ScriptWidget(QWidget):
             QMessageBox.warning(self, "Server Not Running", "Start the Server tab before running a Server-target script.")
             return False
 
-        modbus = getattr(self.parent_window, "modbus", None)
-        if modbus and modbus.is_connected():
+        if self.device_selector.is_connected():
             return True
-        QMessageBox.warning(self, "Not Connected", "Connect to a Modbus server before running a Client-target script.")
+        name = self.device_selector.device() or "the device"
+        QMessageBox.warning(self, "Not Connected", f"Connect {name} before running a Client-target script.")
         return False
 
     def _compile(self):
@@ -1276,10 +1342,13 @@ class ScriptWidget(QWidget):
             target_mode,
             self._log_console,
             getattr(self.parent_window, "_display_raw_data", None),
-            self._script_tags if hasattr(self.parent_window, "_get_monitoring_tags") else None,
+            getattr(self.parent_window, "_get_monitoring_tags", None),
             getattr(self.parent_window, "_reserve_range", None),
             getattr(self.parent_window, "_release_range", None),
             self._record_assert_result,
+            device=self.device_selector.device() if target_mode == "client" else None,
+            device_resolver=self._resolve_device_name,
+            device_modbus_getter=getattr(self.parent_window, "_device_view", None),
         )
         self.runner.load(instructions)
         self._reset_variables_panel(collect_variable_names(instructions))
@@ -1288,15 +1357,17 @@ class ScriptWidget(QWidget):
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.target_combo.setEnabled(False)
+        self.device_selector.setEnabled(False)
         self.editor.setReadOnly(True)
         self._log_console(f"Script started (target: {self.target_combo.currentText()})")
         self._resume()
 
-    def _script_tags(self):
-        """Tags for name lookups, the active device's first: a script talks to the active
-        device, and two meters usually share tag names (both have a V1)."""
-        active = getattr(self.parent_window, "active_device", None)
-        return sorted(self.parent_window._get_monitoring_tags(), key=lambda t: t.get("device") != active)
+    def _resolve_device_name(self, name):
+        """DEVICE lines match device names case-insensitively."""
+        for device in getattr(self.parent_window, "tag_devices", []):
+            if device["name"].strip().lower() == name.strip().lower():
+                return device["name"]
+        return None
 
     def _resume(self):
         if not self.running or self.runner is None:
@@ -1330,6 +1401,7 @@ class ScriptWidget(QWidget):
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.target_combo.setEnabled(True)
+        self.device_selector.setEnabled(True)
         self.editor.setReadOnly(False)
         if user_initiated:
             self._log_console("Script stopped")

@@ -269,11 +269,7 @@ class SerialDiscoveryDialog:
             self.output_text.append("Enter or select a COM port first.")
             return
 
-        modbus = getattr(self.parent, "modbus", None)
-        if (
-            modbus and modbus.is_connected() and modbus.mode == "serial"
-            and modbus.serial_port.strip().upper() == port.upper()
-        ):
+        if self.parent._serial_port_in_use(port):
             # This worker opens its own connection per combination instead of reusing
             # the shared one (see class docstring) -- on the same port as the app's live
             # connection, every open attempt would just fail against the OS's exclusive
@@ -281,7 +277,7 @@ class SerialDiscoveryDialog:
             # real settings. Catching it here gives a clear reason instead of a scan
             # that silently "finds" nothing.
             self.output_text.append(
-                f"{port} is the app's current connection -- disconnect first, or scan a different port."
+                f"{port} is in use by a connected device -- disconnect it first, or scan a different port."
             )
             return
 

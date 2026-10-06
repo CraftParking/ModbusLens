@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from theme import apply_dropdown_delegate
+from widgets.device_selector import DeviceSelector
 
 
 def _parse_hex_bytes(text):
@@ -206,6 +207,9 @@ class DiagnosticFunctionsDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
+        self.device_selector = DeviceSelector(parent, tooltip="The device to send the diagnostic request to")
+        layout.addWidget(self.device_selector)
+
         picker_row = QHBoxLayout()
         picker_row.addWidget(QLabel("Function:"))
         self.function_combo = QComboBox()
@@ -299,12 +303,14 @@ class DiagnosticFunctionsDialog(QDialog):
         return values
 
     def _run_selected(self):
-        if not self.parent_window._check_connection():
+        modbus = self.device_selector.modbus()
+        if modbus is None or not modbus.is_connected():
+            self.result_output.setPlainText(f"{self.device_selector.device()} isn't connected -- connect it first.")
             return
         spec = FUNCTIONS[self.function_combo.currentIndex()]
         try:
             values = self._param_values(spec)
-            result = spec["run"](self.parent_window.modbus, values)
+            result = spec["run"](modbus, values)
         except ValueError as e:
             self.result_output.setPlainText(f"Invalid parameter: {e}")
             return
@@ -314,7 +320,7 @@ class DiagnosticFunctionsDialog(QDialog):
             return
 
         if result is None or result is False:
-            error_text = self.parent_window.modbus.last_error or "Failed (no further detail from the device)"
+            error_text = modbus.last_error or "Failed (no further detail from the device)"
             self.result_output.setPlainText(f"Failed: {error_text}")
             self.parent_window._log(f"{spec['label']} failed: {error_text}")
             return

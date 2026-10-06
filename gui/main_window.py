@@ -36,6 +36,7 @@ from widgets.address_table import AddressTableWidget
 from widgets.device_profiles import DeviceProfilesPanel
 from widgets.tag_devices import ADD_DEVICE_SENTINEL, TAG_DEVICE_COLUMN
 from device_manager import DeviceManagerMixin
+from wheel_guard import install_wheel_guard
 from device_links import normalize_connection
 from widgets.overview_widget import OverviewWidget, DeviceStatusBar
 from widgets.trend_widget import TrendWidget
@@ -288,6 +289,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         # by _init_devices() at the end of __init__ -- there's always at least one.
         self.tag_devices = []
         self.active_device = None
+        self._device_selectors = []  # every tab's DeviceSelector (see widgets/device_selector.py)
         self._tag_device_filter = None  # Tags device tab: None = All, else a device name
 
         # Shared between Tag Monitoring's poll worker and Trend's own poll timer so the
@@ -499,10 +501,10 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
 
         # 3. Control Buttons
         self.settings_btn = QPushButton("Device Settings")
-        self.settings_btn.setToolTip("Connection settings of the active device (the highlighted one)")
+        self.settings_btn.setToolTip("Connection settings of a device (pick one when there are several)")
         self.settings_btn.setFixedSize(110, 30)
         self.settings_btn.setStyleSheet(self._get_button_style(small=True))
-        self.settings_btn.clicked.connect(self._show_connection_settings)
+        self.settings_btn.clicked.connect(self._device_settings_clicked)
         main_layout.addWidget(self.settings_btn)
 
         self.connect_btn = QPushButton("Connect All")
@@ -1098,6 +1100,10 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             w.setContextMenuPolicy(Qt.NoContextMenu)
             if isinstance(w, QComboBox):
                 theme.apply_dropdown_delegate(w, self._theme_mode)
+            if isinstance(w, (QComboBox, QSpinBox)):
+                # Scrolling the table must never change a cell (a Device flipping to
+                # another meter, an Address creeping up) -- the wheel scrolls instead.
+                install_wheel_guard(w)
         return w
  
     def _on_add_tag_clicked(self):
@@ -2851,11 +2857,13 @@ Unit ID: {unit_id}<br><br>
 
         # Update Address Table controls
         if hasattr(self, 'address_table_widget'):
-            self.address_table_widget.function_combo.setEnabled(connected)
-            self.address_table_widget.address_input.setEnabled(connected)
-            self.address_table_widget.count_input.setEnabled(connected)
-            self.address_table_widget.offset_checkbox.setEnabled(connected)
-            self.address_table_widget.create_btn.setEnabled(connected)
+            # Its own Device selector decides, not the window-wide state.
+            table_connected = self.address_table_widget.has_active_connection()
+            self.address_table_widget.function_combo.setEnabled(table_connected)
+            self.address_table_widget.address_input.setEnabled(table_connected)
+            self.address_table_widget.count_input.setEnabled(table_connected)
+            self.address_table_widget.offset_checkbox.setEnabled(table_connected)
+            self.address_table_widget.create_btn.setEnabled(table_connected)
             self.address_table_widget.update_monitoring_availability()
         
         # Also disable tag monitoring controls when not connected
@@ -3766,9 +3774,12 @@ Unit ID: {unit_id}<br><br>
         if function_code is None:
             function_code = self._get_function_code_from_title(title)
 
-        exception_code = self._get_exception_code_from_error() if data is None else None
+        # Error/wire-byte fallbacks come from the client the request actually went through:
+        # the named device's link, else the default device's.
+        source = (self._device_view(device) if device else None) or self.modbus
+        exception_code = getattr(source, 'last_exception_code', None) if data is None and source else None
         if error_category is None and data is None:
-            error_category = getattr(self.modbus, 'last_error_category', None)
+            error_category = getattr(source, 'last_error_category', None)
 
         # Update statistics (Show Statistics still breaks this down by function/exception code)
         self.advanced_diagnostics.update_request_stats(
@@ -3780,11 +3791,11 @@ Unit ID: {unit_id}<br><br>
         )
 
         if hasattr(self, 'diagnostics_dialogs'):
-            error_text = getattr(self.modbus, 'last_error', None) if data is None else None
+            error_text = getattr(source, 'last_error', None) if data is None else None
             if tx_bytes is None:
-                tx_bytes = getattr(self.modbus, 'last_tx_bytes', None)
+                tx_bytes = getattr(source, 'last_tx_bytes', None)
             if rx_bytes is None:
-                rx_bytes = getattr(self.modbus, 'last_rx_bytes', None)
+                rx_bytes = getattr(source, 'last_rx_bytes', None)
             # Blank for a plain communications failure (timeout, no response) -- only a
             # device that actually replied with a Modbus exception code gets one, so the
             # Raw Data tab's Exception column distinguishes "the device refused this" from

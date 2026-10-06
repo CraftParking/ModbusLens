@@ -12,6 +12,7 @@ from log_format import format_log_html
 from modbus_meta import FUNCTION_NAMES
 from theme import apply_dropdown_delegate
 from zoom import install_ctrl_wheel_zoom
+from widgets.device_selector import DeviceSelector
 
 DEFAULT_STATUS_LOG_FONT_PX = 10
 
@@ -29,6 +30,22 @@ class AddressTableWidget(QWidget):
         self.range_is_one_based = True
         self._building_table = False
         self.setup_ui()
+
+    @property
+    def modbus(self):
+        """The device picked in this tab's Device selector (None while it's offline)."""
+        selector = getattr(self, "device_selector", None)
+        return selector.modbus() if selector is not None else None
+
+    def _on_device_changed(self, name):
+        if self.monitoring_active:
+            self.monitoring_checkbox.setChecked(False)
+        self.current_data = {}
+        self.log(f"Device: {self.device_selector.describe()}")
+        if hasattr(self.parent_window, "_refresh_connection_controls"):
+            self.parent_window._refresh_connection_controls()
+        else:
+            self.update_monitoring_availability()
 
     def _status_log_style(self, font_px=DEFAULT_STATUS_LOG_FONT_PX):
         c = self.parent_window._colors()
@@ -50,6 +67,14 @@ class AddressTableWidget(QWidget):
         # Control panel: function/address controls on the left, status log on the right
         control_layout = QHBoxLayout()
         left_controls = QVBoxLayout()
+
+        # Its own line: the range row below is already full.
+        self.device_selector = DeviceSelector(self.parent_window, tooltip="The device this table reads and writes")
+        self.device_selector.changed.connect(self._on_device_changed)
+        device_row = QHBoxLayout()
+        device_row.addWidget(self.device_selector)
+        device_row.addStretch()
+        left_controls.addLayout(device_row)
 
         control_group = QGroupBox("Address Range Configuration")
         address_layout = QHBoxLayout(control_group)
@@ -223,9 +248,9 @@ class AddressTableWidget(QWidget):
 
     def has_active_connection(self):
         """Return True when the parent window has an active Modbus connection."""
-        if not self.parent_window or not getattr(self.parent_window, 'modbus', None):
+        if not self.parent_window or not self.modbus:
             return False
-        return bool(self.parent_window.modbus.is_connected())
+        return bool(self.modbus.is_connected())
 
     def update_monitoring_availability(self):
         """Enable live monitoring only for read functions on an active connection."""
@@ -437,12 +462,12 @@ class AddressTableWidget(QWidget):
                 self.monitoring_checkbox.setChecked(False)
                 return
 
-            if not hasattr(self.parent_window, 'modbus') or not self.parent_window.modbus:
+            if not self.modbus:
                 self.log("Error: Modbus client not initialized - please connect first")
                 self.monitoring_checkbox.setChecked(False)
                 return
 
-            if not self.parent_window.modbus.is_connected():
+            if not self.modbus.is_connected():
                 self.log("Error: Not connected to Modbus server - please connect first")
                 self.monitoring_checkbox.setChecked(False)
                 return
@@ -471,12 +496,12 @@ class AddressTableWidget(QWidget):
         if not self.monitoring_active:
             return
 
-        if not self.parent_window or not hasattr(self.parent_window, 'modbus') or not self.parent_window.modbus:
+        if not self.parent_window or not self.modbus:
             self.log("Error: Modbus client not available")
             self.stop_monitoring()
             return
 
-        if not self.parent_window.modbus.is_connected():
+        if not self.modbus.is_connected():
             self.log("Error: Modbus connection lost")
             self.stop_monitoring()
             return
@@ -510,13 +535,13 @@ class AddressTableWidget(QWidget):
             try:
                 start_time = time.perf_counter()
                 if "Read Coils" in self.current_function:
-                    data = self.parent_window.modbus.read_coils(protocol_offset, self.current_count)
+                    data = self.modbus.read_coils(protocol_offset, self.current_count)
                 elif "Discrete Inputs" in self.current_function:
-                    data = self.parent_window.modbus.read_discrete_inputs(protocol_offset, self.current_count)
+                    data = self.modbus.read_discrete_inputs(protocol_offset, self.current_count)
                 elif "Holding Registers" in self.current_function:
-                    data = self.parent_window.modbus.read_registers(protocol_offset, self.current_count)
+                    data = self.modbus.read_registers(protocol_offset, self.current_count)
                 elif "Input Registers" in self.current_function:
-                    data = self.parent_window.modbus.read_input_registers(protocol_offset, self.current_count)
+                    data = self.modbus.read_input_registers(protocol_offset, self.current_count)
                 else:
                     return
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -527,13 +552,13 @@ class AddressTableWidget(QWidget):
             if hasattr(self.parent_window, '_display_raw_data'):
                 self.parent_window._display_raw_data(
                     f"AddressTable[{self.current_function}]", data, elapsed_ms,
-                    self._function_info(self.current_function),
+                    self._function_info(self.current_function), device=self.device_selector.device(),
                 )
 
             if data is not None:
                 self.update_table_values(data)
             else:
-                error_msg = getattr(self.parent_window.modbus, 'last_error', 'Unknown error')
+                error_msg = getattr(self.modbus, 'last_error', 'Unknown error')
                 self.log(f"Read failed: {error_msg}")
         except Exception as e:
             self.log(f"Monitoring error: {e}")
@@ -667,7 +692,7 @@ class AddressTableWidget(QWidget):
                     hex_item.setText(self._format_hex(value))
                 self.log(f"Wrote {value} to address {address}")
             else:
-                self.log(f"Write failed to address {address}: {getattr(self.parent_window.modbus, 'last_error', 'Unknown error')}")
+                self.log(f"Write failed to address {address}: {getattr(self.modbus, 'last_error', 'Unknown error')}")
         except ValueError as e:
             self.log(f"Invalid value '{value_text}' for address {address}: {e}")
             if address in self.current_data:
@@ -677,7 +702,7 @@ class AddressTableWidget(QWidget):
         """Push an edited Min/Max cell into the shared Modbus client's write-bound
         registry, so the bound is enforced regardless of whether the next write to
         this address comes from the Address Table, Tags, or a Script."""
-        if not hasattr(self.parent_window, 'modbus') or not self.parent_window.modbus:
+        if not self.modbus:
             return
 
         address = self.current_start_address + row
@@ -691,7 +716,7 @@ class AddressTableWidget(QWidget):
         max_text = self.table.item(row, 4).text().strip() if self.table.item(row, 4) else ""
 
         if not min_text and not max_text:
-            self.parent_window.modbus.clear_write_bound(protocol_offset)
+            self.modbus.clear_write_bound(protocol_offset)
             return
 
         try:
@@ -705,17 +730,17 @@ class AddressTableWidget(QWidget):
             self.log(f"Invalid write bound for address {address}: Min ({minimum}) is greater than Max ({maximum})")
             return
 
-        self.parent_window.modbus.set_write_bound(protocol_offset, minimum, maximum)
+        self.modbus.set_write_bound(protocol_offset, minimum, maximum)
         self.log(f"Set write bound for address {address}: [{minimum}, {maximum}]")
 
     def write_value_to_device(self, address, value):
         """Write a single value to the Modbus device."""
         try:
-            if not hasattr(self.parent_window, 'modbus') or not self.parent_window.modbus:
+            if not self.modbus:
                 self.log("Error: No Modbus connection available for write operation")
                 return False
 
-            if not self.parent_window.modbus.is_connected():
+            if not self.modbus.is_connected():
                 self.log("Error: Not connected to Modbus device for write operation")
                 return False
 
@@ -748,15 +773,15 @@ class AddressTableWidget(QWidget):
             try:
                 start_time = time.perf_counter()
                 if "Write Single Coil" in self.current_function:
-                    success = self.parent_window.modbus.write_coil(protocol_offset, value)
+                    success = self.modbus.write_coil(protocol_offset, value)
                 elif "Write Single Register" in self.current_function:
-                    success = self.parent_window.modbus.write_register(protocol_offset, value)
+                    success = self.modbus.write_register(protocol_offset, value)
                 elif "Write Multiple Coils" in self.current_function:
                     # Each row is edited independently, so this only ever writes one coil at a time
-                    success = self.parent_window.modbus.write_coils(protocol_offset, [value])
+                    success = self.modbus.write_coils(protocol_offset, [value])
                 elif "Write Multiple Registers" in self.current_function:
                     # Each row is edited independently, so this only ever writes one register at a time
-                    success = self.parent_window.modbus.write_registers(protocol_offset, [value])
+                    success = self.modbus.write_registers(protocol_offset, [value])
                 else:
                     self.log(f"Error: Write operation not supported for function: {self.current_function}")
                     return False
@@ -771,6 +796,7 @@ class AddressTableWidget(QWidget):
                     value if success else None,
                     elapsed_ms,
                     self._function_info(self.current_function),
+                    device=self.device_selector.device(),
                 )
             return success
         except Exception as e:
@@ -794,7 +820,7 @@ class AddressTableWidget(QWidget):
             if success:
                 self.log(f"Wrote coil {'ON' if value else 'OFF'} to address {address}")
             else:
-                self.log(f"Coil write failed to address {address}: {getattr(self.parent_window.modbus, 'last_error', 'Unknown error')}")
+                self.log(f"Coil write failed to address {address}: {getattr(self.modbus, 'last_error', 'Unknown error')}")
         except Exception as e:
             self.log(f"Error in coil checkbox handler: {e}")
 

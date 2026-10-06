@@ -434,11 +434,21 @@ class DiagnosticsDialogs:
             return
         row = current_row
         transport = "tcp"
-        if hasattr(self.parent, 'modbus') and self.parent.modbus is not None:
+        # Decode with the framing of the device this row went to -- devices can sit on
+        # different links (one serial, one Modbus TCP...).
+        device_item = table.item(row, DEVICE_COLUMN)
+        device = self.parent._device(device_item.text()) if device_item and hasattr(self.parent, "_device") else None
+        if device is not None:
+            conn = device["connection"]
+            if conn.get("mode") == "serial":
+                transport = "ascii" if conn.get("serial_framer") == "ascii" else "rtu"
+            elif conn.get("tcp_framer") == "rtu":
+                # RTU over TCP: the wire bytes are plain RTU frames (no MBAP header).
+                transport = "rtu"
+        elif getattr(self.parent, 'modbus', None) is not None:
             if self.parent.modbus.mode == "serial":
                 transport = "ascii" if self.parent.modbus.serial_framer == "ascii" else "rtu"
             elif getattr(self.parent.modbus, "tcp_framer", "socket") == "rtu":
-                # RTU over TCP: the wire bytes are plain RTU frames (no MBAP header).
                 transport = "rtu"
         # Update the Frame Viewer first -- when it's visible, its TX/RX field tables
         # change height with every row (different frames decode to different field

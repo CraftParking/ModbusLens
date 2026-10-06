@@ -198,7 +198,11 @@ CHANGELOG_HTML = """
 <li>Bit View - a live, per-bit breakdown of a Holding/Input Register tag's raw value, each bit individually named; a Bool-format tag can also expand its bits inline in the Tags table, with single-bit read-modify-write via its own Write Value cell (Holding Register only)</li>
 <li>Create Tags From Scan - generate Tags-tab rows directly from a Scanner result, one per responding address, named with the classic 5-digit Modicon convention</li>
 <li>Gateway mode (Server tab) - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response instead of simulating one, with a Gateway Activity log showing every relayed request and result</li>
-<li>Devices with their own connections - each device on the new Overview tab (first tab) has its own connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link; per-device Connect/Disconnect plus Connect All / Disconnect All; the top bar shows every device's status and picks the active device that Address Table, Trend, Script and Scanner work on</li>
+<li>Devices with their own connections - each device on the new Overview tab (first tab) has its own connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link; per-device Connect/Disconnect plus Connect All / Disconnect All; the top bar shows every device's status</li>
+<li>Device dropdowns instead of an "active device" - Address Table, Script, Scanner and Diagnostic Functions each pick their own device; scripts can switch device with a DEVICE line</li>
+<li>Trend pages - several graphs, each with its own 20 pens, all polled while the trend runs; pens read from their own tag's device and show it in the legend</li>
+<li>Raw Data Device column and filter; Remove All Devices on the Overview; tag pickers (Trend pens, Script Insert Tag) show each tag's device</li>
+<li>Import CSV on a device's Tags tab imports into that device only</li>
 <li>Overview cards - live status (online / exception / no response / reconnecting / paused), success rate, latency and pinned values per device; Open Tags, Pause, and Add Device blank, from a Profile, or found by a Unit ID sweep</li>
 <li>Devices in Tags - a Device column and per-device tabs above the Tags table; the same addresses can be used on every device; devices travel in Sessions and Tags CSVs</li>
 </ul>
@@ -209,6 +213,8 @@ CHANGELOG_HTML = """
 <li>Illegal Data Address explainer lists one more cause: a read covering only half of a 32-bit value, which many energy meters refuse</li>
 <li>Share to Community works again - submissions were being rejected with "Submission Failed" after the submission form's hosting plan changed; they now go to the active form</li>
 <li>Raw Data Frame Viewer decodes RTU-over-TCP traffic as RTU frames (unit, function, CRC) - it was applying the Modbus-TCP header layout, showing nonsense like a random Protocol ID</li>
+<li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer - it could silently move a tag to another device or shift its Address by one (reading half of one 32-bit value and half of the next, so values looked corrupt and meters reported exceptions); the wheel now just scrolls (same for Trend's pen grid)</li>
+<li>Tags no longer leak between devices or go missing - tags added for one device could show in another device's tab, a hidden row could be removed by Remove Tag, and a poll result arriving during an import could apply another tag's scaling or alarm</li>
 <li>Auto-reconnect now actually notices a dropped TCP link - the connection stayed flagged as connected after the peer reset it, so the watchdog never retried and every later request failed</li>
 <li>Share to Community failures explain themselves in plain language (connection problem, submission limit reached, or service temporarily unavailable) instead of showing the submission service's raw error; the raw text is still under Show Details and in System Logs</li>
 </ul>

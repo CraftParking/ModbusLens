@@ -9,13 +9,14 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QLineEdit, QDialog, QTableWidget,
     QTableWidgetItem, QHeaderView, QColorDialog, QFileDialog, QMessageBox, QGroupBox,
     QAbstractItemView, QSizePolicy, QDateTimeEdit, QListWidget, QListWidgetItem,
-    QScrollBar, QGraphicsLineItem
+    QScrollBar, QGraphicsLineItem, QTabBar, QStackedWidget, QMenu, QInputDialog
 )
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 from PySide6.QtPrintSupport import QPrinter
 
 from modbus_meta import MULTI_WORD_FORMATS
 from theme import apply_dropdown_delegate
+from wheel_guard import install_wheel_guard
 from widgets.trend_recording import TrendRecordingWindow
 
 MAX_PENS = 20
@@ -81,6 +82,25 @@ def _multi_device(tags):
 
 def tag_title(tag, show_device):
     return f"{tag['name']}  ({tag['device']})" if show_device and tag.get("device") else tag["name"]
+
+
+MAX_PAGES = 10
+
+
+class TrendPage:
+    """One Trend page: its own chart, axes and MAX_PENS pens. Pen slots are unique across
+    pages (page k's pens are k*MAX_PENS ...), so a poll tick's {slot: value} -- what
+    recordings store -- never mixes two pages' pens up."""
+
+    def __init__(self, name, number):
+        self.name = name
+        self.pens = [TrendPen(number * MAX_PENS + i, DEFAULT_PEN_COLORS[i % len(DEFAULT_PEN_COLORS)])
+                     for i in range(MAX_PENS)]
+        self.chart = None
+        self.axis_x = None
+        self.axis_y = None
+        self.chart_view = None
+        self.cursor_line = None
 
 
 class ColorButton(QPushButton):
@@ -302,6 +322,7 @@ class AddPenDialog(QDialog):
                 "Which decoded element to plot out of a multi-register tag (0 = first). Out-of-range "
                 "for the bound tag's actual register count falls back to the last valid element."
             )
+            install_wheel_guard(index_spin)
             table.setCellWidget(row, 3, index_spin)
 
             scale_combo = QComboBox()
@@ -313,6 +334,7 @@ class AddPenDialog(QDialog):
                 "Scaled: always use the tag's scaling (only meaningful at index 0); if unavailable, "
                 "nothing is plotted for that tick rather than silently showing a raw number instead."
             )
+            install_wheel_guard(scale_combo)
             table.setCellWidget(row, 4, scale_combo)
             apply_dropdown_delegate(scale_combo, getattr(main_window, "_theme_mode", "light"))
 
@@ -503,7 +525,12 @@ class TrendWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
-        self.pens = [TrendPen(i, DEFAULT_PEN_COLORS[i % len(DEFAULT_PEN_COLORS)]) for i in range(MAX_PENS)]
+        # Pages: each has its own chart + pens; every page is polled while Trend runs.
+        # self.pens/chart/axis_x/axis_y/chart_view/_cursor_line are the *shown* page's
+        # (properties below), so the view code works on whichever page is open.
+        self.pages = []
+        self._page = None
+        self._page_numbers = 0
         self.window_seconds = TIME_WINDOWS[0][1]
         self.running = False
         # Explicit state instead of recomputing "am I at the live edge" from the axis
@@ -543,6 +570,147 @@ class TrendWidget(QWidget):
 
         self._setup_ui()
         self._apply_graph_settings()
+
+    # --- Pages ---
+
+    pens = property(lambda self: self._page.pens)
+    chart = property(lambda self: self._page.chart)
+    axis_x = property(lambda self: self._page.axis_x)
+    axis_y = property(lambda self: self._page.axis_y)
+    chart_view = property(lambda self: self._page.chart_view)
+    _cursor_line = property(lambda self: self._page.cursor_line)
+
+    def _all_pens(self):
+        return [pen for page in self.pages for pen in page.pens]
+
+    def _build_page_chart(self, page):
+        chart = QChart()
+        chart.legend().setVisible(True)
+        chart.legend().setAlignment(Qt.AlignBottom)
+        axis_x = QDateTimeAxis()
+        axis_x.setFormat("HH:mm:ss")
+        axis_x.setTitleText(self.graph_settings["x_title"])
+        chart.addAxis(axis_x, Qt.AlignBottom)
+        axis_y = QValueAxis()
+        axis_y.setTitleText(self.graph_settings["y_title"])
+        chart.addAxis(axis_y, Qt.AlignLeft)
+        if self._page is not None:  # a new page opens on the current view range
+            axis_x.setRange(self.axis_x.min(), self.axis_x.max())
+        else:
+            now = QDateTime.currentDateTime()
+            axis_x.setRange(now.addSecs(-self.window_seconds), now)
+        axis_y.setRange(self.graph_settings["y_min"], self.graph_settings["y_max"])
+
+        view = QChartView(chart)
+        view.setRenderHint(QPainter.Antialiasing)
+        view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        cursor_line = QGraphicsLineItem()
+        cursor_line.setPen(QPen(QColor("#888888"), 1, Qt.DashLine))
+        cursor_line.setZValue(100)
+        chart.scene().addItem(cursor_line)
+        cursor_line.setVisible(False)
+        view.setMouseTracking(True)
+        view.viewport().installEventFilter(self)
+        page.chart, page.axis_x, page.axis_y, page.chart_view, page.cursor_line = chart, axis_x, axis_y, view, cursor_line
+
+    def _add_page(self, name=None, show=True):
+        if len(self.pages) >= MAX_PAGES:
+            QMessageBox.information(self, "Trend Pages", f"A trend can have up to {MAX_PAGES} pages.")
+            return None
+        number = self._page_numbers
+        self._page_numbers += 1
+        existing = {p.name for p in self.pages}
+        if not name:
+            n = len(self.pages) + 1
+            while f"Page {n}" in existing:
+                n += 1
+            name = f"Page {n}"
+        page = TrendPage(name, number)
+        self._build_page_chart(page)
+        self.pages.append(page)
+        self.page_stack.addWidget(page.chart_view)
+        if self._page is not None:
+            self._apply_graph_settings_to(page)
+        self._rebuild_page_tabs(show_index=len(self.pages) - 1 if show else None)
+        if show or self._page is None:
+            self._show_page(page)
+        return page
+
+    def _rebuild_page_tabs(self, show_index=None):
+        tabs = self.page_tabs
+        tabs.blockSignals(True)
+        while tabs.count():
+            tabs.removeTab(0)
+        for page in self.pages:
+            tabs.addTab(page.name)
+        tabs.addTab("+")
+        tabs.setTabToolTip(tabs.count() - 1, "Add a page")
+        current = show_index if show_index is not None else (self.pages.index(self._page) if self._page in self.pages else 0)
+        tabs.setCurrentIndex(current)
+        tabs.blockSignals(False)
+
+    def _show_page(self, page):
+        previous = self._page
+        if previous is page:
+            return
+        if previous is not None:
+            previous.cursor_line.setVisible(False)
+            # Keep one shared view range across pages.
+            page.axis_x.setRange(previous.axis_x.min(), previous.axis_x.max())
+        self._page = page
+        self._hover_x_ms = None
+        self.page_stack.setCurrentWidget(page.chart_view)
+        self._update_y_range()
+        self._update_scrollbar()
+        self._update_stats_table()
+        self._update_legend_labels()
+
+    def _on_page_tab_changed(self, index):
+        if index == len(self.pages):  # the "+" tab
+            if self._add_page() is None:
+                self._rebuild_page_tabs()
+            return
+        if 0 <= index < len(self.pages):
+            self._show_page(self.pages[index])
+
+    def _show_page_tab_menu(self, pos):
+        index = self.page_tabs.tabAt(pos)
+        if not 0 <= index < len(self.pages):
+            return
+        page = self.pages[index]
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename Page...")
+        delete_action = menu.addAction("Delete Page")
+        delete_action.setEnabled(len(self.pages) > 1)
+        chosen = menu.exec(self.page_tabs.mapToGlobal(pos))
+        if chosen == rename_action:
+            self._rename_page(page)
+        elif chosen == delete_action:
+            self._delete_page(page)
+
+    def _rename_page(self, page):
+        name, ok = QInputDialog.getText(self, "Rename Page", "Page name:", text=page.name)
+        name = name.strip()
+        if ok and name:
+            page.name = name
+            self._rebuild_page_tabs()
+
+    def _delete_page(self, page, confirm=True):
+        if len(self.pages) <= 1:
+            return
+        if confirm and any(p.is_active() for p in page.pens):
+            reply = QMessageBox.question(self, "Delete Page",
+                                         f"Delete '{page.name}' and its pens?", QMessageBox.Yes | QMessageBox.No,
+                                         QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+        index = self.pages.index(page)
+        if page is self._page:
+            self._show_page(self.pages[index - 1] if index > 0 else self.pages[1])
+        self.pages.remove(page)
+        self.page_stack.removeWidget(page.chart_view)
+        page.chart_view.deleteLater()
+        self._rebuild_page_tabs()
 
     def _button_style(self):
         if self.parent_window is not None and hasattr(self.parent_window, "_get_button_style"):
@@ -616,36 +784,20 @@ class TrendWidget(QWidget):
 
         layout.addWidget(control_group)
 
-        self.chart = QChart()
-        self.chart.legend().setVisible(True)
-        self.chart.legend().setAlignment(Qt.AlignBottom)
-
-        self.axis_x = QDateTimeAxis()
-        self.axis_x.setFormat("HH:mm:ss")
-        self.axis_x.setTitleText(self.graph_settings["x_title"])
-        self.chart.addAxis(self.axis_x, Qt.AlignBottom)
-
-        self.axis_y = QValueAxis()
-        self.axis_y.setTitleText(self.graph_settings["y_title"])
-        self.chart.addAxis(self.axis_y, Qt.AlignLeft)
-
-        now = QDateTime.currentDateTime()
-        self.axis_x.setRange(now.addSecs(-self.window_seconds), now)
-        self.axis_y.setRange(self.graph_settings["y_min"], self.graph_settings["y_max"])
-
-        self.chart_view = QChartView(self.chart)
-        self.chart_view.setRenderHint(QPainter.Antialiasing)
-        self.chart_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(self.chart_view, 1)
-
-        self._cursor_line = QGraphicsLineItem()
-        self._cursor_line.setPen(QPen(QColor("#888888"), 1, Qt.DashLine))
-        self._cursor_line.setZValue(100)
-        self.chart.scene().addItem(self._cursor_line)
-        self._cursor_line.setVisible(False)
+        # Pages: a tab per page ("+" adds one; right-click to rename/delete), each
+        # showing its own chart in the stack below.
+        self.page_tabs = QTabBar()
+        self.page_tabs.setExpanding(False)
+        self.page_tabs.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.page_tabs.customContextMenuRequested.connect(self._show_page_tab_menu)
+        self.page_tabs.tabBarDoubleClicked.connect(
+            lambda i: self._rename_page(self.pages[i]) if 0 <= i < len(self.pages) else None)
+        self.page_tabs.currentChanged.connect(self._on_page_tab_changed)
+        layout.addWidget(self.page_tabs)
+        self.page_stack = QStackedWidget()
+        layout.addWidget(self.page_stack, 1)
         self._hover_x_ms = None
-        self.chart_view.setMouseTracking(True)
-        self.chart_view.viewport().installEventFilter(self)
+        now = QDateTime.currentDateTime()
 
         self.history_scrollbar = QScrollBar(Qt.Horizontal)
         self.history_scrollbar.setEnabled(False)
@@ -729,6 +881,8 @@ class TrendWidget(QWidget):
         self.stats_table.setMaximumHeight(160)
         self.stats_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         layout.addWidget(self.stats_table)
+
+        self._add_page()
 
     def _toggle_stats_table(self):
         visible = not self.stats_table.isVisible()
@@ -858,7 +1012,7 @@ class TrendWidget(QWidget):
         self._update_stats_table()
 
     def _has_active_pens(self):
-        return any(pen.is_active() for pen in self.pens)
+        return any(pen.is_active() for pen in self._all_pens())
 
     # --- Graph properties ---
 
@@ -869,6 +1023,18 @@ class TrendWidget(QWidget):
             self._apply_graph_settings()
 
     def _apply_graph_settings(self):
+        for page in self.pages:
+            self._apply_graph_settings_to(page)
+
+    def _apply_graph_settings_to(self, page):
+        shown = self._page
+        self._page = page
+        try:
+            self._apply_graph_settings_page()
+        finally:
+            self._page = shown
+
+    def _apply_graph_settings_page(self):
         s = self.graph_settings
         # QChart.setBackgroundBrush() alone only paints the chart's outer margin -- the plot
         # area itself (where the grid and series actually sit) is a separate layer that stays
@@ -1035,7 +1201,7 @@ class TrendWidget(QWidget):
         log_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
         tick_values = {}
-        for pen in self.pens:
+        for pen in self._all_pens():
             if not (pen.is_active() and pen.series is not None):
                 continue
             pen_modbus, unit, link = self._pen_client(pen, modbus)
@@ -1050,13 +1216,14 @@ class TrendWidget(QWidget):
             tick_values[pen.slot] = value
             self._log_pen_value(pen, log_timestamp, value)
 
-        if got_point:
+        if got_point or self.running:
             self._update_y_range()
             if self._auto_scroll_enabled:
                 self.axis_x.setRange(now.addSecs(-self.window_seconds), now)
             self._update_scrollbar()
             self._update_stats_table()
-            self.sample_tick.emit(now_ms, tick_values)
+            if got_point:
+                self.sample_tick.emit(now_ms, tick_values)
 
     def _read_pen_value(self, modbus, pen, unit=None, link=None):
         try:
@@ -1237,7 +1404,7 @@ class TrendWidget(QWidget):
     # --- Live stats table + hover crosshair ---
 
     def eventFilter(self, obj, event):
-        if obj is self.chart_view.viewport():
+        if self._page is not None and obj is self.chart_view.viewport():
             if event.type() == QEvent.MouseMove:
                 self._on_chart_hover(event.position())
             elif event.type() == QEvent.Leave:
@@ -1348,7 +1515,9 @@ class TrendWidget(QWidget):
     def _log_pen_value(self, pen, timestamp, value):
         if not self._log_writer:
             return
-        self._log_writer.writerow([timestamp, pen.display_name(), pen.type, pen.address, value])
+        page = next((p.name for p in self.pages if pen in p.pens), "")
+        name = f"{page}: {pen.display_name()}" if len(self.pages) > 1 else pen.display_name()
+        self._log_writer.writerow([timestamp, name, pen.type, pen.address, value])
         self._log_file.flush()
 
     # --- Print ---

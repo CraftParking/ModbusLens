@@ -11,7 +11,7 @@ import time
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QProgressBar, QPushButton,
+    QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -82,7 +82,6 @@ class DeviceCard(QFrame):
     edit_device = Signal(str)
     remove_device = Signal(str)
     toggle_connect = Signal(str)
-    make_active = Signal(str)
 
     WIDTH = 360
 
@@ -110,14 +109,6 @@ class DeviceCard(QFrame):
         self.status_label = QLabel()
         self.status_label.setStyleSheet("font-weight: 600;")
         top.addWidget(self.status_label)
-        # One click to make this the active device (also in the menu); shows "Active"
-        # and is disabled on the card that already is.
-        self.active_btn = QPushButton("Set Active")
-        self.active_btn.setStyleSheet(button_style)
-        self.active_btn.setCursor(Qt.PointingHandCursor)
-        self.active_btn.clicked.connect(lambda: self.make_active.emit(self.key))
-        top.addWidget(self.active_btn)
-        self._update_active_btn()
         if True:
             menu_btn = QToolButton()
             menu_btn.setText("⋮")
@@ -127,7 +118,6 @@ class DeviceCard(QFrame):
             menu_btn.setStyleSheet("QToolButton { border: none; font-size: 16px; padding: 0 4px; }"
                                    " QToolButton::menu-indicator { image: none; width: 0; }")
             menu = QMenu(menu_btn)
-            menu.addAction("Set as Active Device", lambda: self.make_active.emit(self.key))
             menu.addAction("Edit Device...", lambda: self.edit_device.emit(self.key))
             menu.addAction("Remove Device...", lambda: self.remove_device.emit(self.key))
             menu_btn.setMenu(menu)
@@ -170,8 +160,8 @@ class DeviceCard(QFrame):
         self._value_labels = []
 
     def set_active(self, active):
-        """The active device's card gets an accent border -- it's the one Address Table,
-        Trend, Script and Scanner are working with."""
+        """Highlight this card with an accent border (used to point at a device, e.g. after
+        clicking it in the top bar)."""
         if active == self._active:
             return
         self._active = active
@@ -181,18 +171,6 @@ class DeviceCard(QFrame):
             f"QFrame#deviceCard {{ background: {c['surface']}; border: {border}; border-radius: 4px; }}"
             f" QLabel {{ background: transparent; border: none; font-weight: normal; }}"
         )
-        self.setToolTip("Active device" if active else "")
-        self._update_active_btn()
-
-    def _update_active_btn(self):
-        btn = getattr(self, "active_btn", None)
-        if btn is None:
-            return
-        btn.setText("\u2713 Active" if self._active else "Set Active")
-        btn.setEnabled(not self._active)
-        btn.setToolTip("Address Table, Trend, Script, Scanner and Diagnostics use this device"
-                       if self._active else "Make this the active device -- the one Address Table, "
-                       "Trend, Script, Scanner and Diagnostics work with")
 
     def update_view(self, title, subtitle, status, detail, values, paused, connected=False):
         self.connect_btn.setText("Disconnect" if connected or status == "reconnecting" else "Connect")
@@ -384,16 +362,17 @@ class UnitSweepWorker(QThread):
 
 
 class UnitSweepDialog(QDialog):
-    def __init__(self, mw, existing, parent=None):
+    def __init__(self, mw, existing, parent=None, client=None):
         super().__init__(parent)
         self.mw = mw
+        self.client = client if client is not None else mw.modbus
         self.existing = existing
         self.worker = None
         self.setWindowTitle("Find Devices (Unit ID Sweep)")
         self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
         info = QLabel(
-            "Asks each Unit ID in the range, one at a time, over the current connection "
+            "Asks each Unit ID in the range, one at a time, over the chosen connection "
             "(read of holding register 0). Anything that answers -- data or a Modbus "
             "exception -- is listed. Keep the range small on a busy shared bus."
         )
@@ -434,7 +413,7 @@ class UnitSweepDialog(QDialog):
         self.results.clear()
         self.progress.setRange(0, hi - lo + 1)
         self.progress.setValue(0)
-        self.worker = UnitSweepWorker(self.mw.modbus, range(lo, hi + 1), self.timeout_spin.value() / 1000.0,
+        self.worker = UnitSweepWorker(self.client, range(lo, hi + 1), self.timeout_spin.value() / 1000.0,
                                       self.mw._reserve_range, self.mw._release_range)
         self.worker.progress.connect(self._on_progress)
         self.worker.done.connect(self._on_done)
@@ -490,6 +469,7 @@ class OverviewWidget(QWidget):
         self.mw = main_window
         self.colors = c = main_window._colors()
         self.cards = {}
+        self._highlighted = None  # a card pointed at from the top bar (see show_device)
         group_style = main_window._get_groupbox_style()
         button_style = main_window._get_button_style()
         label_style = f"color: {c['text_secondary']}; font-weight: normal;"
@@ -633,7 +613,6 @@ class OverviewWidget(QWidget):
                 card.edit_device.connect(self.mw._edit_tag_device)
                 card.remove_device.connect(self.mw._remove_tag_device)
                 card.toggle_connect.connect(self._toggle_connect)
-                card.make_active.connect(self.mw._set_active_device)
                 self.cards[key] = card
         self._layout_cards(keys)
         self.empty_label.setVisible(not self.mw.tag_devices)
@@ -679,7 +658,20 @@ class OverviewWidget(QWidget):
             card = self.cards[key]
             card.update_view(title, " · ".join(subtitle_parts), status, detail, values, paused,
                              connected=link_state in ("connected", "reconnecting"))
-            card.set_active(key == self.mw.active_device)
+            card.set_active(key == self._highlighted)
+
+    def show_device(self, key):
+        """Highlight `key`'s card and scroll it into view (top-bar click)."""
+        self._highlighted = key
+        self.refresh()
+        card = self.cards.get(key)
+        if card is not None:
+            self.scroll.ensureWidgetVisible(card)
+        QTimer.singleShot(2500, self._clear_highlight)
+
+    def _clear_highlight(self):
+        self._highlighted = None
+        self.refresh()
 
     def _layout_cards(self, keys):
         columns = max(1, (self.scroll.viewport().width() - 12) // (DeviceCard.WIDTH + 12))
@@ -740,7 +732,7 @@ class OverviewWidget(QWidget):
                                     "No saved profiles with tags yet -- create or download one in the Profiles tab.")
             return
         dialog = AddFromProfileDialog(profiles, self.mw.tag_devices, self.mw._get_input_style(), self,
-                                      connection=self.mw._device_connection(self.mw.active_device),
+                                      connection=self.mw._device_connection(self.mw.tag_devices[0]["name"]),
                                       edit_connection=self.mw._edit_connection_dialog)
         if dialog.exec() != QDialog.Accepted:
             return
@@ -752,18 +744,31 @@ class OverviewWidget(QWidget):
         self.refresh()
 
     def _add_from_sweep(self):
-        if not (self.mw.modbus and self.mw.modbus.is_connected()):
+        # One entry per connected link: the sweep asks Unit IDs over that connection.
+        links = {}
+        for d in self.mw.tag_devices:
+            if self.mw._device_is_connected(d["name"]):
+                links.setdefault(link_key(d["connection"]), d)
+        if not links:
             QMessageBox.information(
                 self, "Find Devices",
-                f"Connect the active device ({self.mw.active_device}) first -- the sweep asks other Unit IDs "
-                "over its connection, and adds what it finds with the same connection settings.")
+                "Connect a device first -- the sweep asks other Unit IDs over its connection, "
+                "and adds what it finds with the same connection settings.")
             return
+        via = next(iter(links.values()))
+        if len(links) > 1:
+            labels = {f"{describe(d['connection'])}  (via {d['name']})": d for d in links.values()}
+            choice, ok = QInputDialog.getItem(self, "Find Devices", "Sweep Unit IDs on which connection?",
+                                              list(labels), 0, False)
+            if not ok:
+                return
+            via = labels[choice]
         if getattr(self.mw, "monitoring_active", False):
             QMessageBox.information(self, "Find Devices", "Stop monitoring first, so the sweep has the line to itself.")
             return
-        conn = self.mw._device_connection(self.mw.active_device)
+        conn = self.mw._device_connection(via["name"])
         same_link = [d for d in self.mw.tag_devices if link_key(d["connection"]) == link_key(conn)]
-        dialog = UnitSweepDialog(self.mw, same_link, self)
+        dialog = UnitSweepDialog(self.mw, same_link, self, client=self.mw._device_client(via["name"]))
         if dialog.exec() != QDialog.Accepted:
             return
         for unit in dialog.selected_units():
@@ -776,9 +781,8 @@ class OverviewWidget(QWidget):
 
 
 class DeviceStatusBar(QWidget):
-    """The top bar's device strip: one entry per device -- status dot, name, status word
-    -- with the active device highlighted. Click an entry to make that device active
-    (Address Table, Trend, Script, Scanner and Diagnostics follow it)."""
+    """The top bar's device strip: one entry per device -- status dot, name, status word.
+    Click an entry to jump to that device's card on the Overview tab."""
 
     def __init__(self, main_window):
         super().__init__(main_window)
@@ -819,7 +823,7 @@ class DeviceStatusBar(QWidget):
         for name in names:
             if name not in self.entries:
                 entry = _StatusEntry(name, self.colors)
-                entry.clicked.connect(mw._set_active_device)
+                entry.clicked.connect(mw._show_device_card)
                 self.entries[name] = entry
         if order != [self.entries[n] for n in names]:
             for widget in order:
@@ -834,10 +838,9 @@ class DeviceStatusBar(QWidget):
             status = device_status(mw.monitoring_manager.device_stats.get(name, {}),
                                    bool(getattr(mw, "monitoring_active", False)), bool(meta.get("paused")),
                                    len(device_tags) or 1, mw._device_link_state(name))
-            entry.update_view(status, name == mw.active_device,
+            entry.update_view(status, False,
                               f"{name}: {describe(meta.get('connection'))}, Unit {meta.get('unit')}\n"
-                              f"{STATUS_LABELS.get(status, status)}"
-                              + ("\n(active device)" if name == mw.active_device else "\nClick to make active"))
+                              f"{STATUS_LABELS.get(status, status)}\nClick to show it on the Overview")
 
 
 class _StatusEntry(QFrame):

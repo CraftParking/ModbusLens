@@ -257,7 +257,9 @@ its own connection (Modbus TCP - IP, port, framing including RTU over TCP - or a
 its baud rate and framing) and its Unit ID. <b>Add Device</b> opens the device dialog, whose
 <b>Connection Settings...</b> button is the usual connection dialog; <b>Add from Profile...</b>
 creates a device with a saved profile's tags; <b>Find Devices...</b> asks each Unit ID in a range
-over the active device's connection and adds the units that answer (with that same connection).
+over a connected device's connection (you pick which, when there are several) and adds the units
+that answer (with that same connection). <b>Remove All Devices</b> deletes every device and all their
+tags after asking, leaving one blank device.
 Devices with identical connection settings - several meters behind one gateway, or on one RS-485
 port - automatically share one link, and are polled one at a time over it; a serial port can only
 carry one set of line settings.</p>
@@ -266,13 +268,15 @@ carry one set of line settings.</p>
 exception</b>, <b>Partly failing</b>, <b>No response</b>, <b>Paused</b>), success rate, last good
 read, latency, the last error, and a few <b>pinned values</b> (its first four tags until you
 choose others with <b>Pin Values...</b>). <b>Connect/Disconnect</b> works per device, <b>Open
-Tags</b> jumps to its tab in Tags, <b>Pause</b> leaves it out of polling, and the card menu sets it
-as the active device, edits or removes it. Start/Stop Monitoring and the interval are the same as
+Tags</b> jumps to its tab in Tags, <b>Pause</b> leaves it out of polling, and the card menu edits or
+removes it. Start/Stop Monitoring and the interval are the same as
 in Tags.</p>
-<p>The bar at the top of the window shows every device with its status; the highlighted one is
-the <b>active device</b> - click another to switch. Address Table, Trend, Script, Scanner and the
-Diagnostics tools work on the active device, and <b>Device Settings</b> edits its connection (while
-it's disconnected). <b>Connect All</b> / <b>Disconnect All</b> act on every device. A link that
+<p>The bar at the top of the window shows every device with its status - click one to jump to its
+card here. There's no single "active" device: <b>Address Table</b>, <b>Script</b>, <b>Scanner</b>
+and the <b>Diagnostic Functions</b> dialog each have their own <b>Device</b> dropdown (shown once
+there are two or more devices), so each can work with a different device at the same time; Trend
+pens and Tags carry their own device. <b>Device Settings</b> edits a device's connection (pick
+which; it has to be disconnected). The Raw Data tab has a Device column and filter. <b>Connect All</b> / <b>Disconnect All</b> act on every device. A link that
 drops is reconnected automatically with back-off. The device list is saved automatically and in
 Sessions; an older session's single connection becomes a device called "Device 1".</p>
 """),
@@ -309,8 +313,10 @@ per device, and <b>+</b> to add another. A device tab only shows that device's t
 add while it's open belongs to that device; right-click a device tab to edit or remove the device.
 The same address can be used on every device - two identical meters simply share one register map.
 Tags CSV exports carry <b>Device</b> and <b>Unit ID</b> columns, so an import recreates missing
-devices (on the active device's connection); an older CSV without them loads onto the active
-device. Profiles stay device-independent: they describe a device type, not where it's connected.</p>
+devices. <b>Import CSV</b> while a device's tab is open imports into that device only - it replaces
+that device's tags and leaves the others alone, so one meter-model CSV can be imported once per
+meter; on the <b>All</b> tab it replaces the whole table (an older CSV without a Device column then
+loads onto the first device). Profiles stay device-independent: they describe a device type, not where it's connected.</p>
 
 <h3>Naming a tag</h3>
 <p>A tag name can only use letters, numbers, and underscores - no spaces or other symbols, and it
@@ -515,6 +521,14 @@ or a bug report.</p>
 for spotting slow drift, verifying a control loop is actually responding, or capturing a transient
 you can't watch a numeric table fast enough to catch.</p>
 
+<h3>Pages</h3>
+<p>The tabs above the graph are <b>pages</b>, each its own graph with its own 20 pens - e.g. one
+page per meter. <b>+</b> adds a page (up to 10); double-click a page tab, or right-click it, to
+rename it; right-click to delete it. Every page keeps polling while the trend runs, so switching
+pages shows full live history; the time window, zoom, scroll and Graph Properties are shared.
+Record / Replay records the page shown when recording starts. In the pen picker each tag shows its
+device (e.g. <code>V1 (METER 2)</code>) and a pen always reads from its own tag's device.</p>
+
 <h3>Pens</h3>
 <p><b>Add Pen</b> opens a grid of 20 slots (SCADA-style) - enable the ones you want, click the
 &#8942; button in the Name column to pick a tag from a popup list, and set a color. A pen's type,
@@ -644,6 +658,10 @@ checks you'd otherwise click through by hand every time.</p>
 <tr><td><code>WRITE &lt;tag name&gt; = &lt;expr&gt;</code></td><td>Write to whatever type/address that tag is configured for.</td></tr>
 <tr><td><code>READ COIL|DI|HR|IR &lt;addr&gt;</code></td><td>Read a value and log it.</td></tr>
 <tr><td><code>READ &lt;tag name&gt;</code></td><td>Same, by tag name instead of type/address.</td></tr>
+<tr><td><code>DEVICE &lt;device name&gt;</code></td><td>Send the following commands to that device
+(name as on the Overview, any case; spaces allowed). A script starts on the device picked in the
+Script tab's Device dropdown. Insert Tag adds this line for you when the tag is on another
+device.</td></tr>
 <tr><td><code>LET &lt;name&gt; = &lt;expr&gt;</code></td><td>Assign a variable.</td></tr>
 <tr><td><code>LOG &lt;expr&gt;</code></td><td>Print text/numbers to the console.</td></tr>
 <tr><td><code>WAIT &lt;expr, ms&gt;</code></td><td>Pause without freezing the UI.</td></tr>
