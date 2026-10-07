@@ -47,36 +47,35 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <h3>v2.4.0 <span class="version-tag is-upcoming">Upcoming</span></h3>
 <p class="changelog-sub">New</p>
 <ul>
-<li>TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing</li>
+<li>Multiple devices in one window - each device has its own name, connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link, so several meters behind one gateway or on one RS-485 line just work</li>
+<li>Overview tab (first tab) - a live card per device: status (Online, Device exception, No response, Reconnecting, Paused...), success rate, latency, last error and pinned values, with Connect/Disconnect, Open Tags, Pin Values and Pause; Add Device, Add from Profile, Find Unit IDs (Unit ID sweep) and Remove All Devices</li>
+<li>Top bar shows every device's status, with Device Settings, Connect All and Disconnect All</li>
+<li>Device dropdowns in Address Table, Script, Scanner and Diagnostic Functions - each tool works with its own device; scripts can switch device mid-run with a DEVICE line</li>
+<li>Devices in Tags - a Device column and per-device tabs; the same addresses can be used on every device; Import CSV on a device's tab imports into that device only; Write All and Remove All Tags follow the open tab; devices travel in Sessions and Tags CSVs</li>
+<li>Trend pages - up to 10 graphs, each with its own 20 pens, all polled while the trend runs; pens read from their own tag's device and show it in the legend; a bigger graph area with View Range on one row and Hide Stats in the tab</li>
+<li>Raw Data Device column and device filter; the Frame Viewer decodes each row with its device's framing; tag pickers (Trend pens, Script Add/Insert Tag) show each tag's device</li>
+<li>Tags Log to CSV and Raw Data Show Statistics include the device; write confirmations name each tag's device; File &gt; New Connection Window is now File &gt; New Window and Tools &gt; Connection Settings is now Tools &gt; Device Settings</li>
+<li>Workspace auto-save - devices, Tags, the Address Table range and Trend pages are saved every minute and on close, and restored on the next start (Save Session now includes Trend pages too)</li>
+<li>Write bounds (Min/Max) per device - each device on a shared gateway keeps its own limits, saved with the device so they survive reconnects and restarts</li>
+<li>Script tag names read and write like the Tags tab - Count, Format (F32, *_SWAP...) and scaling - so a meter's F32 tag gives its real value</li>
+<li>Address Table live monitoring and Tags monitoring run at the same time - they take turns on the connection instead of stopping each other</li>
+<li>TCP Framing option - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket</li>
+<li>Gateway mode (Server tab) - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response, with a Gateway Activity log showing every relayed request and result</li>
 <li>Bit View - a live, per-bit breakdown of a register tag's raw value, each bit individually named; a Bool-format tag can expand its bits inline in the Tags table, with single-bit read-modify-write for Holding Registers</li>
 <li>Create Tags From Scan - generate Tags-tab rows directly from a Scanner result, one per responding address</li>
-<li>Gateway mode (Server tab) - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response instead of simulating one, with a Gateway Activity log showing every relayed request and result</li>
-<li>Devices with their own connections - each device on the new Overview tab (first tab) has its own connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link; per-device Connect/Disconnect plus Connect All / Disconnect All; the top bar shows every device's status</li>
-<li>Device dropdowns instead of an "active device" - Address Table, Script, Scanner and Diagnostic Functions each pick their own device; scripts can switch device with a DEVICE line</li>
-<li>Trend pages - several graphs, each with its own 20 pens, all polled while the trend runs; pens read from their own tag's device and show it in the legend</li>
-<li>Address Table live monitoring and Tags monitoring run at the same time - they take turns on the connection instead of stopping each other</li>
-<li>Bigger Trend graph - View Range on one row above the graph, the stats table only as tall as its pens, tighter chart margins, and Hide Stats available in the tab too (not just when detached)</li>
-<li>Profiles tab laid out like the other tabs - a Profile Library box with the Local/Community switch, and Local/Community Profiles boxes with their buttons above the profile cards</li>
-<li>Raw Data Device column and filter; Remove All Devices on the Overview; tag pickers (Trend pens, Script Insert Tag) show each tag's device</li>
-<li>Import CSV on a device's Tags tab imports into that device only</li>
-<li>Overview cards - live status (online / exception / no response / reconnecting / paused), success rate, latency and pinned values per device; Open Tags, Pause, and Add Device blank, from a Profile, or found by a Unit ID sweep</li>
-<li>Devices in Tags - a Device column and per-device tabs above the Tags table; the same addresses can be used on every device; devices travel in Sessions and Tags CSVs</li>
+<li>Profiles tab laid out like the other tabs, with a Profile Library box and Local/Community Profiles boxes</li>
+<li>Documentation rewritten for multiple devices, with every tool's options, limits and messages; the website docs gained the Overview topic</li>
 </ul>
 <p class="changelog-sub">Fixed</p>
 <ul>
 <li>Replies on a shared line are matched to their request - on an RTU-over-TCP gateway (or RS-485 bus) shared with another master, a reply meant for that master (e.g. a 30-register reply to a 2-register read) was accepted as this request's answer and shown as Success with the wrong data; it's now skipped, stale input is discarded before each request, and the Raw Data RX column shows only the matching reply</li>
-<li>A timeout on a standard Modbus TCP connection whose reply is really raw RTU now says so, pointing at Connection Settings &gt; Framing: RTU over TCP</li>
-<li>Illegal Data Address explainer lists one more cause: a read covering only half of a 32-bit value, which many energy meters refuse</li>
-<li>Share to Community works again - submissions were being rejected with "Submission Failed" after the submission form's hosting plan changed; they now go to the active form</li>
-<li>Raw Data Frame Viewer decodes RTU-over-TCP traffic as RTU frames (unit, function, CRC) - it was applying the Modbus-TCP header layout, showing nonsense like a random Protocol ID</li>
-<li>Raw Data Frame Viewer no longer flickers or pops its TX/RX tables out as empty "ModbusLens" windows once the table reaches 1000 rows - the selection no longer rolls onto each new row, and the viewer only redraws when the selected frame actually changes</li>
-<li>Script tag-name reads/writes hit the right register - a tag's 1-based Address was sent as the raw protocol offset, one register too high</li>
-<li>Write All and Remove All Tags act on the open device tab only (every device only on the All tab); Scanner's Create Tags uses the function that was actually scanned; closing a window or New Session disconnects every device</li>
-<li>Connection Settings (Tools menu, Find Devices and Serial Discovery "Apply") always asks which device it's for instead of silently editing one</li>
-<li>Documentation brought up to date with multiple devices - Getting Started, Menus, Connecting, Overview, Scripting (DEVICE, limits, syntax) and Troubleshooting rewritten; the website docs gained the missing Overview topic</li>
-<li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer - it could silently move a tag to another device or shift its Address by one (reading half of one 32-bit value and half of the next, so values looked corrupt and meters reported exceptions); the wheel now just scrolls (same for Trend's pen grid)</li>
-<li>Tags no longer leak between devices or go missing - tags added for one device could show in another device's tab, a hidden row could be removed by Remove Tag, and a poll result arriving during an import could apply another tag's scaling or alarm</li>
 <li>Auto-reconnect now actually notices a dropped TCP link - the connection stayed flagged as connected after the peer reset it, so the watchdog never retried and every later request failed</li>
+<li>Script tag-name reads/writes hit the right register - a tag's 1-based Address was sent as the raw protocol offset, one register too high</li>
+<li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer (which could silently shift a tag's Address); the wheel now just scrolls - same for Trend's pen grid</li>
+<li>Raw Data Frame Viewer no longer flickers or pops its TX/RX tables out as empty "ModbusLens" windows once the table reaches 1000 rows, and the selection no longer rolls onto each new row</li>
+<li>A timeout on a standard Modbus TCP connection whose reply is really raw RTU now says so, pointing at Device Settings &gt; Framing: RTU over TCP</li>
+<li>Illegal Data Address explainer lists one more cause: a read covering only half of a 32-bit value, which many energy meters refuse</li>
+<li>Share to Community works again - submissions were being rejected with "Submission Failed" after the submission form's hosting plan changed</li>
 <li>Share to Community failures explain themselves in plain language (connection problem, submission limit reached, or service temporarily unavailable) instead of showing the submission service's raw error; the raw text is still under Show Details and in System Logs</li>
 </ul>
 </article>

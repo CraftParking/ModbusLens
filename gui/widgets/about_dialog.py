@@ -16,8 +16,9 @@ GITHUB_ISSUES_PAGE = f"https://github.com/{GITHUB_REPO}/issues"
 ABOUT_HTML = """
 <h3>ModbusLens</h3>
 <p><b>ModbusLens is free software</b> - a professional Modbus TCP/RTU client designed for
-engineers working with industrial automation systems. It combines Modbus communication,
-real-time monitoring, scripting, a device simulator, and network diagnostics in one tool.</p>
+engineers working with industrial automation systems. It combines Modbus communication with
+several devices at once, real-time monitoring, trending, scripting, a device simulator and
+gateway, and network diagnostics in one tool.</p>
 
 <h4>Support</h4>
 <p>If you find this tool useful, you can support development:<br>
@@ -42,19 +43,27 @@ testing) - nothing else.</p>
 
 # Every feature of the current build, grouped the same way as the README's Features section.
 FEATURES_HTML = """
-<h4>Modbus TCP & RTU</h4>
+<h4>Devices &amp; Connections</h4>
 <ul>
-<li>Read coils, discrete inputs, holding registers, and input registers</li>
-<li>Write single/multiple coils & registers</li>
-<li>Modbus TCP (IP/Port/Unit ID) or Modbus Serial (COM port, baud, parity, stop bits, byte size, and RTU/ASCII framing) - pick per connection in Settings</li>
-<li>Address table for quick testing</li>
+<li>Several devices in one window - each with its own name, connection and Unit ID: Modbus TCP, RTU over TCP (for transparent serial-to-Ethernet gateways), or Modbus Serial (COM port, baud, parity, stop bits, byte size, RTU/ASCII framing)</li>
+<li>Devices with identical connection settings share one link automatically - several meters behind one gateway or on one RS-485 line, told apart by Unit ID</li>
+<li>Overview tab: a live card per device - status (Online, Device exception, No response, Reconnecting, Paused...), success rate, last good read, latency, last error, and up to six pinned values</li>
+<li>Add Device, Add from Profile (a device plus a saved profile's tags in one step), Find Unit IDs (Unit ID sweep over a connected link), and Remove All Devices</li>
+<li>Top bar with every device's status; Connect/Disconnect per device or Connect All / Disconnect All</li>
+<li>Address Table, Script, Scanner and Diagnostic Functions each pick their own device, so different tabs can work with different devices at the same time</li>
+<li>Auto-reconnect per link with backoff after an unexpected drop, and automatic resume of Tags monitoring once the connection recovers</li>
+<li>Optional interface binding - "Auto" leaves routing to the OS (default); picking a NIC binds the outgoing TCP socket to it</li>
+<li>Fast LAN Mode (TCP) - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off</li>
+<li>Save/Load Session - every device and its connection, Tags (with scaling), the Address Table range and write bounds together in one file</li>
+<li>Separate, independent windows via File &gt; New Window</li>
+</ul>
+
+<h4>Address Table</h4>
+<ul>
+<li>Read coils, discrete inputs, holding registers and input registers; write single/multiple coils and registers</li>
+<li>Live monitoring of a whole range, running alongside Tags monitoring</li>
 <li>Optional Min/Max write bounds per register - a write outside the range is rejected before it reaches the device, whether it came from the Address Table, Tags, or a Script</li>
-<li>Auto-reconnect with backoff after an unexpected drop, and automatic resume of Tags monitoring once the connection recovers</li>
-<li>Multiple simultaneous connections via independent windows (File > New Connection Window)</li>
-<li>Optional interface binding in Connection Settings - "Auto" leaves routing to the OS (default); picking a NIC binds the outgoing TCP socket to it</li>
-<li>Fast LAN Mode (Connection Settings, TCP) - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off</li>
-<li>Save/Load Session - connection settings, Tags (with scaling), Address Table range, and any live write bounds together in one file, not just Tags on their own</li>
-<li>TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing</li>
+<li>U16/S16/HEX/U32/S32/F32 display, 0-based or 1-based addressing</li>
 </ul>
 
 <h4>Data Handling</h4>
@@ -66,23 +75,23 @@ FEATURES_HTML = """
 <li>Raw hex value shown alongside the decoded value, in both the Address Table and Tags</li>
 </ul>
 
-<h4>Monitoring</h4>
+<h4>Tags Monitoring</h4>
 <ul>
-<li>Real-time tag monitoring, with Read Value/Write Value/Timestamp built into the same Tags table</li>
-<li>Insert new tags anywhere in the list (new tags drop in below the selected row), not just at the end</li>
-<li>Drag and drop to reorder rows, preserving live values and alarm config</li>
+<li>Real-time monitoring of every device's tags, with Read Value/Write Value/Timestamp built into the same Tags table</li>
+<li>Device column and per-device tabs; the same addresses can be used on every device; Import CSV on a device tab imports into that device only</li>
+<li>Tag Groups as collapsible header rows; show/hide and reorder columns</li>
+<li>Insert new tags anywhere in the list, and drag and drop to reorder rows, preserving live values and alarm config</li>
 <li>Write to a tag while monitoring stays active, or press Enter in the Write Value cell to write just that row immediately</li>
-<li>A single misconfigured or failing tag no longer stops the rest of the list from updating</li>
+<li>A single misconfigured or failing tag doesn't stop the rest of the list from updating</li>
 <li>Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting</li>
 <li>Engineering-unit scaling per tag - linear (Raw/Scaled Min/Max) or multiply-by-constant, shown live in the Engineering Value column</li>
-<li>Log live tag values to CSV</li>
-<li>CSV import/export</li>
-<li>Bit View - a live, per-bit breakdown of a Holding/Input Register tag's raw value, each bit individually named and shown as 0/1, for VFD-style control/status words; a Bool-format tag can also expand its bits inline as rows in the Tags table, with a Write Value cell per bit (Holding Register only) to read-modify-write just that one bit</li>
+<li>Bit View - a live, per-bit breakdown of a Holding/Input Register tag's raw value, each bit individually named; a Bool-format tag can also expand its bits inline as rows in the Tags table, with a Write Value cell per bit (Holding Register only) to read-modify-write just that one bit</li>
+<li>Log live tag values to CSV; CSV import/export of the tag list (with Device and Unit ID)</li>
 </ul>
 
 <h4>Device Profiles</h4>
 <ul>
-<li>Save a device's Address Table range and selected Tags as one named, reusable profile (Name/Manufacturer/Type/Author) - build it once per device model, apply it to any connection to that model</li>
+<li>Save a device's Address Table range and selected Tags as one named, reusable profile (Name/Manufacturer/Type/Author) - build it once per device model, apply it to any device of that model</li>
 <li>View Profile marks each tag red/green (yellow on a Tag Group header for a mix) against your live Tags list, so you can tell at a glance which would actually be new before importing</li>
 <li>Apply imports the checked tags without closing the dialog, so you can adjust the selection and apply again</li>
 <li>Community: browse and download profiles shared by other users - no account needed; Apply and Download are independent, so you can import a profile's tags without ever saving it locally</li>
@@ -91,25 +100,24 @@ FEATURES_HTML = """
 
 <h4>Raw Data</h4>
 <ul>
-<li>One row per Modbus transaction: time, operation, raw value in decimal and hex, Success/Failed status, and round-trip latency</li>
+<li>One row per Modbus transaction: time, device, operation, raw value in decimal and hex, Success/Failed status, and round-trip latency</li>
 <li>TX/RX Bytes - the literal bytes sent and received on the wire for that transaction, one level more raw than the decoded register values</li>
 <li>Exception column distinguishing a device-returned error (e.g. Illegal Data Address) from a plain communications timeout, with a tooltip explaining the exception's plain-English meaning and likely causes</li>
-<li>Color-coded status (green success, red failure) at a glance</li>
-<li>Filter by tag name/address/value, and by Success/Failed status, live as new rows arrive</li>
-<li>Show Statistics - total requests, success/failure counts, and average/min/max response times across everything logged</li>
+<li>Filter by tag name/address/value, by Success/Failed status, and by device, live as new rows arrive</li>
+<li>Show Statistics - total requests, success/failure counts, function and exception codes, failure causes, and average/min/max response times</li>
 <li>Export CSV, and right-click (or Ctrl+C) to copy selected rows as text or as raw TX/RX hex bytes</li>
 <li>Capped at 1000 rows so it can't grow unbounded; oldest rows fall off automatically</li>
-<li>Integrated Frame Viewer decodes the selected row's TX/RX Modbus frames (MBAP/Unit ID/CRC/LRC, function code, data, exception) side by side, updating as you click or arrow-key through rows, with the table auto-scrolling to keep the selection in view; collapsible via a Hide/Show Frame Viewer button; every field and the raw hex footer can be selected and copied (right-click or Ctrl+C)</li>
+<li>Integrated Frame Viewer decodes the selected row's TX/RX Modbus frames (MBAP/Unit ID/CRC/LRC, function code, data, exception) side by side, using that device's framing; collapsible, and every field and the raw hex footer can be selected and copied</li>
 </ul>
 
 <h4>Trend</h4>
 <ul>
-<li>Up to 20 pens, each bound to a Holding/Input Register address and numeric format</li>
-<li>Auto Scroll checkbox: checked, it keeps following "now"; scrolling away, zooming, or a From/To jump unchecks it automatically, and checking it again jumps straight back to the live edge</li>
-<li>Adjustable time window, zoom in/out, and a From/To jump to a specific past range</li>
+<li>Pages - up to 10 graphs, each with up to 20 pens, all polled while the trend runs</li>
+<li>Each pen bound to a Holding/Input Register tag on any device, with an optional label, index and Auto/Raw/Scaled mode; the legend shows the device</li>
+<li>Auto Scroll: follows "now" while checked; scrolling away, zooming, or a From/To jump unchecks it, and checking it again jumps straight back to the live edge</li>
+<li>Adjustable time window, zoom in/out, a From/To jump to a past range, and a live hover crosshair with per-pen values</li>
 <li>Graph Properties: axis titles, background/axis/grid colors, grid on/off, Y-axis auto or manual range</li>
-<li>Log plotted values to CSV</li>
-<li>Print to PNG or PDF</li>
+<li>Detach into its own always-on-top window; Record / Replay; log plotted values to CSV; print to PNG or PDF</li>
 </ul>
 
 <h4>Server Mode</h4>
@@ -123,23 +131,21 @@ FEATURES_HTML = """
 <h4>Scripting</h4>
 <ul>
 <li>A small, purpose-built test-sequence language instead of embedded Python - no imports, no client objects, no exception handling to write, just e.g. WRITE HR 1 = 100</li>
-<li>WRITE, READ, WAIT, LOG, LET, REPEAT...END, REPEAT UNTIL...END, IF...THEN, ASSERT</li>
+<li>WRITE, READ, WAIT, LOG, LET, REPEAT...END, REPEAT UNTIL...END, IF...THEN, ASSERT, DEVICE</li>
+<li>Target a real device (Client Connection) or ModbusLens's own Server simulator (Server (Local)); a DEVICE line switches device mid-script, so one script can work with several meters</li>
 <li>Runs step by step without freezing the UI, with a console showing what ran</li>
-<li>Target either a live connected device (Client-target) or ModbusLens's own Server simulator (Server-target)</li>
-<li>Live Variables panel next to the editor shows every LET variable's current value while the script runs</li>
+<li>Live Variables panel shows every LET variable's current value while the script runs</li>
 <li>Assertion Results panel logs every ASSERT as PASS/FAIL/ERROR - a FAIL doesn't stop the script, so one run reports every check</li>
-<li>Insert Tag menu drops a reference to any tag from your Tags list straight into the script</li>
+<li>Add Tag / Insert Tag drop a reference to any tag straight into the script (adding a DEVICE line when the tag is on another device)</li>
 <li>Live CPU usage indicator, useful for spotting a runaway loop</li>
-<li>Steps never run faster than a 20ms floor, even if a script uses WAIT 0 or skips WAIT entirely</li>
 </ul>
 
 <h4>Network Diagnostics</h4>
 <ul>
-<li>ARP-based discovery (no IP needed)</li>
-<li>Automatic Modbus device detection</li>
-<li>Continuous live scanning (no repeated manual scans)</li>
-<li>Packet capture (Npcap required)</li>
-<li>Device filtering (Modbus only)</li>
+<li>Fast parallel TCP discovery scan sized to your real subnet, each hit checked for Modbus</li>
+<li>Optional ARP Mode (MAC/vendor lookup) and packet capture via Npcap</li>
+<li>Optional Unit ID sweep (1-247) per discovered host; "Show only Modbus devices" filter</li>
+<li>Find Devices - TCP network scan and serial parameter sweep in one results table, with Apply to Device</li>
 <li>IP Configuration tool - read-only view of this machine's own network adapters</li>
 </ul>
 
@@ -147,44 +153,38 @@ FEATURES_HTML = """
 <ul>
 <li>Diagnostics menu tool that sweeps common baud rate/parity/stop-bit combinations, plus a Unit ID range, against a COM port to find which one a serial device actually speaks</li>
 <li>Opens its own short-lived connection per combination (byte size fixed at 8), so it needs the port free</li>
-<li>A "Scan for Connection Parameters..." button in Connection Settings' Serial section opens Serial Discovery directly, with the COM port already filled in</li>
+<li>Apply to Device fills in a device's serial settings from a match</li>
 </ul>
 
 <h4>Diagnostic Functions</h4>
 <ul>
 <li>FC07 Read Exception Status, FC08 Diagnostics (Loopback, Restart Communications, Read Diagnostic Register, Clear Counters), FC11/12 Get Comm Event Counter/Log, FC17 Report Server ID, FC20/21 Read/Write File Record, FC22 Mask Write Register, FC24 Read FIFO Queue, and FC43 Read Device Information</li>
-<li>One dialog covering all of them under Diagnostics > Modbus Diagnostic Functions - pick a function, fill in the couple of parameters it needs, Run</li>
+<li>One dialog covering all of them under Diagnostics &gt; Modbus Diagnostic Functions - pick a device and a function, fill in the couple of parameters it needs, Run</li>
 </ul>
 
 <h4>Data Decoder</h4>
 <ul>
-<li>Diagnostics > Decode Registers - paste/type raw hex and see every interpretation at once: U16, S16, U32, S32, U64, S64, F32, F64, HEX, binary, ASCII (where printable), BCD (where valid), and individual register bits</li>
+<li>Diagnostics &gt; Decode Registers - paste/type raw hex and see every interpretation at once: U16, S16, U32, S32, U64, S64, F32, F64, HEX, binary, ASCII (where printable), BCD (where valid), and individual register bits</li>
 <li>All four byte/word orderings (ABCD/BADC/CDAB/DCBA), switchable live with no re-typing</li>
-<li>No Modbus connection needed; stays open (modeless) alongside the Raw Data tab or an external datasheet instead of blocking the main window like every other dialog</li>
+<li>No Modbus connection needed; stays open alongside the Raw Data tab or an external datasheet without blocking the main window</li>
 </ul>
 
 <h4>Scanner</h4>
 <ul>
-<li>Auto-discovers which addresses respond for a chosen function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range</li>
-<li>Works the same way whether the current connection is TCP or serial</li>
+<li>Auto-discovers which addresses respond on the chosen device for a function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range</li>
+<li>Works the same way over TCP or serial</li>
 <li>Probes the largest block the function allows first, and only narrows down address-by-address where a block doesn't fully respond</li>
-<li>Reuses the app's existing connection, pausing Tags/Address Table live monitoring (and the reconnect watchdog) first</li>
 <li>A configurable probe timeout keeps scanning fast over TCP; over serial each probe is one bus round-trip</li>
-<li>Create Tags From Scan - after a scan finds responding addresses, pick which ranges to import and generate one new Tags-tab row per address, named with the classic 5-digit Modicon convention; an address that already has a tag of that type is skipped instead of duplicated</li>
+<li>Create Tags From Scan - pick which found ranges to import and generate one new Tags-tab row per address on the scanned device, named with the classic 5-digit Modicon convention; an address that already has a tag of that type is skipped</li>
 </ul>
 
 <h4>UI</h4>
 <ul>
-<li>Light/Dark/Follow System theme, switchable from View > Theme (takes effect after restart)</li>
+<li>Light/Dark/Follow System theme, switchable from View &gt; Theme (takes effect after restart)</li>
 <li>Color-coded logs (Address Table, System Logs, Script console) - writes in blue, connection events in green, errors in red</li>
-<li>Compact connection bar with clear status indicators</li>
 <li>Ctrl+scroll wheel zooms text size in the Status Log, System Logs, and Raw Data table</li>
-<li>Help > About has an Updates tab that checks GitHub Releases for a newer version</li>
-</ul>
-
-<h4>Coming Next</h4>
-<ul>
-<li>Multi-target/multi-connection monitoring - several devices managed from one window (named targets, shared Tags/Trend view), instead of today's one-connection-per-window model</li>
+<li>Scrolling a table with the mouse wheel never changes a dropdown or number under the pointer</li>
+<li>Help &gt; Documentation for every tab and tool; Help &gt; About has an Updates tab that checks GitHub Releases for a newer version</li>
 </ul>
 """
 
@@ -194,36 +194,35 @@ CHANGELOG_HTML = """
 <h3>v2.4.0 (upcoming)</h3>
 <p><u>New</u></p>
 <ul>
-<li>TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing</li>
-<li>Bit View - a live, per-bit breakdown of a Holding/Input Register tag's raw value, each bit individually named; a Bool-format tag can also expand its bits inline in the Tags table, with single-bit read-modify-write via its own Write Value cell (Holding Register only)</li>
-<li>Create Tags From Scan - generate Tags-tab rows directly from a Scanner result, one per responding address, named with the classic 5-digit Modicon convention</li>
-<li>Gateway mode (Server tab) - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response instead of simulating one, with a Gateway Activity log showing every relayed request and result</li>
-<li>Devices with their own connections - each device on the new Overview tab (first tab) has its own connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link; per-device Connect/Disconnect plus Connect All / Disconnect All; the top bar shows every device's status</li>
-<li>Device dropdowns instead of an "active device" - Address Table, Script, Scanner and Diagnostic Functions each pick their own device; scripts can switch device with a DEVICE line</li>
-<li>Trend pages - several graphs, each with its own 20 pens, all polled while the trend runs; pens read from their own tag's device and show it in the legend</li>
+<li>Multiple devices in one window - each device has its own name, connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link, so several meters behind one gateway or on one RS-485 line just work</li>
+<li>Overview tab (first tab) - a live card per device: status (Online, Device exception, No response, Reconnecting, Paused...), success rate, latency, last error and pinned values, with Connect/Disconnect, Open Tags, Pin Values and Pause; Add Device, Add from Profile, Find Unit IDs (Unit ID sweep) and Remove All Devices</li>
+<li>Top bar shows every device's status, with Device Settings, Connect All and Disconnect All</li>
+<li>Device dropdowns in Address Table, Script, Scanner and Diagnostic Functions - each tool works with its own device; scripts can switch device mid-run with a DEVICE line</li>
+<li>Devices in Tags - a Device column and per-device tabs; the same addresses can be used on every device; Import CSV on a device's tab imports into that device only; Write All and Remove All Tags follow the open tab; devices travel in Sessions and Tags CSVs</li>
+<li>Trend pages - up to 10 graphs, each with its own 20 pens, all polled while the trend runs; pens read from their own tag's device and show it in the legend; a bigger graph area with View Range on one row and Hide Stats in the tab</li>
+<li>Raw Data Device column and device filter; the Frame Viewer decodes each row with its device's framing; tag pickers (Trend pens, Script Add/Insert Tag) show each tag's device</li>
+<li>Tags Log to CSV and Raw Data Show Statistics include the device; write confirmations name each tag's device; File &gt; New Connection Window is now File &gt; New Window and Tools &gt; Connection Settings is now Tools &gt; Device Settings</li>
+<li>Workspace auto-save - devices, Tags, the Address Table range and Trend pages are saved every minute and on close, and restored on the next start (Save Session now includes Trend pages too)</li>
+<li>Write bounds (Min/Max) per device - each device on a shared gateway keeps its own limits, saved with the device so they survive reconnects and restarts</li>
+<li>Script tag names read and write like the Tags tab - Count, Format (F32, *_SWAP...) and scaling - so a meter's F32 tag gives its real value</li>
 <li>Address Table live monitoring and Tags monitoring run at the same time - they take turns on the connection instead of stopping each other</li>
-<li>Bigger Trend graph - View Range on one row above the graph, the stats table only as tall as its pens, tighter chart margins, and Hide Stats available in the tab too (not just when detached)</li>
-<li>Profiles tab laid out like the other tabs - a Profile Library box with the Local/Community switch, and Local/Community Profiles boxes with their buttons above the profile cards</li>
-<li>Raw Data Device column and filter; Remove All Devices on the Overview; tag pickers (Trend pens, Script Insert Tag) show each tag's device</li>
-<li>Import CSV on a device's Tags tab imports into that device only</li>
-<li>Overview cards - live status (online / exception / no response / reconnecting / paused), success rate, latency and pinned values per device; Open Tags, Pause, and Add Device blank, from a Profile, or found by a Unit ID sweep</li>
-<li>Devices in Tags - a Device column and per-device tabs above the Tags table; the same addresses can be used on every device; devices travel in Sessions and Tags CSVs</li>
+<li>TCP Framing option - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket</li>
+<li>Gateway mode (Server tab) - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response, with a Gateway Activity log showing every relayed request and result</li>
+<li>Bit View - a live, per-bit breakdown of a register tag's raw value, each bit individually named; a Bool-format tag can expand its bits inline in the Tags table, with single-bit read-modify-write for Holding Registers</li>
+<li>Create Tags From Scan - generate Tags-tab rows directly from a Scanner result, one per responding address</li>
+<li>Profiles tab laid out like the other tabs, with a Profile Library box and Local/Community Profiles boxes</li>
+<li>Documentation rewritten for multiple devices, with every tool's options, limits and messages; the website docs gained the Overview topic</li>
 </ul>
 <p><u>Fixed</u></p>
 <ul>
 <li>Replies on a shared line are matched to their request - on an RTU-over-TCP gateway (or RS-485 bus) shared with another master, a reply meant for that master (e.g. a 30-register reply to a 2-register read) was accepted as this request's answer and shown as Success with the wrong data; it's now skipped, stale input is discarded before each request, and the Raw Data RX column shows only the matching reply</li>
-<li>A timeout on a standard Modbus TCP connection whose reply is really raw RTU now says so, pointing at Connection Settings &gt; Framing: RTU over TCP</li>
-<li>Illegal Data Address explainer lists one more cause: a read covering only half of a 32-bit value, which many energy meters refuse</li>
-<li>Share to Community works again - submissions were being rejected with "Submission Failed" after the submission form's hosting plan changed; they now go to the active form</li>
-<li>Raw Data Frame Viewer decodes RTU-over-TCP traffic as RTU frames (unit, function, CRC) - it was applying the Modbus-TCP header layout, showing nonsense like a random Protocol ID</li>
-<li>Raw Data Frame Viewer no longer flickers or pops its TX/RX tables out as empty "ModbusLens" windows once the table reaches 1000 rows - the selection no longer rolls onto each new row, and the viewer only redraws when the selected frame actually changes</li>
-<li>Script tag-name reads/writes hit the right register - a tag's 1-based Address was sent as the raw protocol offset, one register too high</li>
-<li>Write All and Remove All Tags act on the open device tab only (every device only on the All tab); Scanner's Create Tags uses the function that was actually scanned; closing a window or New Session disconnects every device</li>
-<li>Connection Settings (Tools menu, Find Devices and Serial Discovery "Apply") always asks which device it's for instead of silently editing one</li>
-<li>Documentation brought up to date with multiple devices - Getting Started, Menus, Connecting, Overview, Scripting (DEVICE, limits, syntax) and Troubleshooting rewritten; the website docs gained the missing Overview topic</li>
-<li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer - it could silently move a tag to another device or shift its Address by one (reading half of one 32-bit value and half of the next, so values looked corrupt and meters reported exceptions); the wheel now just scrolls (same for Trend's pen grid)</li>
-<li>Tags no longer leak between devices or go missing - tags added for one device could show in another device's tab, a hidden row could be removed by Remove Tag, and a poll result arriving during an import could apply another tag's scaling or alarm</li>
 <li>Auto-reconnect now actually notices a dropped TCP link - the connection stayed flagged as connected after the peer reset it, so the watchdog never retried and every later request failed</li>
+<li>Script tag-name reads/writes hit the right register - a tag's 1-based Address was sent as the raw protocol offset, one register too high</li>
+<li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer (which could silently shift a tag's Address); the wheel now just scrolls - same for Trend's pen grid</li>
+<li>Raw Data Frame Viewer no longer flickers or pops its TX/RX tables out as empty "ModbusLens" windows once the table reaches 1000 rows, and the selection no longer rolls onto each new row</li>
+<li>A timeout on a standard Modbus TCP connection whose reply is really raw RTU now says so, pointing at Device Settings &gt; Framing: RTU over TCP</li>
+<li>Illegal Data Address explainer lists one more cause: a read covering only half of a 32-bit value, which many energy meters refuse</li>
+<li>Share to Community works again - submissions were being rejected with "Submission Failed" after the submission form's hosting plan changed</li>
 <li>Share to Community failures explain themselves in plain language (connection problem, submission limit reached, or service temporarily unavailable) instead of showing the submission service's raw error; the raw text is still under Show Details and in System Logs</li>
 </ul>
 

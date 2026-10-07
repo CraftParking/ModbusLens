@@ -92,7 +92,7 @@ class SerialParamScanWorker(QThread):
         for i, (baud, parity, stopbits, unit_id) in enumerate(combos):
             if self.should_stop:
                 break
-            label = f"{baud} baud, parity={parity}, stop bits={stopbits}, unit {unit_id}"
+            label = f"{baud} baud, parity={parity}, stop bits={stopbits}, Unit {unit_id}"
             client = ModbusClient(
                 unit_id=unit_id, timeout=self.per_trial_timeout, retries=0,
                 mode="serial", serial_port=self.serial_port, baudrate=baud,
@@ -105,7 +105,7 @@ class SerialParamScanWorker(QThread):
                 # failure for every remaining combo.
                 self.output.emit(
                     f"Could not open {self.serial_port}: {client.last_error or 'unknown error'}. "
-                    f"Make sure nothing else (including ModbusLens's own connection) has this "
+                    f"Make sure nothing else (including a connected ModbusLens device) has this "
                     f"port open, then try again."
                 )
                 break
@@ -230,7 +230,7 @@ class SerialDiscoveryDialog:
 
         apply_row = QHBoxLayout()
         apply_row.addStretch()
-        self.apply_btn = QPushButton("Apply to Connection Settings")
+        self.apply_btn = QPushButton("Apply to Device...")
         self.apply_btn.setStyleSheet(self.parent._get_button_style())
         self.apply_btn.setEnabled(False)
         self.apply_btn.clicked.connect(self._apply_selected_match)

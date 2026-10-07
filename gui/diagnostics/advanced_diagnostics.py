@@ -202,13 +202,20 @@ class AdvancedDiagnostics:
             for category, count in sorted(self.modbus_stats['error_categories'].items(), key=lambda kv: -kv[1]):
                 lines.append(f"{self.get_error_category_label(category)}: {count}")
         
-        # Connection status
-        lines.append("\nCONNECTION STATUS")
+        # Devices
+        lines.append("\nDEVICES")
         lines.append("=" * 50)
-        if modbus_client and modbus_client.is_connected():
+        main_window = getattr(self, "_main_window", None)
+        devices = getattr(main_window, "tag_devices", None) if main_window is not None else None
+        if devices:
+            from device_links import describe, normalize_connection
+            for device in devices:
+                state = "Connected" if main_window._device_is_connected(device["name"]) else "Not connected"
+                lines.append(f"{device['name']}: {state} -- "
+                             f"{describe(normalize_connection(device['connection']))}, Unit {device['unit']}")
+        elif modbus_client and modbus_client.is_connected():
             lines.append(f"Status: Connected to {modbus_client.ip}:{modbus_client.port}")
             lines.append(f"Unit ID: {modbus_client.unit_id}")
-            lines.append(f"Timeout: {modbus_client.timeout}s")
         else:
             lines.append("Status: Not connected")
         
@@ -296,6 +303,7 @@ class AdvancedDiagnostics:
         """Show statistics dialog."""
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QHBoxLayout, QPushButton
 
+        self._main_window = parent  # its device list feeds the report's DEVICES section
         stats_dialog = QDialog(parent)
         stats_dialog.setWindowTitle("Modbus Communication Statistics")
         stats_dialog.setGeometry(300, 300, 600, 500)

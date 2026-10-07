@@ -117,16 +117,19 @@ class ModbusClient:
         the connection's own default unit_id."""
         return self.unit_id if unit_id is None else unit_id
 
-    def set_write_bound(self, address, minimum, maximum):
-        self.write_bounds[address] = (minimum, maximum)
+    # Write bounds are per device: keyed by (unit, address), so several devices sharing one
+    # link (meters behind one gateway) each keep their own limits.
+    def set_write_bound(self, address, minimum, maximum, unit_id=None):
+        self.write_bounds[(self._unit(unit_id), address)] = (minimum, maximum)
 
-    def clear_write_bound(self, address):
-        self.write_bounds.pop(address, None)
+    def clear_write_bound(self, address, unit_id=None):
+        self.write_bounds.pop((self._unit(unit_id), address), None)
 
-    def _check_write_bounds(self, address, values):
+    def _check_write_bounds(self, address, values, unit_id=None):
         """Return an error string if any value at address, address+1, ... is out of its configured bound."""
+        unit = self._unit(unit_id)
         for offset, value in enumerate(values):
-            bound = self.write_bounds.get(address + offset)
+            bound = self.write_bounds.get((unit, address + offset))
             if bound is None:
                 continue
             minimum, maximum = bound
@@ -181,7 +184,7 @@ class ModbusClient:
         if self.mode == "tcp" and self.tcp_framer != "rtu" and (
                 _looks_like_rtu(self.last_rx_bytes) or _looks_like_rtu(self._last_discarded)):
             hints.append(
-                "the reply looks like Modbus RTU with no Modbus-TCP header -- try Connection "
+                "the reply looks like Modbus RTU with no Modbus TCP header -- try Device "
                 "Settings > Framing: RTU over TCP"
             )
         return f" ({'; '.join(hints)})" if hints else ""
@@ -501,7 +504,7 @@ class ModbusClient:
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return False
-        bounds_error = self._check_write_bounds(address, [value])
+        bounds_error = self._check_write_bounds(address, [value], unit_id)
         if bounds_error:
             self._set_error(f"Write rejected: {bounds_error}", category="rejected")
             return False
@@ -551,7 +554,7 @@ class ModbusClient:
         if not self.is_connected():
             self._set_error("Not connected to Modbus server", category="connection")
             return False
-        bounds_error = self._check_write_bounds(address, values)
+        bounds_error = self._check_write_bounds(address, values, unit_id)
         if bounds_error:
             self._set_error(f"Write rejected: {bounds_error}", category="rejected")
             return False

@@ -32,8 +32,8 @@
 
 ## Highlights
 
-- Multiple devices in one window - an Overview tab with a live card per device (status, success rate, latency, pinned values); each device has its own connection and Unit ID, and devices behind one gateway share one link
-- Per-device Tags (device tabs, Import CSV per meter), Trend pens, Raw Data filter, and a Device picker in Address Table, Script (plus a `DEVICE` command), Scanner and diagnostics
+- **Coming in v2.4.0:** Multiple devices in one window - an Overview tab with a live card per device (status, success rate, latency, pinned values); each device has its own connection and Unit ID, and devices behind one gateway share one link
+- **Coming in v2.4.0:** Per-device Tags (device tabs, Import CSV per meter), Trend pens, Raw Data filter, and a Device picker in Address Table, Script (plus a `DEVICE` command), Scanner and diagnostics
 - Modbus TCP and Modbus Serial (RTU or ASCII framing) client, switchable per connection
 - Fast parallel network scan, sized to your actual subnet mask - a full /24 in about a second, each hit already Modbus-verified
 - Fast LAN Mode - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off
@@ -43,9 +43,9 @@
 - Continuous live scanning (no repeated manual scans)
 - Clean, non-spam device listing
 - Integrated diagnostics + communication
-- Trend graphing with pages of up to 20 tag-based pens each, detachable into its own resizable, always-on-top window
+- Trend graphing with up to 20 tag-based pens (pages of 20 pens each coming in v2.4.0), detachable into its own resizable, always-on-top window
 - Act as a Modbus TCP slave for testing your own SCADA/PLC programs
-- Talk to multiple devices at once, each in its own window
+- Talk to several devices at once from independent windows (File > New Connection Window)
 - Simple scripting for repeatable write/wait/read test sequences, against either a live device or ModbusLens's own Server simulator
 - Serial Discovery: sweep common baud rate/parity/stop-bit/Unit ID combinations to find the settings a serial device actually uses
 - Scanner: auto-discover which addresses actually respond on a connected device (TCP or serial)
@@ -53,12 +53,14 @@
 - Save/Load Session: connection settings, Tags, Address Table range, and write bounds together in one file
 - Data Decoder: paste raw hex, see it decoded as U16 through F64/HEX/binary/ASCII/BCD/bits, in all four byte/word orderings - no connection needed
 - Device Profiles: save a device's Address Table range and Tags as one reusable template; browse, download, and share profiles with the Community - no account needed
+- Raw Data: every transaction's real TX/RX wire bytes, decoded exceptions, latency and statistics, plus a Frame Viewer that decodes each frame field by field
+- Windows installer or portable exe, and a Linux AppImage
 
 ---
 
 ## Screenshots
 
-### Overview - Multiple Devices
+### Overview - Multiple Devices (coming in v2.4.0)
 <p align="center">
   <img src="assets/Overview.png" width="90%">
 </p>
@@ -150,7 +152,7 @@
 ### Modbus TCP & RTU
 - Read coils, inputs, holding & input registers  
 - Write single/multiple coils & registers  
-- Modbus TCP (IP/Port/Unit ID) or Modbus Serial (COM port, baud, parity, stop bits, byte size, and RTU/ASCII framing) - pick per connection in Settings  
+- Modbus TCP (IP/Port/Unit ID) or Modbus Serial (COM port, baud, parity, stop bits, byte size, and RTU/ASCII framing) - pick per connection in Connection Settings  
 - Address table for quick testing  
 - Optional Min/Max write bounds per register - a write outside the range is rejected before it reaches the device, no matter if it came from the Address Table, Tags, or a Script  
 - Auto-reconnect with backoff after an unexpected drop, and automatic resume of Tags monitoring once the connection recovers  
@@ -158,7 +160,7 @@
 - Optional interface binding in Connection Settings - "Auto" leaves routing to the OS (default); picking a NIC binds the outgoing TCP socket to it  
 - Fast LAN Mode (Connection Settings, TCP) - 200ms timeout, no retries; on a poll failure it probes reachability once instead of paying a timeout for every remaining tag  
 - Save/Load Session (File menu) - connection settings, Tags (with scaling), Address Table range, and any live write bounds together in one `.mlsession` file, not just Tags on their own (Export/Import CSV is still there for Tags-only round trips)  
-- TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing  
+- *(coming in v2.4.0)* TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing  
 
 ### Data Handling
 - BOOL, U16/S16, U32/S32/F32, U64/S64/F64, HEX support  
@@ -173,16 +175,15 @@
 - Drag and drop to reorder rows, preserving live values, alarm, and scaling config  
 - Write to a tag while monitoring stays active, or press **Enter** in the Write Value cell to write just that row immediately - mirrors the type-and-Enter workflow classic tools like Modbus Poll use  
 - Multi-select rows via Ctrl+click / Shift+click on the row-number header, for **Write Selected** across several tags at once; **Write All** writes every Write-mode tag in the list regardless of selection (both ignore the Enabled checkbox, same as the one-shot Enter write - a manual write is a deliberate action, not something Enabled's polling-pause should block)  
-- A single misconfigured or failing tag no longer stops the rest of the list from updating  
+- A single misconfigured or failing tag doesn't stop the rest of the list from updating  
 - Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting  
 - Engineering-unit scaling per tag - check the **Scale** box for either a linear transform (Raw Min/Max -> Scaled Min/Max, e.g. raw 0-4095 -> 0-100 PSI) or a simple multiply-by-constant factor, shown live in the **Engineering Value** column; choose whether the scaled result displays as Real or Integer  
 - Tag names are validated as they're typed - letters/numbers/underscore only, no spaces, and script keywords/reserved words are rejected with a warning, since a tag's name also doubles as its reference in a Script and in Trend's pen picker  
 - Per-tag **Enabled** checkbox - unchecked, a tag is skipped by continuous polling (both the Read cycle and Write-mode refresh) without deleting the row; manual actions (Write Selected, one-shot write via Enter) still work regardless  
 - Column reorder (drag a header) and a show/hide picker (right-click a header) on the Tags table, so columns you don't need (e.g. Comment, Timestamp) can be hidden without touching the underlying data  
-- Bit View - for a Holding/Input Register tag, right-click > **Bit View...** opens a live, per-bit breakdown of its raw value (each bit individually named and shown as 0/1), for VFD-style control/status words that pack several booleans into one register; a Bool-format tag can also expand its bits inline as rows directly under it in the Tags table. For a Holding Register (writable), each bit row gets its own Write Value cell - type 1/0 and press Enter to read-modify-write just that one bit, without touching the rest of the register  
+- *(coming in v2.4.0)* Bit View - for a Holding/Input Register tag, right-click > **Bit View...** opens a live, per-bit breakdown of its raw value (each bit individually named and shown as 0/1), for VFD-style control/status words that pack several booleans into one register; a Bool-format tag can also expand its bits inline as rows directly under it in the Tags table. For a Holding Register (writable), each bit row gets its own Write Value cell - type 1/0 and press Enter to read-modify-write just that one bit, without touching the rest of the register  
 - Log live tag values to CSV  
 - CSV import/export (Enabled included as a column; older exports without it import as enabled)  
-- Improved stability  
 
 ### Device Profiles
 - Save a device's Address Table range and selected Tags together as one named, reusable profile (Name, Manufacturer, Type, Author) - build it once per device model, apply it to any connection to that model  
@@ -222,8 +223,8 @@
 - Act as a Modbus TCP slave so another master can poll ModbusLens directly  
 - Coils, Discrete Inputs, Holding Registers, and Input Registers are all editable live, as if you were the field device  
 - Useful for testing your own SCADA/PLC program without real hardware  
-- Gateway mode - instead of simulating a device, relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response, turning a serial-only device into one reachable over TCP; runs only while ModbusLens stays open (an interactive bridge for testing/commissioning, not an unattended 24/7 production gateway)  
-- Gateway Activity log shows every relayed request (time, direction, function, address, result), including real device exceptions and gateway-side failures (no response / downstream unreachable) passed through transparently  
+- *(coming in v2.4.0)* Gateway mode - instead of simulating a device, relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response, turning a serial-only device into one reachable over TCP; runs only while ModbusLens stays open (an interactive bridge for testing/commissioning, not an unattended 24/7 production gateway)  
+- *(coming in v2.4.0)* Gateway Activity log shows every relayed request (time, direction, function, address, result), including real device exceptions and gateway-side failures (no response / downstream unreachable) passed through transparently  
 
 ### Scripting
 - A small, purpose-built test-sequence language instead of embedded Python - built so a controls/automation engineer can write a test sequence without knowing how to program: no imports, no client objects, no exception handling to write, just `WRITE HR 1 = 100`. The tradeoff is deliberate - it can only do Modbus reads/writes/waits/logging/arithmetic, never arbitrary code, which is also what makes the safety limits below possible in the first place  
@@ -257,21 +258,17 @@
 - Diagnostics > Decode Registers - a standalone "paste hex, see every interpretation" tool, no connection or live tag needed  
 - Type or paste raw hex (spaces, commas, and `0x` prefixes all fine) and see it live as U16, S16, U32, S32, U64, S64, F32, F64, HEX, binary, ASCII (only shown when every byte is printable), BCD (only shown when every nibble is a valid decimal digit), and each register's individual bits  
 - All four byte/word orderings - ABCD, BADC, CDAB, DCBA - switchable live with no re-typing, for figuring out which ordering makes an unfamiliar device's data actually make sense  
-- Modeless, unlike every other dialog in ModbusLens - stays open alongside the Raw Data tab or an external datasheet instead of blocking the main window  
+- Modeless - stays open alongside the Raw Data tab or an external datasheet instead of blocking the main window  
 
 ### Scanner
 - Auto-discovers which addresses respond for a chosen function type (Coils/Discrete Inputs/Holding/Input Registers) over a given range - works the same way whether the current connection is TCP or serial  
 - Probes the largest block the function allows first, and only narrows down address-by-address where a block doesn't fully respond - far fewer requests than checking one address at a time  
 - Reuses the app's existing connection (like Address Table/Tags/Script), pausing Tags/Address Table live monitoring first so nothing else is polling the same connection at the same time  
 - A configurable probe timeout keeps scanning fast over TCP; over a serial connection each probe is one bus round-trip, so a large range takes noticeably longer  
-- Create Tags From Scan - after a scan finds responding addresses, pick which ranges to import and generate one new Tags-tab row per address, named with the classic 5-digit Modicon convention (e.g. `HR_40001`); an address that already has a tag of that type is skipped instead of duplicated  
+- *(coming in v2.4.0)* Create Tags From Scan - after a scan finds responding addresses, pick which ranges to import and generate one new Tags-tab row per address, named with the classic 5-digit Modicon convention (e.g. `HR_40001`); an address that already has a tag of that type is skipped instead of duplicated  
 
-### UI Improvements
-- Cleaner layout with compact connection bar  
-- Improved status indicators  
-- Better spacing and readability  
-- More focused workspace (Address/Tags/Trend priority)  
-- Light/Dark/Follow System theme, switchable from View > Theme (takes effect after restart)  
+### UI
+- Light/Dark/Follow System theme, switchable from View > Theme (ModbusLens restarts to apply it)  
 - Help > About has an Updates tab that checks GitHub Releases for a newer version  
 - Color-coded logs (Address Table, System Logs, Script console) - writes in blue, connection events in green, errors in red  
 - Ctrl+scroll wheel zooms text size in the Status Log, System Logs, and Raw Data table  
@@ -283,28 +280,28 @@
 Download latest release:  
 https://github.com/CraftParking/ModbusLens/releases
 
-Two options are provided:
+Three downloads are provided:
 
 - **ModbusLens-Setup-x.x.x.exe** (recommended) - a normal Windows installer (Start Menu
   shortcut, optional desktop shortcut, uninstalls via Apps & Features). Installs to
   Program Files, so it asks for admin rights once during setup.
-- **ModbusLens.exe** - a portable single-file version, no installation needed. On some
+- **ModbusLens_vX.X.X.exe** - a portable single-file version, no installation needed. On some
   machines (non-ASCII Windows usernames, aggressive antivirus) this portable form can
   fail to start due to how it unpacks itself at runtime - if it won't launch, use the
   installer instead.
+- **ModbusLens-X.X.X-x86_64.AppImage** (Linux) - no install, no root: `chmod +x` it and run it
+  (on a system without FUSE, run it with `--appimage-extract-and-run`).
 
 ---
 
 ## Notes
 
-- Advanced diagnostics require **Npcap**  
+- ARP Mode (MAC/vendor lookup) and packet capture require **Npcap** (Windows)  
   https://npcap.com/#download  
-
-- Enable during install:
-  - WinPcap compatible mode  
-  - Raw 802.11 (optional)
-
-- Restart app after install  
+  - Enable during install:
+    - WinPcap compatible mode  
+    - Raw 802.11 (optional)
+  - Restart the app after installing
 
 - Scapy itself ships bundled with the app (no separate `pip install scapy` needed anymore) - Npcap is the one piece that has to be installed separately, since it's a system driver rather than something that can be packaged into the exe  
 
@@ -314,6 +311,7 @@ Two options are provided:
 
 ## Upcoming Features
 
+- **v2.4.0 (built, not released yet):** multiple devices in one window - an Overview tab, per-device connections and Unit IDs, a Device picker in every tool, per-device Tags/Trend/Raw Data, Trend pages, Address Table and Tags monitoring together, Gateway mode, RTU over TCP, Bit View, and Create Tags From Scan  
 - Server tab simulating multiple devices/unit addresses at once, not just one  
 - Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
 - Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
@@ -335,7 +333,7 @@ If it helps you, consider supporting development:
   </a>
 </p>
 
-Donations go strictly toward development of ModbusLens (time, tools, hardware for testing) — nothing else.
+Donations go strictly toward development of ModbusLens (time, tools, hardware for testing) - nothing else.
 
 ---
 

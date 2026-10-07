@@ -60,7 +60,7 @@ class MonitoringManager:
         self._log_file = open(file_path, "a", newline="", encoding="utf-8")
         self._log_writer = csv.writer(self._log_file)
         if is_new_or_empty:
-            self._log_writer.writerow(["Timestamp", "Tag Name", "Mode", "Type", "Address", "Value", "Raw Hex"])
+            self._log_writer.writerow(["Timestamp", "Tag Name", "Mode", "Type", "Address", "Value", "Raw Hex", "Device"])
             self._log_file.flush()
 
     def stop_csv_logging(self):
@@ -75,7 +75,8 @@ class MonitoringManager:
     def _log_row(self, tag, timestamp, value_text, raw_hex):
         if not self._log_writer:
             return
-        self._log_writer.writerow([timestamp, tag["name"], tag["mode"], tag["type"], tag["address"], value_text, raw_hex])
+        self._log_writer.writerow([timestamp, tag["name"], tag["mode"], tag["type"], tag["address"], value_text, raw_hex,
+                                    tag.get("device", "")])
         self._log_file.flush()
 
     def handle_row_inserted(self, row):
@@ -683,9 +684,10 @@ class MonitoringManager:
                 QMessageBox.warning(
                     self.parent,
                     "Monitoring Stopped",
-                    "Monitoring was stopped after repeated Modbus failures. ModbusLens will keep trying to "
-                    "reconnect in the background and resume monitoring automatically once it succeeds. If it "
-                    "doesn't recover, check write tag type, address, unit ID, and server status.",
+                    "Monitoring was stopped after repeated Modbus failures on every device. ModbusLens will keep "
+                    "trying to reconnect in the background and resume monitoring automatically once it "
+                    "succeeds. If it doesn't recover, check each device's tag types, addresses and Unit ID, "
+                    "and that the device is online.",
                 )
                 return
         else:

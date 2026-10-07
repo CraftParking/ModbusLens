@@ -134,7 +134,7 @@ class FindDevicesDialog:
 
         apply_row = QHBoxLayout()
         apply_row.addStretch()
-        self.apply_btn = QPushButton("Apply to Connection Settings")
+        self.apply_btn = QPushButton("Apply to Device...")
         self.apply_btn.setStyleSheet(self.parent._get_button_style())
         self.apply_btn.setEnabled(False)
         self.apply_btn.clicked.connect(self._apply_selected)

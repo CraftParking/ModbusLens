@@ -368,7 +368,7 @@ class UnitSweepDialog(QDialog):
         self.client = client if client is not None else mw.modbus
         self.existing = existing
         self.worker = None
-        self.setWindowTitle("Find Devices (Unit ID Sweep)")
+        self.setWindowTitle("Unit ID Sweep")
         self.setMinimumWidth(420)
         layout = QVBoxLayout(self)
         info = QLabel(
@@ -520,7 +520,7 @@ class OverviewWidget(QWidget):
         for text, slot, width, tip in (
             ("Add Device", self._add_blank, 120, "A device by name and Unit ID; add its tags afterwards"),
             ("Add from Profile...", self._add_from_profile, 150, "A device with a saved profile's tags"),
-            ("Find Devices...", self._add_from_sweep, 130,
+            ("Find Unit IDs...", self._add_from_sweep, 130,
              "Unit ID sweep over a connected device's connection -- lists every unit that answers"),
         ):
             btn = QPushButton(text)
@@ -750,20 +750,20 @@ class OverviewWidget(QWidget):
                 links.setdefault(link_key(d["connection"]), d)
         if not links:
             QMessageBox.information(
-                self, "Find Devices",
+                self, "Find Unit IDs",
                 "Connect a device first -- the sweep asks other Unit IDs over its connection, "
                 "and adds what it finds with the same connection settings.")
             return
         via = next(iter(links.values()))
         if len(links) > 1:
             labels = {f"{describe(d['connection'])}  (via {d['name']})": d for d in links.values()}
-            choice, ok = QInputDialog.getItem(self, "Find Devices", "Sweep Unit IDs on which connection?",
+            choice, ok = QInputDialog.getItem(self, "Find Unit IDs", "Sweep Unit IDs on which connection?",
                                               list(labels), 0, False)
             if not ok:
                 return
             via = labels[choice]
         if getattr(self.mw, "monitoring_active", False):
-            QMessageBox.information(self, "Find Devices", "Stop monitoring first, so the sweep has the line to itself.")
+            QMessageBox.information(self, "Find Unit IDs", "Stop Tags monitoring first, so the sweep has the line to itself.")
             return
         conn = self.mw._device_connection(via["name"])
         same_link = [d for d in self.mw.tag_devices if link_key(d["connection"]) == link_key(conn)]

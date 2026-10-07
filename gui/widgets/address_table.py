@@ -388,10 +388,11 @@ class AddressTableWidget(QWidget):
             self.table.setItem(i, 2, hex_item)
 
             if is_register_write:
-                min_item = QTableWidgetItem("")
+                bound = self._saved_write_bound(start_address + i, function)
+                min_item = QTableWidgetItem("" if bound is None else str(bound[0]))
                 min_item.setToolTip("Optional lower bound enforced at write time. Leave both Min and Max blank for no limit.")
                 self.table.setItem(i, 3, min_item)
-                max_item = QTableWidgetItem("")
+                max_item = QTableWidgetItem("" if bound is None else str(bound[1]))
                 max_item.setToolTip("Optional upper bound enforced at write time. Leave both Min and Max blank for no limit.")
                 self.table.setItem(i, 4, max_item)
 
@@ -457,12 +458,12 @@ class AddressTableWidget(QWidget):
                 return
 
             if not self.modbus:
-                self.log("Error: Modbus client not initialized - please connect first")
+                self.log(f"Error: {self.device_selector.device()} isn't connected -- connect it first")
                 self.monitoring_checkbox.setChecked(False)
                 return
 
             if not self.modbus.is_connected():
-                self.log("Error: Not connected to Modbus server - please connect first")
+                self.log(f"Error: {self.device_selector.device()} isn't connected -- connect it first")
                 self.monitoring_checkbox.setChecked(False)
                 return
 
@@ -491,12 +492,12 @@ class AddressTableWidget(QWidget):
             return
 
         if not self.parent_window or not self.modbus:
-            self.log("Error: Modbus client not available")
+            self.log(f"Error: {self.device_selector.device()} is no longer connected -- monitoring stopped")
             self.stop_monitoring()
             return
 
         if not self.modbus.is_connected():
-            self.log("Error: Modbus connection lost")
+            self.log(f"Error: {self.device_selector.device()} is no longer connected -- monitoring stopped")
             self.stop_monitoring()
             return
 
@@ -709,8 +710,9 @@ class AddressTableWidget(QWidget):
         min_text = self.table.item(row, 3).text().strip() if self.table.item(row, 3) else ""
         max_text = self.table.item(row, 4).text().strip() if self.table.item(row, 4) else ""
 
+        device = self.device_selector.device()
         if not min_text and not max_text:
-            self.modbus.clear_write_bound(protocol_offset)
+            self.parent_window._set_device_write_bound(device, protocol_offset)
             return
 
         try:
@@ -724,18 +726,29 @@ class AddressTableWidget(QWidget):
             self.log(f"Invalid write bound for address {address}: Min ({minimum}) is greater than Max ({maximum})")
             return
 
-        self.modbus.set_write_bound(protocol_offset, minimum, maximum)
-        self.log(f"Set write bound for address {address}: [{minimum}, {maximum}]")
+        self.parent_window._set_device_write_bound(device, protocol_offset, minimum, maximum)
+        self.log(f"Set write bound for address {address} on {device}: [{minimum}, {maximum}]")
+
+    def _saved_write_bound(self, address, function):
+        """The selected device's saved (min, max) for this register, if any."""
+        getter = getattr(self.parent_window, "_device_write_bound", None)
+        if getter is None:
+            return None
+        try:
+            offset = self.convert_user_address_to_offset(address, function)
+        except (ValueError, AttributeError):
+            return None
+        return getter(self.device_selector.device(), offset)
 
     def write_value_to_device(self, address, value):
         """Write a single value to the Modbus device."""
         try:
             if not self.modbus:
-                self.log("Error: No Modbus connection available for write operation")
+                self.log(f"Error: {self.device_selector.device()} isn't connected -- write not sent")
                 return False
 
             if not self.modbus.is_connected():
-                self.log("Error: Not connected to Modbus device for write operation")
+                self.log(f"Error: {self.device_selector.device()} isn't connected -- write not sent")
                 return False
 
             if self.get_operation_type(self.current_function) is None:

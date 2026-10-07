@@ -2000,7 +2000,7 @@ class NetworkDiagnosticsDialog:
     def _on_unit_found(self, ip, unit_id):
         """A Unit ID answered as Modbus during the sweep -- report it immediately."""
         self.unit_ids_found.setdefault(ip, []).append(unit_id)
-        self.output_text.append(f"  UNIT ID {unit_id} responds at {ip}")
+        self.output_text.append(f"  Unit ID {unit_id} responds at {ip}")
 
     def _on_unit_sweep_finished(self, ip, found_unit_ids):
         """When the sweep for a host completes, record the result and update the display."""
@@ -2024,7 +2024,7 @@ class NetworkDiagnosticsDialog:
         if self.identify_progress:
             parts.append(f"identifying {self.identify_progress}")
         if self.unit_sweep_progress:
-            parts.append(f"sweeping unit IDs {self.unit_sweep_progress}")
+            parts.append(f"sweeping Unit IDs {self.unit_sweep_progress}")
         self.progress_bar.setFormat(" ".join(parts))
     
     def on_scan_complete(self, device_count):

@@ -295,7 +295,9 @@ class ServerWidget(QWidget):
         toolbar.addWidget(self.stop_btn)
 
         toolbar.addSpacing(15)
-        self.status_indicator = StatusIndicator()
+        self.status_indicator = StatusIndicator(
+            labels={"connected": "Running", "disconnected": "Stopped"},
+            tooltips={"connected": "Server listening", "disconnected": "Server stopped"})
         toolbar.addWidget(self.status_indicator)
         self.status_label = QLabel("Stopped")
         toolbar.addWidget(self.status_label)
@@ -624,11 +626,11 @@ class ServerWidget(QWidget):
             self._set_gateway_config_enabled(False)
             self._configure_table_for_mode()
             self.status_label.setText(
-                f"Gateway: {host}:{port} (unit {self.unit_input.value()}) <-> "
+                f"Gateway: {host}:{port} (Unit {self.unit_input.value()}) <-> "
                 f"{self.downstream_client.target_description()}"
             )
         else:
-            self.status_label.setText(f"Listening on {host}:{port} (unit {self.unit_input.value()})")
+            self.status_label.setText(f"Listening on {host}:{port} (Unit {self.unit_input.value()})")
             self._set_view_controls_enabled(True)
             self._load_view()
             self.refresh_timer.start(500)

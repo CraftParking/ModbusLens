@@ -260,12 +260,10 @@ class CreateTagsFromScanDialog(QDialog):
 
 
 class RegisterScannerWidget(QWidget):
-    """Scanner tab: auto-discover which addresses respond on the connected device.
-    Works the same way for a TCP or serial connection -- whichever is currently
-    connected -- since it just reuses the app's single shared connection (like Address
-    Table/Tags/Script all already do) rather than opening a second one. That means it
-    pauses Tags/Address Table live monitoring first, the same way those two already
-    pause each other, so nothing else polls the connection while a scan is running."""
+    """Scanner tab: auto-discover which addresses respond on the device picked in its
+    Device selector, over TCP or serial. It reuses that device's existing link rather
+    than opening a second one, so it stops Tags/Address Table live monitoring and pauses
+    Trend and the reconnect watchdog first -- nothing else polls while a scan runs."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -389,7 +387,7 @@ class RegisterScannerWidget(QWidget):
         self.device_selector.combo.setEnabled(not in_progress)
         name = self.device_selector.device() or "the device"
         self.status_label.setText(
-            f"Scanning: {modbus.target_description()} (Unit {modbus.unit_id})"
+            f"Target: {modbus.target_description()} (Unit {modbus.unit_id})"
             if connected else
             f"{name} isn't connected -- connect it first (Overview tab, or Connect All)."
         )
@@ -407,7 +405,7 @@ class RegisterScannerWidget(QWidget):
         Start/Stop button states don't flip and confuse the user mid-scan."""
         if getattr(self.parent_window, "monitoring_active", False):
             self.parent_window._stop_monitoring()
-            self.output_text.append("Paused Tags monitoring for the scan.")
+            self.output_text.append("Stopped Tags monitoring for the scan (restart it afterwards).")
         monitoring_manager = getattr(self.parent_window, "monitoring_manager", None)
         if monitoring_manager is not None:
             # Tags monitoring's own poll worker now runs its reads on a background
@@ -421,7 +419,7 @@ class RegisterScannerWidget(QWidget):
         address_table = getattr(self.parent_window, "address_table_widget", None)
         if address_table is not None and getattr(address_table, "monitoring_active", False):
             address_table.monitoring_checkbox.setChecked(False)
-            self.output_text.append("Paused Address Table live monitoring for the scan.")
+            self.output_text.append("Stopped Address Table live monitoring for the scan (restart it afterwards).")
         trend_widget = getattr(self.parent_window, "trend_widget", None)
         self._trend_was_running = bool(trend_widget and trend_widget.poll_timer.isActive())
         if self._trend_was_running:

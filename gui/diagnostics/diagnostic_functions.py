@@ -186,12 +186,12 @@ FUNCTIONS = [
         "label": "Read Device Information (FC43)",
         "params": [
             _combo_param("Read Code", READ_CODE_OPTIONS),
-            _spin_param("Object Id", minimum=0, maximum=255, default=0),
+            _spin_param("Object ID", minimum=0, maximum=255, default=0),
         ],
-        "run": lambda modbus, values: modbus.read_device_information(values["Read Code"], values["Object Id"]),
+        "run": lambda modbus, values: modbus.read_device_information(values["Read Code"], values["Object ID"]),
         "format": lambda r: (
             "\n".join(f"  Object 0x{oid:02X}: {_format_identifier(data)}" for oid, data in sorted(r["information"].items()))
-            + (f"\nMore objects follow (next object id 0x{r['next_object_id']:02X})" if r["more_follows"] else "")
+            + (f"\nMore objects follow (next object ID 0x{r['next_object_id']:02X})" if r["more_follows"] else "")
         ) or "(no objects returned)",
     },
 ]

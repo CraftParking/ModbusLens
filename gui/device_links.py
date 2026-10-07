@@ -32,6 +32,7 @@ REQUEST_METHODS = frozenset({
     "diag_restart_communication", "diag_read_diagnostic_register", "diag_clear_counters",
     "get_comm_event_counter", "get_comm_event_log", "report_device_id", "read_file_record",
     "write_file_record", "mask_write_register", "read_fifo_queue", "read_device_information",
+    "set_write_bound", "clear_write_bound",
 })
 
 

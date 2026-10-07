@@ -715,6 +715,60 @@ class TrendWidget(QWidget):
         page.chart_view.deleteLater()
         self._rebuild_page_tabs()
 
+    PEN_FIELDS = ("enabled", "name", "device", "label", "type", "address", "count", "format", "index", "scale_mode")
+
+    def to_data(self):
+        """Pages and their configured pens (not the plotted points), for Save Session and
+        the auto-saved workspace."""
+        pages = []
+        for page in self.pages:
+            pens = []
+            for i, pen in enumerate(page.pens):
+                if not pen.name:
+                    continue
+                entry = {field: getattr(pen, field) for field in self.PEN_FIELDS}
+                entry.update(slot=i, color=pen.color.name())
+                pens.append(entry)
+            pages.append({"name": page.name, "pens": pens})
+        return {"pages": pages, "interval_ms": self.interval_input.value()}
+
+    def apply_data(self, data):
+        """Rebuild pages and pens from to_data() output (stops a running trend first)."""
+        if not isinstance(data, dict) or not data.get("pages"):
+            return
+        if self.running:
+            self._stop_trend()
+        while len(self.pages) > 1:
+            self._delete_page(self.pages[-1], confirm=False)
+        first = self.pages[0]
+        for pen in first.pens:
+            pen.enabled, pen.name, pen.device = False, "", ""
+        self._page = first
+        self._sync_series()
+        for k, page_data in enumerate(data["pages"][:MAX_PAGES]):
+            page = first if k == 0 else self._add_page(page_data.get("name"), show=False)
+            if page is None:
+                break
+            page.name = str(page_data.get("name") or page.name)
+            for entry in page_data.get("pens") or []:
+                slot = int(entry.get("slot", -1))
+                if not 0 <= slot < MAX_PENS:
+                    continue
+                pen = page.pens[slot]
+                for field in self.PEN_FIELDS:
+                    if field in entry:
+                        setattr(pen, field, entry[field])
+                if entry.get("color"):
+                    pen.color = QColor(entry["color"])
+            self._page = page
+            self._sync_series()
+        interval = data.get("interval_ms")
+        if isinstance(interval, int):
+            self.interval_input.setValue(interval)
+        self._page = None
+        self._show_page(first)
+        self._rebuild_page_tabs(show_index=0)
+
     def _button_style(self):
         if self.parent_window is not None and hasattr(self.parent_window, "_get_button_style"):
             return self.parent_window._get_button_style()
@@ -1163,7 +1217,7 @@ class TrendWidget(QWidget):
     def _check_connection(self):
         if self._any_connected():
             return True
-        QMessageBox.warning(self, "Not Connected", "Connect to a Modbus server before starting the trend.")
+        QMessageBox.warning(self, "Not Connected", "Connect a device first (Overview tab, or Connect All).")
         return False
 
     def _on_interval_changed(self, value):
@@ -1196,7 +1250,7 @@ class TrendWidget(QWidget):
         modbus = getattr(self.parent_window, "modbus", None)
         if not self._any_connected():
             self._stop_trend()
-            QMessageBox.warning(self, "Trend Stopped", "Trend was stopped because the Modbus connection is not active.")
+            QMessageBox.warning(self, "Trend Stopped", "Trend was stopped because no device is connected.")
             return
 
         now = QDateTime.currentDateTime()

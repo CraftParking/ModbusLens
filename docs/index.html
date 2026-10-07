@@ -14,7 +14,7 @@
   "name": "ModbusLens",
   "description": "Free Modbus TCP and RTU scanner, client, and server for engineers - network device discovery, live tag monitoring, trend graphing, and diagnostics in one tool.",
   "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "Windows",
+  "operatingSystem": "Windows, Linux",
   "url": "https://craftparking.github.io/ModbusLens/",
   "downloadUrl": "https://github.com/CraftParking/ModbusLens/releases",
   "license": "https://www.apache.org/licenses/LICENSE-2.0",
@@ -83,7 +83,7 @@ and network diagnostics - in one tool.</p>
 <h2 class="reveal">What it does</h2>
 <div class="feature-grid">
 <article class="panel-card feature-card reveal">
-<p class="eyebrow">MULTI-DEVICE</p>
+<p class="eyebrow">MULTI-DEVICE &middot; COMING IN v2.4.0</p>
 <h3>Every device at a glance</h3>
 <ul>
 <li>Overview tab: one card per device - live status, success rate, latency and pinned values</li>
@@ -100,7 +100,7 @@ and network diagnostics - in one tool.</p>
 <li>TCP or Serial (RTU/ASCII) client, multiple simultaneous connections</li>
 <li>Auto-reconnect with backoff, monitoring resumes on its own</li>
 <li>Fast LAN Mode for quick failure detection over TCP</li>
-<li>RTU-over-TCP framing for transparent serial-to-Ethernet gateways</li>
+<li>RTU-over-TCP framing for transparent serial-to-Ethernet gateways (coming in v2.4.0)</li>
 <li>Save/Load a full session, or just Tags via CSV</li>
 </ul>
 </article>
@@ -123,7 +123,8 @@ and network diagnostics - in one tool.</p>
 <li>Read/Write/Timestamp, alarms, and engineering-unit scaling in one table</li>
 <li>Drag-and-drop reorder, multi-select Write Selected / Write All</li>
 <li>Per-tag Enabled toggle, column show/hide and reorder</li>
-<li>Bit View - name and read/write individual bits within a register</li>
+<li>Per-tag alarms with red highlighting</li>
+<li>Bit View - name and read/write individual bits within a register (coming in v2.4.0)</li>
 <li>Log live values to CSV</li>
 </ul>
 </article>
@@ -145,6 +146,7 @@ and network diagnostics - in one tool.</p>
 <li>Every transaction logged - time, value, hex, success/failure, latency</li>
 <li>The actual TX/RX bytes off the wire, not just decoded values</li>
 <li>Live filtering plus a full statistics breakdown</li>
+<li>Frame Viewer decodes each TX/RX frame field by field, with plain-English Modbus exception explanations</li>
 </ul>
 </article>
 
@@ -152,7 +154,7 @@ and network diagnostics - in one tool.</p>
 <p class="eyebrow">TRENDING</p>
 <h3>Trend graphing</h3>
 <ul>
-<li>Pages of up to 20 pens each, picked straight from your Tags list on any device</li>
+<li>Up to 20 pens, picked straight from your Tags list (pages and per-device pens coming in v2.4.0)</li>
 <li>Detachable window, zoom/pan, live crosshair and stats</li>
 <li>Record a session and replay it later at 1x-8x speed</li>
 </ul>
@@ -164,7 +166,7 @@ and network diagnostics - in one tool.</p>
 <ul>
 <li>Act as a Modbus TCP slave for testing your own SCADA/PLC program</li>
 <li>Coils, discrete inputs, holding &amp; input registers all editable live</li>
-<li>Gateway mode - relay real requests to a real serial device over TCP</li>
+<li>Gateway mode - relay real requests to a real serial device over TCP (coming in v2.4.0)</li>
 </ul>
 </article>
 
@@ -173,7 +175,7 @@ and network diagnostics - in one tool.</p>
 <h3>Scripting</h3>
 <ul>
 <li>Purpose-built test-sequence language - no imports, no exceptions to write</li>
-<li>WRITE, READ, WAIT, LOG, LET, REPEAT, IF, DEVICE, and a live Variables panel</li>
+<li>WRITE, READ, WAIT, LOG, LET, REPEAT, IF, ASSERT, and a live Variables panel (DEVICE command coming in v2.4.0)</li>
 <li>Target a real connected device or the built-in Server simulator</li>
 </ul>
 </article>
@@ -208,12 +210,21 @@ and network diagnostics - in one tool.</p>
 </article>
 
 <article class="panel-card feature-card reveal">
+<p class="eyebrow">DECODER</p>
+<h3>Data decoder</h3>
+<ul>
+<li>Paste raw hex, see U16 to F64, HEX, binary, ASCII, BCD and individual bits at once</li>
+<li>All four byte/word orders (ABCD/BADC/CDAB/DCBA), no connection needed</li>
+</ul>
+</article>
+
+<article class="panel-card feature-card reveal">
 <p class="eyebrow">SCANNING</p>
 <h3>Register scanner</h3>
 <ul>
 <li>Auto-discovers which addresses respond for Coils, Discrete, Holding, or Input Registers</li>
 <li>Works the same way over TCP or serial</li>
-<li>Create Tags From Scan - turn responding addresses into Tags-tab rows in one click</li>
+<li>Create Tags From Scan - turn responding addresses into Tags-tab rows in one click (coming in v2.4.0)</li>
 </ul>
 </article>
 
@@ -222,7 +233,7 @@ and network diagnostics - in one tool.</p>
 <h3>Built for the job</h3>
 <ul>
 <li>Light / Dark / Follow System theme</li>
-<li>Color-coded logs, compact connection bar, focused workspace</li>
+<li>Color-coded logs, and Ctrl+scroll zoom on logs and tables</li>
 <li>Built-in update checker against GitHub Releases</li>
 </ul>
 </article>
@@ -269,10 +280,6 @@ relying on it.</p>
 <h2 class="reveal">Screenshots</h2>
 <div class="shot-stack">
 <figure class="panel-card reveal">
-<img src="assets/overview.png" alt="Overview tab with two meters online, live values and per-device status" tabindex="0" role="button" aria-label="View larger">
-</figure>
-
-<figure class="panel-card reveal">
 <img src="assets/raw_data.png" alt="Raw Data view" tabindex="0" role="button" aria-label="View larger">
 </figure>
 
@@ -290,6 +297,10 @@ relying on it.</p>
 
 <figure class="panel-card reveal">
 <img src="assets/serial_discovery.png" alt="Find Devices dialog" tabindex="0" role="button" aria-label="View larger">
+</figure>
+
+<figure class="panel-card reveal">
+<img src="assets/overview.png" alt="Coming in v2.4.0: Overview tab with two meters online, live values and per-device status" tabindex="0" role="button" aria-label="View larger">
 </figure>
 </div>
 </section>

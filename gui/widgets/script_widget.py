@@ -35,7 +35,7 @@ REVERSE_TYPE_ALIASES = {full: short for short, full in TYPE_ALIASES.items()}
 MIN_ADDRESS, MAX_ADDRESS = 0, 65535
 
 TAG_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-SCRIPT_KEYWORDS = {"WRITE", "READ", "WAIT", "LOG", "LET", "REPEAT", "UNTIL", "END", "IF", "THEN", "ON", "OFF", "TRUE", "FALSE", "ASSERT"}
+SCRIPT_KEYWORDS = {"WRITE", "READ", "WAIT", "LOG", "LET", "REPEAT", "UNTIL", "END", "IF", "THEN", "ON", "OFF", "TRUE", "FALSE", "ASSERT", "DEVICE"}
 RESERVED_TAG_NAMES = (
     SCRIPT_KEYWORDS
     | set(TYPE_ALIASES.keys())
@@ -98,6 +98,7 @@ DEFAULT_SCRIPT_HELP = """# ModbusLens script - one command per line, # or // sta
 #   END
 #   IF <expr> <op> <expr> THEN <command>   (op: == != > < >= <=)
 #   ASSERT <expr> <op> <expr>              (op: == != > < >= <=)
+#   DEVICE <name>                          (send the lines below to that device)
 #
 #   ASSERT records a PASS or FAIL in the Results panel and keeps going either way --
 #   it's a check, not a stop condition. A genuine error while evaluating it (e.g. a
@@ -500,7 +501,8 @@ class ScriptRunner:
 
     def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None,
                  tags_getter=None, reserve_range=None, release_range=None, result_callback=None,
-                 device=None, device_resolver=None, device_modbus_getter=None, address_converter=None):
+                 device=None, device_resolver=None, device_modbus_getter=None, address_converter=None,
+                 register_decoder=None, register_encoder=None, tag_scaler=None):
         self.modbus_getter = modbus_getter
         # Multi-device: the script talks to `device` (the Script tab's Device selector) until
         # a DEVICE line switches it. device_resolver(name) -> canonical name or None;
@@ -511,6 +513,12 @@ class ScriptRunner:
         self.device_modbus_getter = device_modbus_getter
         # Tag -> raw 0-based protocol offset (honours the Tags tab's 1-/0-based setting).
         self.address_converter = address_converter or (lambda tag: int(tag["address"]))
+        # A tag name reads/writes the way the Tags tab does: its Count registers, decoded
+        # with its Format (F32, *_SWAP, ...) and, for reads, its scaling. Without these
+        # callbacks (standalone use) a tag is one raw register like HR <addr>.
+        self.register_decoder = register_decoder  # (registers, format) -> [values]
+        self.register_encoder = register_encoder  # (text, format, count) -> [registers]
+        self.tag_scaler = tag_scaler              # (tag, registers) -> float or None
         self.server_getter = server_getter
         self.target_mode = target_mode  # "client" or "server"
         self.tags_getter = tags_getter or (lambda: [])
@@ -623,6 +631,15 @@ class ScriptRunner:
 
         if instr.op == "WRITE":
             data_type, address = self._resolve_type_address(instr.args)
+            tag = self._find_tag(instr.args["tag_name"]) if "tag_name" in instr.args else None
+            if tag is not None and self._tag_is_multi_register(tag):
+                value = self._eval(parse_expression(instr.args["value_text"]))
+                try:
+                    registers = self.register_encoder(str(value), tag.get("format") or "U16", int(tag["count"]))
+                except ValueError as e:
+                    raise ScriptError(f"tag '{tag['name']}': {e}")
+                self._do_write_registers(data_type, address, registers, label=tag["name"], value=value)
+                return None
             if "tag_name" in instr.args:
                 if data_type in BIT_TYPES:
                     value = parse_bit_keyword(instr.args["value_text"])
@@ -636,6 +653,12 @@ class ScriptRunner:
             return None
 
         if instr.op == "READ":
+            if "tag_name" in instr.args:
+                tag = self._find_tag(instr.args["tag_name"])
+                if tag is None:
+                    raise ScriptError(f"unknown tag '{instr.args['tag_name']}'")
+                self.log(f"READ {tag['name']} = {self._read_tag(tag)}")
+                return None
             data_type, address = self._resolve_type_address(instr.args)
             value = self._do_read(data_type, address)
             self.log(f"READ {data_type} {address} = {value}")
@@ -703,10 +726,7 @@ class ScriptRunner:
                 return self.variables[name]
             tag = self._find_tag(name)
             if tag is not None:
-                value = self._do_read(tag["type"], tag["address"])
-                if value is None:
-                    raise ScriptError(f"read failed for tag '{name}'")
-                return value
+                return self._read_tag(tag)
             raise ScriptError(f"undefined variable or tag '{name}'")
         if kind == "read":
             _, data_type, address = node
@@ -771,7 +791,7 @@ class ScriptRunner:
             return modbus
         modbus = self.modbus_getter()
         if not modbus or not modbus.is_connected():
-            raise ScriptError("not connected to a Modbus server")
+            raise ScriptError("no device is connected")
         return modbus
 
     def _raw_data(self, *args):
@@ -796,7 +816,7 @@ class ScriptRunner:
             return
 
         if data_type not in WRITABLE_TYPES:
-            raise ScriptError(f"{data_type} cannot be written to a client connection")
+            raise ScriptError(f"{data_type} is read-only on a real device")
         modbus = self._require_modbus()
 
         # data_type is already one of the exact space strings the Tags table and
@@ -823,6 +843,94 @@ class ScriptRunner:
             f"Script WRITE {data_type} {address}", value if ok else None, elapsed_ms,
             function_code_for(data_type, is_write=True),
         )
+
+    def _tag_is_multi_register(self, tag):
+        return (self.register_encoder is not None and tag["type"] in WRITABLE_TYPES
+                and tag["type"] not in BIT_TYPES and int(tag.get("count") or 1) > 1)
+
+    def _read_tag(self, tag):
+        """A tag's current value the way the Tags tab shows it: its Count registers,
+        decoded with its Format, scaled if scaling is on; bit types read one bit."""
+        data_type = tag["type"]
+        try:
+            address = self.address_converter(tag)
+        except ValueError as e:
+            raise ScriptError(f"tag '{tag['name']}': {e}")
+        if data_type in BIT_TYPES or self.register_decoder is None:
+            value = self._do_read(data_type, address)
+            if value is None:
+                raise ScriptError(f"read failed for tag '{tag['name']}'")
+            return value
+        count = max(1, int(tag.get("count") or 1))
+        registers = self._read_block(data_type, address, count)
+        if registers is None:
+            raise ScriptError(f"read failed for tag '{tag['name']}'")
+        if self.tag_scaler is not None:
+            scaled = self.tag_scaler(tag, registers)
+            if scaled is not None:
+                return scaled
+        value_format = (tag.get("format") or "U16").strip().upper()
+        if value_format in ("HEX", "BOOL"):
+            return int(registers[0])  # a number to compute with, not the display text
+        try:
+            decoded = self.register_decoder(registers, value_format)
+        except Exception as e:
+            raise ScriptError(f"tag '{tag['name']}': can't decode as {value_format} ({e})")
+        value = decoded[0] if isinstance(decoded, list) and decoded else decoded
+        if isinstance(value, float) and value.is_integer() and value_format.startswith(("U", "S")):
+            value = int(value)
+        return value
+
+    def _read_block(self, data_type, address, count):
+        """count registers starting at address, or None on failure."""
+        if self.target_mode == "server":
+            server = self._require_server()
+            values = [server.read_value(data_type, address + i) for i in range(count)]
+            return None if any(v is None for v in values) else values
+        modbus = self._require_modbus()
+        request_range = {"operation": "read", "space": data_type, "start": address,
+                         "end": address + count - 1, "tag": "Script"}
+        if not self.reserve_range(request_range):
+            self.log(f"READ {data_type} {address} SKIPPED -- safety interlock: range busy")
+            return None
+        try:
+            start_time = time.perf_counter()
+            if data_type == "Input Register":
+                data = modbus.read_input_registers(address, count)
+            else:
+                data = modbus.read_registers(address, count)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+        finally:
+            self.release_range(request_range)
+        self._raw_data(f"Script READ {data_type} {address} x{count}", data, elapsed_ms,
+                       function_code_for(data_type, is_write=False))
+        if data is None:
+            return None
+        return list(data) if isinstance(data, list) else [data]
+
+    def _do_write_registers(self, data_type, address, registers, label, value):
+        if self.target_mode == "server":
+            server = self._require_server()
+            ok = all(server.write_value(data_type, address + i, r) for i, r in enumerate(registers))
+            self.log(f"WRITE {label} = {value} (server) {'OK' if ok else 'FAILED'}")
+            return
+        if data_type not in WRITABLE_TYPES:
+            raise ScriptError(f"{data_type} is read-only on a real device")
+        modbus = self._require_modbus()
+        request_range = {"operation": "write", "space": data_type, "start": address,
+                         "end": address + len(registers) - 1, "tag": "Script"}
+        if not self.reserve_range(request_range):
+            self.log(f"WRITE {label} = {value} SKIPPED -- safety interlock: range busy")
+            return
+        try:
+            start_time = time.perf_counter()
+            ok = modbus.write_registers(address, registers)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+        finally:
+            self.release_range(request_range)
+        self.log(f"WRITE {label} = {value} {'OK' if ok else 'FAILED'}")
+        self._raw_data(f"Script WRITE {data_type} {address} x{len(registers)}", registers if ok else None,
+                       elapsed_ms, function_code_for(data_type, is_write=True, count=len(registers)))
 
     def _do_read(self, data_type, address):
         if self.target_mode == "server":
@@ -1245,13 +1353,13 @@ class ScriptWidget(QWidget):
             server = getattr(self.parent_window, "server_widget", None)
             if server and server.running:
                 return True
-            QMessageBox.warning(self, "Server Not Running", "Start the Server tab before running a Server-target script.")
+            QMessageBox.warning(self, "Server Not Running", "Start the Server tab before running a Server (Local) script.")
             return False
 
         if self.device_selector.is_connected():
             return True
         name = self.device_selector.device() or "the device"
-        QMessageBox.warning(self, "Not Connected", f"Connect {name} before running a Client-target script.")
+        QMessageBox.warning(self, "Not Connected", f"Connect {name} before running a Client Connection script.")
         return False
 
     def _compile(self):
@@ -1355,6 +1463,9 @@ class ScriptWidget(QWidget):
             device_resolver=self._resolve_device_name,
             device_modbus_getter=getattr(self.parent_window, "_device_view", None),
             address_converter=getattr(self.parent_window, "_tag_user_address_to_offset", None),
+            register_decoder=getattr(self.parent_window, "_decode_register_values", None),
+            register_encoder=getattr(self.parent_window, "_parse_register_values", None),
+            tag_scaler=self._tag_scaled_value,
         )
         self.runner.load(instructions)
         self._reset_variables_panel(collect_variable_names(instructions))
@@ -1367,6 +1478,17 @@ class ScriptWidget(QWidget):
         self.editor.setReadOnly(True)
         self._log_console(f"Script started (target: {self.target_combo.currentText()})")
         self._resume()
+
+    def _tag_scaled_value(self, tag, registers):
+        """The tag's engineering value if Tags-tab scaling is on for it, else None."""
+        manager = getattr(self.parent_window, "monitoring_manager", None)
+        if manager is None:
+            return None
+        text = manager.compute_engineering_value(tag, registers)
+        try:
+            return float(text) if text != "" else None
+        except (TypeError, ValueError):
+            return None
 
     def _resolve_device_name(self, name):
         """DEVICE lines match device names case-insensitively."""

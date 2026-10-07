@@ -24,6 +24,8 @@ from widgets.tag_devices import ADD_DEVICE_SENTINEL, TAG_DEVICE_COLUMN, DeviceDi
 from widgets.overview_widget import DEFAULT_PINNED
 
 DEVICES_FILE = "devices.json"
+WORKSPACE_FILE = "workspace.mlsession"  # auto-saved: devices, Tags, Address Table range, Trend pages
+WORKSPACE_SAVE_INTERVAL_MS = 60_000
 
 
 class DeviceManagerMixin:
@@ -75,7 +77,7 @@ class DeviceManagerMixin:
         device = {"name": name, "unit": unit,
                   "connection": normalize_connection(saved.get("connection") or default_connection
                                                      or self._legacy_connection())}
-        for key in ("pinned", "paused", "profile"):
+        for key in ("pinned", "paused", "profile", "write_bounds"):
             if key in saved:
                 device[key] = saved[key]
         self.tag_devices.append(device)
@@ -257,8 +259,7 @@ class DeviceManagerMixin:
             self._connected_devices.add(name)
             failed.discard(name)
             self._log(f"Connected {name} -- {describe(conn)} (Unit {device['unit']})")
-            if name == self.active_device:
-                self._write_confirm_suppressed = False
+            self._write_confirm_suppressed = False  # "Don't ask again" lasts until a device reconnects
             self._reconnect_watchdog_timer.start(self.WATCHDOG_HEALTHY_INTERVAL_MS)
         else:
             failed.add(name)
@@ -266,11 +267,48 @@ class DeviceManagerMixin:
             if interactive:
                 self._show_device_connection_error(device, error)
         self._sync_active_device()
-        if ok and name == self.active_device:
-            self._apply_pending_write_bounds()
         if ok:
+            self._push_device_write_bounds(name)
             self._record_device_history(device)
         return ok
+
+    # ----------------------------------------------------------- write bounds --
+    def _device_write_bound(self, name, offset):
+        """(min, max) for one register of a device, or None."""
+        bound = (self._device_meta(name).get("write_bounds") or {}).get(str(offset))
+        return tuple(bound) if bound else None
+
+    def _set_device_write_bound(self, name, offset, minimum=None, maximum=None):
+        """Set (or, with no min/max, clear) a device's write bound for one register. Kept
+        on the device record -- saved with the device list and in sessions -- and pushed
+        to its link right away when it's connected."""
+        device = self._device(name)
+        if device is None:
+            return
+        bounds = dict(device.get("write_bounds") or {})
+        view = self._device_view(name)
+        if minimum is None:
+            bounds.pop(str(offset), None)
+            if view is not None:
+                view.clear_write_bound(offset)
+        else:
+            bounds[str(offset)] = [minimum, maximum]
+            if view is not None:
+                view.set_write_bound(offset, minimum, maximum)
+        if bounds:
+            device["write_bounds"] = bounds
+        else:
+            device.pop("write_bounds", None)
+        self._save_devices()
+
+    def _push_device_write_bounds(self, name):
+        view = self._device_view(name)
+        bounds = self._device_meta(name).get("write_bounds") or {}
+        if view is None or not bounds:
+            return
+        for offset, (minimum, maximum) in bounds.items():
+            view.set_write_bound(int(offset), minimum, maximum)
+        self._log(f"Applied {len(bounds)} write bound(s) for {name}")
 
     def _record_device_history(self, device):
         if device["name"] != self.active_device:
@@ -356,6 +394,51 @@ class DeviceManagerMixin:
                             f"Couldn't connect {device['name']} -- {describe(conn)}, Unit {device['unit']}.\n\n"
                             f"{error or 'Connection failed'}\n\n{tips}")
 
+    # -------------------------------------------------------------- workspace --
+    # The first window keeps a workspace file -- the same content as Save Session -- saved
+    # every minute and on close, and restored on the next start, so tags and Trend pages
+    # survive a restart (or a crash) without a manual Save Session. Like Load Session, a
+    # restore never connects anything by itself.
+    def _workspace_path(self):
+        return app_data_dir() / WORKSPACE_FILE
+
+    def _init_workspace(self):
+        from PySide6.QtCore import QTimer
+        if DeviceManagerMixin._devices_file_owner is not self:
+            return
+        try:
+            with open(self._workspace_path(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            data = None
+        except (OSError, ValueError) as e:
+            self._log(f"Couldn't restore the last workspace: {e}")
+            data = None
+        if isinstance(data, dict):
+            try:
+                self._apply_session_data(data)
+                n_tags = len(data.get("tags") or [])
+                self._log(f"Restored last workspace: {len(self.tag_devices)} device(s), {n_tags} tag(s)")
+            except Exception as e:  # a bad file must never stop the app starting
+                self._log(f"Couldn't restore the last workspace: {e}")
+        self._workspace_timer = QTimer(self)
+        self._workspace_timer.timeout.connect(self._save_workspace)
+        self._workspace_timer.start(WORKSPACE_SAVE_INTERVAL_MS)
+
+    def _save_workspace(self):
+        if DeviceManagerMixin._devices_file_owner is not self:
+            return
+        try:
+            data = self._build_session_data()
+            path = self._workspace_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=1)
+            os.replace(tmp, path)  # never leave a half-written workspace behind
+        except Exception as e:
+            self._log(f"Couldn't save the workspace: {e}")
+
     # ------------------------------------------------------------ persistence --
     def _devices_path(self):
         return app_data_dir() / DEVICES_FILE
@@ -396,7 +479,7 @@ class DeviceManagerMixin:
         combo.blockSignals(True)
         combo.clear()
         for device in self.tag_devices:
-            combo.addItem(f"{device['name']} ({device['unit']})", device["name"])
+            combo.addItem(f"{device['name']} (Unit {device['unit']})", device["name"])
         combo.addItem(ADD_DEVICE_SENTINEL, ADD_DEVICE_SENTINEL)
         index = combo.findData(selected)
         if index < 0:
@@ -441,7 +524,7 @@ class DeviceManagerMixin:
             tabs.removeTab(0)
         multi = len(self.tag_devices) > 1
         if multi:
-            entries = [("All", None)] + [(f"{d['name']} ({d['unit']})", d["name"]) for d in self.tag_devices]
+            entries = [("All", None)] + [(f"{d['name']} (Unit {d['unit']})", d["name"]) for d in self.tag_devices]
             for label, key in entries:
                 tabs.setTabData(tabs.addTab(label), key)
             tabs.setTabData(tabs.addTab("+"), ADD_DEVICE_SENTINEL)

@@ -1155,7 +1155,7 @@ class DeviceProfilesPanel(QWidget):
             imported_count, skipped_count = mw._import_additional_tag_rows(selected_tags)
             mw._apply_address_table_data(data.get("address_table"))
             if hasattr(mw, "_log"):
-                message = f"Imported {imported_count} tag(s) from community profile '{data.get('name', '')}'"
+                message = f"Imported {imported_count} tag(s) into {mw._default_tag_device()} from community profile '{data.get('name', '')}'"
                 if skipped_count:
                     message += f" ({skipped_count} already present, skipped)"
                 mw._log(message)
@@ -1263,7 +1263,7 @@ class DeviceProfilesPanel(QWidget):
             imported_count, skipped_count = mw._import_additional_tag_rows(selected_tags)
             mw._apply_address_table_data(profile.get("address_table"))
             if hasattr(mw, "_log"):
-                message = f"Imported {imported_count} tag(s) from profile '{profile.get('name', '')}'"
+                message = f"Imported {imported_count} tag(s) into {mw._default_tag_device()} from profile '{profile.get('name', '')}'"
                 if skipped_count:
                     message += f" ({skipped_count} already present, skipped)"
                 mw._log(message)

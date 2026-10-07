@@ -251,12 +251,6 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
 
         self.modbus = None
         self.connection_history = []
-        # Write bounds loaded from a Session file, waiting for a live ModbusClient to apply
-        # them to -- write bounds only ever exist on the current connection's own instance
-        # (ModbusClient.write_bounds), so a Session loaded before connecting (or while a
-        # previous connection is still up) can't set them immediately. Applied by
-        # _apply_pending_write_bounds(), called again right after every successful _connect().
-        self._pending_write_bounds = []
 
         # Connection parameters
         self.connection_mode = "tcp"  # "tcp" or "serial"
@@ -371,6 +365,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         self._connect_signals()
         self._load_settings()
         self._init_devices()
+        self._init_workspace()
         
     def _setup_window(self):
         """Setup main window properties."""
@@ -389,7 +384,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
 
         # File menu
         file_menu = menubar.addMenu("&File")
-        file_menu.addAction("New Connection Window", self._new_connection_window)
+        file_menu.addAction("New Window", self._new_connection_window)
         file_menu.addSeparator()
         file_menu.addAction("New Session", self._new_session)
         file_menu.addAction("Save Session", self._save_session)
@@ -416,7 +411,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
 
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
-        tools_menu.addAction("Connection Settings", self._device_settings_clicked)
+        tools_menu.addAction("Device Settings...", self._device_settings_clicked)
         tools_menu.addAction("Data Templates", self._manage_templates)
         tools_menu.addSeparator()
         tools_menu.addAction("IP Configuration", self._show_ip_config)
@@ -1178,7 +1173,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         enabled_widget = QCheckBox()
         enabled_widget.setChecked(enabled)
         enabled_widget.setToolTip(
-            "When unchecked, this tag is skipped by continuous polling (Tag Monitoring's read "
+            "When unchecked, this tag is skipped by continuous polling (Tags monitoring's read "
             "cycle and the write-mode value refresh) without deleting the row. Manual actions "
             "(Write Selected, one-shot write via Enter) still work regardless of this."
         )
@@ -2192,7 +2187,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         was_monitoring = self.monitoring_active
         if was_monitoring:
             self.monitoring_timer.stop()
-            self._log("Safety interlock: monitoring paused while write request is active")
+            self._log("Safety interlock: Tags monitoring paused while write request is active")
 
         try:
             try:
@@ -2241,7 +2236,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         finally:
             if was_monitoring and self.monitoring_active:
                 self.monitoring_timer.start(self.tag_monitoring_interval.value())
-                self._log("Safety interlock: monitoring resumed after write request")
+                self._log("Safety interlock: Tags monitoring resumed after write request")
 
     def _on_scale_checkbox_toggled(self, checked):
         if self._updating_tag_table:
@@ -2470,53 +2465,6 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             self._save_settings()
         elif dialog.find_devices_requested_mode is not None:
             self._find_devices(dialog.find_devices_requested_mode)
-
-    def _show_connection_error_dialog(self, target_description, unit_id, error_message):
-        """Show connection error dialog with detailed information."""
-        try:
-            if self.connection_mode == "serial":
-                tips = (
-                    "• Check that the COM port exists and isn't already open in another program<br>"
-                    "• Verify baud rate, parity, and stop bits match the device<br>"
-                    "• Check the cable/adapter and that the device is powered<br>"
-                    "• Check if the Unit ID matches the device configuration"
-                )
-            else:
-                tips = (
-                    "• Check if the Modbus server is running<br>"
-                    "• Verify the IP address and port number<br>"
-                    "• Ensure network connectivity to the device<br>"
-                    "• Check if the Unit ID matches the device configuration<br>"
-                    "• Verify firewall settings are not blocking the connection"
-                )
-
-            # Create error dialog
-            dialog = QMessageBox(self)
-            dialog.setIcon(QMessageBox.Warning)
-            dialog.setWindowTitle("Connection Failed")
-            dialog.setText("Failed to connect to Modbus server")
-            dialog.setInformativeText(f"""
-<strong>Connection Details:</strong><br>
-Target: {target_description}<br>
-Unit ID: {unit_id}<br><br>
-<strong>Error:</strong> {error_message}<br><br>
-<strong>Possible Solutions:</strong><br>
-{tips}
-            """)
-            dialog.setStandardButtons(QMessageBox.Ok)
-            dialog.setStyleSheet(f"""
-                QMessageBox {{
-                    background-color: {self._c["surface"]};
-                }}
-                QMessageBox QTextEdit {{
-                    background-color: {self._c["surface_alt2"]};
-                    border: 1px solid {self._c["border"]};
-                    padding: 8px;
-                }}
-            """)
-            dialog.exec()
-        except Exception as e:
-            self._log(f"Error showing connection dialog: {e}")
 
     def _get_monitoring_tags(self):
         """Get all monitoring tags from the table."""
@@ -3063,7 +3011,7 @@ Unit ID: {unit_id}<br><br>
 
         if was_monitoring:
             self.monitoring_timer.stop()
-            self._log("Safety interlock: monitoring paused while write request is active")
+            self._log("Safety interlock: Tags monitoring paused while write request is active")
 
         try:
             for tag in tags_to_write:
@@ -3109,7 +3057,7 @@ Unit ID: {unit_id}<br><br>
         finally:
             if was_monitoring and self.monitoring_active:
                 self.monitoring_timer.start(self.tag_monitoring_interval.value())
-                self._log("Safety interlock: monitoring resumed after write request")
+                self._log("Safety interlock: Tags monitoring resumed after write request")
 
         if wrote_any:
             self._log(f"Successfully wrote {len(tags_to_write)} tag(s)")
@@ -3128,7 +3076,8 @@ Unit ID: {unit_id}<br><br>
 
         max_listed = 8
         lines = [
-            f"  {tag['name']} @ {tag['address']} ({tag['type']}) = {tag['write_value']}"
+            (f"  {tag['device']}: " if len(self.tag_devices) > 1 and tag.get("device") else "  ")
+            + f"{tag['name']} @ {tag['address']} ({tag['type']}) = {tag['write_value']}"
             for tag in tags_to_write[:max_listed]
         ]
         if len(tags_to_write) > max_listed:
@@ -3136,7 +3085,7 @@ Unit ID: {unit_id}<br><br>
 
         plural = "s" if len(tags_to_write) != 1 else ""
         message = (
-            f"About to write {len(tags_to_write)} value{plural} to the connected device:\n\n"
+            f"About to write {len(tags_to_write)} value{plural}:\n\n"
             + "\n".join(lines)
             + "\n\nContinue?"
         )
@@ -3147,7 +3096,7 @@ Unit ID: {unit_id}<br><br>
         box.setText(message)
         box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         box.setDefaultButton(QMessageBox.No)
-        suppress_checkbox = QCheckBox("Don't ask again for this connection")
+        suppress_checkbox = QCheckBox("Don't ask again until a device reconnects")
         box.setCheckBox(suppress_checkbox)
         reply = box.exec()
 
@@ -3751,13 +3700,6 @@ Unit ID: {unit_id}<br><br>
         QMessageBox.warning(self, "Not Connected", "Connect a device first (Overview tab, or Connect All).")
         return False
 
-    def _check_active_connection(self):
-        """Check if connected to Modbus server."""
-        if not self.modbus or not self.modbus.is_connected():
-            QMessageBox.warning(self, "Not Connected", "Please connect to a Modbus server first.")
-            return False
-        return True
-
     def _log(self, message):
         """Add message to the System Logs, color-coded by what kind of event it looks like
         (write, connect, error) so the right lines stand out at a glance in a busy log."""
@@ -3907,7 +3849,7 @@ Unit ID: {unit_id}<br><br>
             self.diagnostics_log_output.clear()
         if hasattr(self, 'diagnostics_data_output'):
             self.diagnostics_data_output.clear()
-        self._log(" New session started")
+        self._log("New session started")
 
     def _new_connection_window(self):
         """Open another, fully independent connection window (its own connection, tags, trend, server)."""
@@ -3970,12 +3912,13 @@ Unit ID: {unit_id}<br><br>
             },
             "devices": [dict(d) for d in self.tag_devices],
             "tags": self._build_tag_export_rows(),
+            "trend": self.trend_widget.to_data() if hasattr(self, "trend_widget") else None,
             "address_table": self._build_address_table_data(),
-            # Write bounds only ever exist on the live ModbusClient instance (see
-            # ModbusClient.write_bounds) -- nothing to save if there's no connection.
+            # Write bounds now live in each device record ("devices" above); this flat list
+            # is only kept for older versions reading a newer session.
             "write_bounds": (
-                [[address, bounds[0], bounds[1]] for address, bounds in self.modbus.write_bounds.items()]
-                if self.modbus else []
+                [[int(offset), bound[0], bound[1]]
+                 for offset, bound in (self.tag_devices[0].get("write_bounds") or {}).items()]
             ),
         }
 
@@ -4012,21 +3955,16 @@ Unit ID: {unit_id}<br><br>
         self._refresh_tag_device_ui()
 
         self._apply_address_table_data(data.get("address_table"))
+        if data.get("trend") and hasattr(self, "trend_widget"):
+            self.trend_widget.apply_data(data["trend"])
 
-        self._pending_write_bounds = [tuple(entry) for entry in (data.get("write_bounds") or [])]
-        self._apply_pending_write_bounds()
-
-    def _apply_pending_write_bounds(self):
-        """Write bounds loaded from a Session file before a connection exists (or while a
-        previous one is still up) sit in _pending_write_bounds until there's an actual
-        ModbusClient to set them on. Called from Load Session and again right after every
-        successful _connect(), so whichever happens second is the one that applies them."""
-        if not self.modbus or not self._pending_write_bounds:
-            return
-        for address, minimum, maximum in self._pending_write_bounds:
-            self.modbus.set_write_bound(address, minimum, maximum)
-        self._log(f"Applied {len(self._pending_write_bounds)} write bound(s) from loaded session")
-        self._pending_write_bounds = []
+        # Bounds come back inside each device record; an older session's flat list (before
+        # devices existed) belongs to its single device, now the first one.
+        legacy = data.get("write_bounds") or []
+        if legacy and not any(d.get("write_bounds") for d in (data.get("devices") or [])):
+            first = self.tag_devices[0]
+            first["write_bounds"] = {str(int(a)): [mn, mx] for a, mn, mx in legacy}
+            self._save_devices()
 
     def _save_session(self):
         """Save connection settings, Tags, Address Table range, and any live write bounds
@@ -4069,8 +4007,8 @@ Unit ID: {unit_id}<br><br>
         self._log(f"Loaded session from {file_path}")
         QMessageBox.information(
             self, "Load Session",
-            "Session loaded: connection settings, Tags, and Address Table range have been applied.\n\n"
-            "Connect using these settings to finish applying any saved write bounds."
+            "Session loaded: devices, Tags, and Address Table range have been applied.\n\n"
+            "Connect the devices to start working with them."
         )
 
     def _export_data(self):
@@ -4208,6 +4146,7 @@ Unit ID: {unit_id}<br><br>
 
     def closeEvent(self, event):
         """Handle application close event."""
+        self._save_workspace()
         # Stop any in-progress scan before touching the connection it's using --
         # _disconnect() below now does this too, but do it explicitly first so a hang
         # in the worker thread doesn't leave the connection torn down under it.
@@ -4573,7 +4512,7 @@ class BitViewDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
             f"{tag['name']}  ({tag['type']}, {value_format})\n"
-            "Name each bit below -- values update live while Tag Monitoring is running."
+            "Name each bit below -- values update live while Tags monitoring is running."
         ))
 
         self.table = QTableWidget()
@@ -4660,7 +4599,8 @@ class ConnectionSettingsDialog(QDialog):
 
     def __init__(self, parent, history, current, serial_overrides=None, tcp_overrides=None):
         super().__init__(parent)
-        self.setWindowTitle("Connection Settings")
+        device = getattr(parent, "active_device", None)  # the device being edited (see _show_connection_settings)
+        self.setWindowTitle(f"Connection Settings - {device}" if device else "Connection Settings")
         self.setMinimumWidth(450)
         self.history = history[:]
         # Set by _open_find_devices() -- the caller checks this after exec() to decide
@@ -4726,7 +4666,7 @@ class ConnectionSettingsDialog(QDialog):
         self.tcp_framer_combo.setToolTip(
             "Use \"RTU over TCP\" for serial-to-Ethernet converters (e.g. Waveshare RS485-TO-ETH)\n"
             "running in transparent/passthrough mode, which tunnel raw RTU frames (with CRC16)\n"
-            "over a plain TCP socket instead of translating them to real Modbus-TCP framing."
+            "over a plain TCP socket instead of translating them to real Modbus TCP framing."
         )
         tcp_framer_index = 1 if getattr(current, "tcp_framer", "socket") == "rtu" else 0
         self.tcp_framer_combo.setCurrentIndex(tcp_framer_index)

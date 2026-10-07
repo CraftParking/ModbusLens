@@ -814,6 +814,12 @@ section h2 {
   gap: 20px;
 }
 
+/* display: grid above would otherwise override the hidden attribute, showing every
+   platform's panel at once instead of just the selected tab's. */
+.download-grid[hidden] {
+  display: none;
+}
+
 .download-card {
   padding: 28px;
 }
@@ -835,20 +841,22 @@ section h2 {
   padding: 0;
 }
 
+/* A normal block with the tick positioned on the left -- as a flex row, inline <code>
+   inside an item became its own column. */
 .req-list li {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  position: relative;
+  padding-left: 28px;
   margin-bottom: 14px;
   color: var(--muted);
 }
 
 .req-list li::before {
   content: "";
-  flex-shrink: 0;
+  position: absolute;
+  left: 0;
+  top: 2px;
   width: 18px;
   height: 18px;
-  margin-top: 2px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='12' fill='%233b4a6b'/%3E%3Cpath d='M7 12.5l3 3 7-7' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-size: contain;
   background-repeat: no-repeat;

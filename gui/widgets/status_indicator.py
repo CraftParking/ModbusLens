@@ -15,9 +15,12 @@ class StatusIndicator(QWidget):
         True: {"connected": "#81C784", "connecting": "#FFB74D", "error": "#EF5350", "disconnected": "#BDBDBD"},
     }
 
-    def __init__(self, parent=None, dark=False):
+    def __init__(self, parent=None, dark=False, labels=None, tooltips=None):
         super().__init__(parent)
         self._dark = dark
+        # Per-state text overrides, e.g. the Server tab's "Running"/"Stopped".
+        self._labels = labels or {}
+        self._tooltips = tooltips or {}
         self.status = "disconnected"
         self.connection_info = ""
         self.setFixedSize(140, 35)
@@ -98,6 +101,7 @@ class StatusIndicator(QWidget):
             "error": "Connection error",
             "disconnected": "Not connected"
         }
+        tooltips.update(self._tooltips)
         self.setToolTip(tooltips.get(status, ""))
 
         if status == "connecting":
@@ -137,6 +141,7 @@ class StatusIndicator(QWidget):
         else:
             status_text = "Disconnected"
             icon_text = "○"
+        status_text = self._labels.get(self.status, status_text)
 
         # Apply pulsing alpha if connecting
         current_text_color = QColor(self._text_color)

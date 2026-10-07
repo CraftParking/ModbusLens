@@ -116,7 +116,7 @@ def _decode_ascii(raw, result):
     unit_and_pdu = inner[:-2]
     if len(unit_and_pdu) < 2:
         result["success"] = False
-        result["error"] = "No unit ID or PDU"
+        result["error"] = "No Unit ID or PDU"
         return
     unit_id = int(unit_and_pdu[:2], 16)
     try:

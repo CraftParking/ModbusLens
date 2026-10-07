@@ -33,7 +33,7 @@ Set its connection with <b>Device Settings</b> (top right), or its card's &#8942
 <b>Edit Device...</b> &gt; <b>Connection Settings...</b>: IP address, port (usually 502) and Unit
 ID - or switch to Modbus Serial and enter the serial parameters instead.</li>
 <li>Add any further devices with <b>Add Device</b>, <b>Add from Profile...</b> (a device plus a
-saved profile's tags) or <b>Find Devices...</b> (asks each Unit ID over a connected device's
+saved profile's tags) or <b>Find Unit IDs...</b> (asks each Unit ID over a connected device's
 link).</li>
 <li>Click <b>Connect All</b> (top right), or <b>Connect</b> on one device's card. Each device's
 pill in the top bar and its card show its status - green when connected/online.</li>
@@ -62,7 +62,7 @@ The menu bar sits at the very top of the window, below the title bar.</p>
 
 <h3>File menu</h3>
 <ol>
-<li><b>New Connection Window</b> - opens a second, fully independent ModbusLens window with its
+<li><b>New Window</b> - opens a second, fully independent ModbusLens window with its
 own device list, tabs, and Server tab. See <b>Multiple Windows</b> for details.</li>
 <li><b>New Session</b> - disconnects every device, stops monitoring, and clears the current
 window's logs and monitoring results. Doesn't close the window or remove your devices, Tags or
@@ -70,17 +70,22 @@ script - just resets the live state.</li>
 <li><b>Save Session</b> / <b>Load Session</b> - saves or loads a single <code>.mlsession</code>
 file bundling the <b>device list</b> (each device's name, Unit ID, its own connection - TCP or
 serial, framing, Fast LAN Mode, interface binding - and its Overview settings: pinned values,
-paused, profile), the Tags list (including each tag's device, group, scaling and bit names -
-not alarm settings), the Address Table's current range config, and any write bounds - everything
+paused, profile, write bounds), the Tags list (including each tag's device, group, scaling and
+bit names - not alarm settings), the Address Table's current range config, and the Trend pages
+and pens - everything
 <b>Export/Import CSV</b> doesn't cover on its own (CSV is Tags only). Loading a session disconnects
 every device and replaces the device list, but deliberately does not connect for you, so loading a
 file can never be the thing that reaches real equipment. A session saved before devices existed
-loads as one device, "Device 1". Write bounds only exist on a live connection, so a loaded
-session's bounds are applied when the first device in the list connects.</li>
+loads as one device, "Device 1".</li>
 <li><b>Export Data</b> - not implemented yet; currently shows a placeholder message. Use
 <b>Log to CSV</b> on the Tags or Trend tab for live data logging in the meantime.</li>
 <li><b>Exit</b> - closes this window (saving its settings first).</li>
 </ol>
+<p><b>Your workspace is saved automatically.</b> The first ModbusLens window keeps the same
+content as Save Session - devices, Tags, the Address Table range and Trend pages - saved every
+minute and when you close it, and restores it the next time ModbusLens starts. Like Load Session,
+restoring never connects anything; click Connect All when you're ready. Save Session is still the
+way to keep several setups or move one to another PC.</p>
 
 <h3>View menu</h3>
 <ol>
@@ -92,7 +97,7 @@ rather than switched live.</li>
 
 <h3>Tools menu</h3>
 <ol>
-<li><b>Connection Settings</b> - the same as <b>Device Settings</b> on the top bar: edits one
+<li><b>Device Settings...</b> - the same as <b>Device Settings</b> on the top bar: edits one
 device's connection (with several devices it asks which; a connected device has to be
 disconnected first). See <b>Connecting to a Device</b>.</li>
 <li><b>Data Templates</b> - not implemented yet; currently shows a placeholder message.</li>
@@ -110,8 +115,8 @@ optional ARP mode, Modbus detection). See <b>Troubleshooting &gt; Network Discov
 <li><b>Find Devices</b> - one dialog for both kinds of discovery: <b>Transport</b> "TCP (Network
 Scan)" or "Serial (Parameter Sweep)", <b>Start Scan</b> / <b>Stop Scan</b> / <b>Clear
 Results</b>, and a results table (Transport, Target, Parameters, Unit ID). Select a result and
-click <b>Apply to Connection Settings</b> (or double-click it) to open Connection Settings
-pre-filled for the device you pick. Not the same as the Overview's <b>Find Devices...</b>, which
+click <b>Apply to Device...</b> (or double-click it) to open Connection Settings
+pre-filled for the device you pick. Not the same as the Overview's <b>Find Unit IDs...</b>, which
 sweeps Unit IDs over an already connected link.</li>
 <li><b>Serial Discovery</b> - sweeps common baud rate/parity/stop-bit/Unit ID combinations against
 a COM port to find which one a serial device actually speaks. See <b>Serial Discovery</b>.</li>
@@ -154,7 +159,7 @@ together in one message.</li>
 <h2>Connecting to a Device</h2>
 <p>Every device has its own connection and Unit ID. Open a device's connection from its Overview
 card (&#8942; &gt; <b>Edit Device...</b> &gt; <b>Connection Settings...</b>), from the Add Device
-dialog, or with <b>Device Settings</b> on the top bar (Tools &gt; Connection Settings does the
+dialog, or with <b>Device Settings</b> on the top bar (Tools &gt; Device Settings... does the
 same). Choose <b>Modbus TCP</b> or <b>Modbus Serial (RTU/ASCII)</b> under <b>Connection Type</b>,
 fill in the fields for that mode, and click <b>Save Settings</b>. A connected device can't be
 edited - disconnect it first.</p>
@@ -304,9 +309,12 @@ coils/discrete inputs and re-renders immediately.</li>
 <h3>Write bounds</h3>
 <p>For Write Single/Multiple Register functions, two extra columns appear: <b>Min</b> and
 <b>Max</b>. Setting both on a row rejects any write to that register outside the range - a typo
-like an extra zero gets refused instead of sent to the field device. This is enforced on the
-connection itself, so it also protects writes to that same address from the Tags tab or a
-Script, not just from this table. Bounds cover registers. Leave both blank for no limit. A
+like an extra zero gets refused instead of sent to the field device. Bounds belong to the
+device picked in the Device dropdown - another device on the same gateway keeps its own - and are
+enforced for every write to that register on that device, whether it comes from this table, the
+Tags tab or a Script. They're saved with the device, so they're still there after reconnecting or
+restarting, and the Min/Max cells show them when you build the table again. Bounds cover
+registers. Leave both blank for no limit. A
 rejected write shows up as a failed write with a message like <i>"Write rejected: value 10000 at
 address 99 is outside the configured write bound [0, 100]"</i>.</p>
 
@@ -341,7 +349,7 @@ the usual connection dialog) and Unit ID. See <b>Connecting to a Device</b>.</li
 <b>Profile</b> (only profiles that have tags are listed, as "Name (N tags)"), a <b>Device
 name</b> (suggested from the profile), the <b>Connection</b> (starts as the first device's) and
 the <b>Unit ID</b> (next free one on that connection). The card then shows the profile's name.</li>
-<li><b>Find Devices...</b> - a Unit ID sweep over an already connected link (with several links it
+<li><b>Find Unit IDs...</b> - a Unit ID sweep over an already connected link (with several links it
 asks "Sweep Unit IDs on which connection?"). Set the <b>Unit IDs</b> range (1-247, default 1-10)
 and the <b>Timeout per unit</b> (100-3000 ms, default 500), then <b>Start Sweep</b>: each unit is
 asked for holding register 0, and anything that answers - data or a Modbus exception - is listed.
@@ -500,7 +508,7 @@ Read Value cell turns red while the tag is in alarm.</p>
 
 <h3>Logging</h3>
 <p><b>Log to CSV</b> appends a timestamped row for every monitored tag on every poll tick to a
-file you choose. <b>Export CSV</b>/<b>Import CSV</b> save or load the tag list itself (not the
+file you choose, including each tag's device. <b>Export CSV</b>/<b>Import CSV</b> save or load the tag list itself (not the
 live data) - handy for keeping a reusable tag set per device model.</p>
 
 <h3>Resilience while monitoring</h3>
@@ -621,8 +629,8 @@ poll, or isolating every failure to see if they cluster around one address.</p>
 <h3>Show Statistics</h3>
 <p>Opens "Modbus Communication Statistics" for this window (all devices together): total
 requests, successful vs. failed counts, exception responses, which function codes were used, a
-breakdown of exception codes and failure causes, and average/min/max response times over the last
-500 responses - counted across everything logged so far, not just what's currently visible in the
+breakdown of exception codes and failure causes, average/min/max response times over the last
+500 responses, and a <b>Devices</b> list showing whether each device is connected - counted across everything logged so far, not just what's currently visible in the
 table, since old rows fall off after 1000. <b>Reset Statistics</b> zeroes the counters (Clear
 Data and Clear All Logs don't). Useful for confirming a "slow" feeling is real and quantifying
 it.</p>
@@ -872,8 +880,13 @@ or <code>TRUE</code>/<code>FALSE</code>. Inside expressions and comparisons use 
 <p>An expression can mix numbers, <code>"strings"</code>, variables, parentheses, and
 <code>+ - * /</code> (<code>/</code> gives a decimal result). Writing a bare <code>HR 0</code> inside an expression reads that register
 inline (shorthand for <code>READ HR 0</code>); a bare tag name works the same way (e.g.
-<code>LET x = Boiler_Temp + 1</code> does a fresh read of the Boiler_Temp tag's register). The tag's Address is converted with the
-Tags tab's 0-/1-based setting, so it hits the same register the Tags tab does. Tag names
+<code>LET x = Boiler_Temp + 1</code> does a fresh read of the Boiler_Temp tag). A tag reads the way
+the Tags tab shows it: its Count registers decoded with its Format (F32, a <code>_SWAP</code> word
+order, ...), and its Engineering Value if scaling is on - so <code>LET v = V1</code> on an F32 meter
+tag gives the voltage, not a raw word. <code>READ &lt;tag&gt;</code> logs that value, and
+<code>WRITE &lt;tag&gt; = &lt;expr&gt;</code> on a multi-register tag encodes the value with the tag's
+Format and writes all its registers at once. The tag's Address is converted with the Tags tab's
+0-/1-based setting, so it hits the same register the Tags tab does. Tag names
 are case-sensitive; with several devices, the current device's tag of that name is used (else the
 first one found on any device), and the read always goes to the current device. A tag name is only tried if
 the name isn't already a variable you've assigned with <code>LET</code> - a LET variable always
@@ -1021,9 +1034,8 @@ variable, or a literal number.</p>
 WRITE Pump_Enable = ON</pre>
 <p>Assumes a <code>Boiler_Temp</code> (Holding/Input Register) and <code>Pump_Enable</code>
 (Coil) tag already exist on the Tags tab - use <b>Insert Tag</b> to drop the name in without
-retyping it. Reads a tag name like <code>HR 0</code>/<code>COIL 0</code> would (one raw register
-or bit at the tag's address), but stays correct if that tag's address ever changes, since the
-script only cares about the name.</p>
+retyping it. Reads and writes the tag with its own Format and scaling, and stays correct if
+that tag's address ever changes, since the script only cares about the name.</p>
 
 <h4>10. Two meters in one script</h4>
 <pre>DEVICE METER 1
@@ -1059,7 +1071,7 @@ common error messages mean.</p>
 <h2>Scanner</h2>
 <p>Auto-discovers which addresses respond on a device - useful when you don't have a register map
 yet. Works the same way over TCP or serial. With two or more devices, the <b>Device</b> dropdown
-picks which device to scan; the line next to it shows "Scanning: &lt;target&gt; (Unit N)", or that
+picks which device to scan; the line next to it shows "Target: &lt;target&gt; (Unit N)", or that
 the device isn't connected yet.</p>
 
 <p>Pick a <b>Function</b> (Coils/Discrete Inputs/Holding/Input Registers; default Holding
@@ -1123,7 +1135,7 @@ settings. When that happens, prefer whatever the device's own documentation or c
 screen actually says over guessing from the scan alone - the scan proves "a read got a response,"
 not "these are the device's exact settings."</p>
 <p>Matches are listed under "Matches found (select one, then Apply)". Select one and click
-<b>Apply to Connection Settings</b> (or double-click it) to open Connection Settings pre-filled with
+<b>Apply to Device...</b> (or double-click it) to open Connection Settings pre-filled with
 it - for the device you pick, if there are several - then <b>Save Settings</b>. The dialog doesn't
 block the main window; closing it stops the scan.</p>
 <p>This doesn't reuse the app's shared connection - it opens its own for each combination,
@@ -1216,7 +1228,7 @@ alongside the Raw Data tab or an external datasheet while you work.</p>
     ("Multiple Windows", """
 <h2>Multiple Windows</h2>
 <p>One window already handles any number of devices (see <b>Overview</b>), so you rarely need a
-second one. <b>File &gt; New Connection Window</b> still opens a fully independent ModbusLens
+second one. <b>File &gt; New Window</b> still opens a fully independent ModbusLens
 window - its own device list, Overview, Address Table, Profiles, Tags, Raw Data, Trend, Server,
 Script, and Scanner tab - for keeping two unrelated jobs apart.</p>
 <p>Differences from the first window:</p>
@@ -1352,12 +1364,12 @@ address after a type (COIL/DI/HR/IR) isn't a valid number in range.</li>
 
 <h3>A script won't Run (compiles fine, fails immediately)</h3>
 <ul>
-<li><b>Not Connected: "Connect NAME before running a Client-target script."</b> - the device in
+<li><b>Not Connected: "Connect NAME before running a Client Connection script."</b> - the device in
 the Script tab's Device dropdown isn't connected. Connect it first, or switch Target to Server
 (Local) to test against the Server tab instead. If a device disconnects mid-run (or a
 <code>DEVICE</code> line names one that isn't connected) the script stops with <code>NAME is not
 connected</code>.</li>
-<li><b>Server Not Running: "Start the Server tab before running a Server-target script."</b> - the
+<li><b>Server Not Running: "Start the Server tab before running a Server (Local) script."</b> - the
 opposite case (<code>Server is not running - start it on the Server tab first</code> if it stops
 mid-run).</li>
 <li><code>unknown device '...'</code> / <code>DEVICE only applies to a Client Connection
@@ -1368,7 +1380,7 @@ neither a LET variable nor a tag (tag names are case-sensitive; <code>ON</code>/
 aren't values inside an expression - use 1/0).</li>
 <li><code>division by zero</code>, <code>expected a number here, got text</code>, <code>WAIT
 duration exceeds the 86400000ms limit</code>, <code>REPEAT count exceeds the 1000000 limit</code>.</li>
-<li><code>... cannot be written to a client connection</code> - a WRITE targeted a
+<li><code>... is read-only on a real device</code> - a WRITE targeted a
 Discrete Input or Input Register, which are read-only by the Modbus spec.</li>
 <li><code>read failed for Holding Register 12</code> (or <code>read failed for tag '...'</code>) -
 the read inside an expression failed against the live device (or the range was busy); check the
@@ -1394,7 +1406,7 @@ sweep that misses devices on networks that block ICMP.</li>
 </ul>
 <p>The first device found fills in the dialog's own IP/Port fields for its diagnostics. To set a
 found device up as a ModbusLens device, use <b>Diagnostics &gt; Find Devices</b>, whose
-<b>Apply to Connection Settings</b> fills in a device's connection for you.</p>
+<b>Apply to Device...</b> fills in a device's connection for you.</p>
 <p>For ARP Mode, install Npcap with <i>WinPcap compatible mode</i> enabled during setup, then
 restart ModbusLens - see the README's Notes section for the download link and exact install
 options.</p>
