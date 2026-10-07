@@ -817,7 +817,7 @@ section h2 {
 /* display: grid above would otherwise override the hidden attribute, showing every
    platform's panel at once instead of just the selected tab's. */
 .download-grid[hidden] {
-  display: none;
+  display: none !important;
 }
 
 .download-card {
