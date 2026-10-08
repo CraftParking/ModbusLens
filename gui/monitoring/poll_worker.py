@@ -43,7 +43,7 @@ class TagPollWorker(QThread):
     # ModbusClient._set_error and MonitoringManager.tag_error_counts), tx_bytes, rx_bytes (None where nothing
     # went out on the wire for this tag: a cached-block reuse, or a failure before any transaction started)
     tag_result = Signal(dict, object, float, str, str, str, object, object)
-    device_unreachable = Signal()  # Fast LAN Mode: emitted once per cycle, at most
+    device_unreachable = Signal(str)  # Fast LAN Mode: device name; once per link per cycle, at most
     cycle_complete = Signal(int, int)  # failed_count, total_count
 
     BUSY_WAIT_S = 1.5  # how long a block waits for another poller (Address Table, Trend) to finish
@@ -158,7 +158,7 @@ class TagPollWorker(QThread):
                     fast_lan = getattr(client, "fast_lan_mode", self.fast_lan_mode)
                     if fast_lan and not self.device_reachable(client):
                         unreachable_links.add(link)
-                        self.device_unreachable.emit()
+                        self.device_unreachable.emit(str(plan["members"][0][0].get("device") or ""))
                     continue
 
                 if self.shared_cache:

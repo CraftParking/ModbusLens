@@ -605,8 +605,9 @@ class MonitoringManager:
             self.device_stats.setdefault(key, {"ok": 0, "fail": 0})["status"] = status
         self._cycle_device_results = {}
 
-    def _on_poll_device_unreachable(self):
-        self.parent._log("Fast LAN Mode: device unreachable, skipping remaining tags this cycle")
+    def _on_poll_device_unreachable(self, device=""):
+        who = f"{device} unreachable" if device else "device unreachable"
+        self.parent._log(f"Fast LAN Mode: {who}, skipping remaining tags this cycle")
 
     def _retire_worker(self, worker):
         """A poll cycle's own completion signal (cycle_complete) is delivered to the GUI
