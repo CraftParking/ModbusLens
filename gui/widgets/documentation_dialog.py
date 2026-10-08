@@ -77,8 +77,6 @@ and pens - everything
 every device and replaces the device list, but deliberately does not connect for you, so loading a
 file can never be the thing that reaches real equipment. A session saved before devices existed
 loads as one device, "Device 1".</li>
-<li><b>Export Data</b> - not implemented yet; currently shows a placeholder message. Use
-<b>Log to CSV</b> on the Tags or Trend tab for live data logging in the meantime.</li>
 <li><b>Exit</b> - closes this window (saving its settings first).</li>
 </ol>
 <p><b>Your workspace is saved automatically.</b> The first ModbusLens window keeps the same
@@ -100,7 +98,6 @@ rather than switched live.</li>
 <li><b>Device Settings...</b> - the same as <b>Device Settings</b> on the top bar: edits one
 device's connection (with several devices it asks which; a connected device has to be
 disconnected first). See <b>Connecting to a Device</b>.</li>
-<li><b>Data Templates</b> - not implemented yet; currently shows a placeholder message.</li>
 <li><b>IP Configuration</b> - a quick, read-only ipconfig-style view of this machine's own network
 adapters (name, IP, subnet). Useful for figuring out which subnet to scan or connect on before
 you know a device's address.</li>

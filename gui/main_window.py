@@ -392,8 +392,6 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         file_menu.addAction("Save Session", self._save_session)
         file_menu.addAction("Load Session", self._load_session)
         file_menu.addSeparator()
-        file_menu.addAction("Export Data", self._export_data)
-        file_menu.addSeparator()
         file_menu.addAction("Exit", self.close)
 
         # View menu
@@ -414,7 +412,6 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
         tools_menu.addAction("Device Settings...", self._device_settings_clicked)
-        tools_menu.addAction("Data Templates", self._manage_templates)
         tools_menu.addSeparator()
         tools_menu.addAction("IP Configuration", self._show_ip_config)
         tools_menu.addSeparator()
@@ -4163,14 +4160,6 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             "Session loaded: devices, Tags, and Address Table range have been applied.\n\n"
             "Connect the devices to start working with them."
         )
-
-    def _export_data(self):
-        """Export monitoring data."""
-        QMessageBox.information(self, "Export Data", "Data export will be implemented in the next update!")
-
-    def _manage_templates(self):
-        """Manage data templates."""
-        QMessageBox.information(self, "Data Templates", "Template management will be implemented in the next update!")
 
     def _show_ip_config(self):
         """Show a small ipconfig-style dialog listing this machine's network adapters."""
