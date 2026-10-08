@@ -45,7 +45,7 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             software-properties-common git curl ca-certificates gnupg dirmngr binutils \
-            squashfs-tools libfuse2 \
+            squashfs-tools libfuse2 file \
             libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1 \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
