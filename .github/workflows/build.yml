@@ -64,6 +64,10 @@ jobs:
           python3.12 -m venv .venv
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt
+          # build_appimage.py's own docstring: Pillow is needed to extract the icon,
+          # but it's a build-tool dependency, not an app one, so it's not in
+          # requirements.txt.
+          .venv/bin/pip install Pillow
 
       - name: Build AppImage
         run: .venv/bin/python build_appimage.py
