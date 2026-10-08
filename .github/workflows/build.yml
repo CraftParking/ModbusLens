@@ -29,3 +29,47 @@ jobs:
         with:
           name: ModbusLens-unsigned
           path: dist/ModbusLens.exe
+
+  build-appimage:
+    runs-on: ubuntu-latest
+    # Ubuntu 22.04 (not the runner's own newer OS) is the actual build environment --
+    # an AppImage must link against an old-enough glibc to run on any system still
+    # receiving support, and PyInstaller bakes in whatever glibc the build machine
+    # has. Building on something newer (e.g. ubuntu-latest's own 24.04) produced the
+    # exact failure AppImageHub's catalog test caught on the v2.3.0 release: the
+    # bundled libpython required GLIBC_2.38, which 22.04 (and everything older) lacks.
+    container: ubuntu:22.04
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            software-properties-common git curl ca-certificates \
+            libgl1 libegl1 libxkbcommon0 libdbus-1-3 libfontconfig1 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-xkb1 libxrender1 libxi6
+          # 22.04 only ships Python 3.10 -- deadsnakes builds 3.12 against this same
+          # distro's glibc, unlike actions/setup-python's prebuilt interpreter (built
+          # for a newer baseline, defeating the whole point of pinning this container).
+          add-apt-repository -y ppa:deadsnakes/ppa
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            python3.12 python3.12-venv python3.12-dev
+
+      - uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        run: |
+          python3.12 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Build AppImage
+        run: .venv/bin/python build_appimage.py
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ModbusLens-AppImage
+          path: dist/*.AppImage
