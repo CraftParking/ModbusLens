@@ -104,13 +104,13 @@
 
 ### Scripting
 <p align="center">
-  <img src="assets/script.PNG" width="90%">
+  <img src="assets/script.png" width="90%">
 </p>
 <p align="center"><em>A write/wait/read test sequence running against the Server simulator, with the live Variables panel tracking state on the right.</em></p>
 
 ### Scanner
 <p align="center">
-  <img src="assets/Scanner.PNG" width="90%">
+  <img src="assets/scanner.png" width="90%">
 </p>
 <p align="center"><em>Auto-discovering which Holding Register addresses respond on the connected device, in blocks rather than one address at a time.</em></p>
 
