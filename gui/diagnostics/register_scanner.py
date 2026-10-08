@@ -25,6 +25,15 @@ _PALETTE_COLORBLIND = {
     "ok": (QColor("#BFE1F5"), QColor("#003C64"), "responds"),
     "bad": (QColor("#FFE1B3"), QColor("#7A4A00"), "no response"),
 }
+# A third status, for an address that timed out even after narrowing to one at a time (a
+# flaky link's fault, not a confirmed answer either way). Excel's own "Neutral" amber is
+# plenty distinct from the standard palette's pink "bad" -- but the colorblind palette's
+# "bad" is already an orange, which that same amber sits too close to, so colorblind mode
+# gets a plain gray third color instead, unmistakable from both its blue and its orange.
+_TIMEOUT_COLOR_STANDARD = (QColor("#FFEB9C"), QColor("#9C6500"),
+                           "no response (timeout) -- inconclusive, try scanning it again")
+_TIMEOUT_COLOR_COLORBLIND = (QColor("#D9D9D9"), QColor("#404040"),
+                             "no response (timeout) -- inconclusive, try scanning it again")
 
 # Target cell size for working out how many addresses fit one Excel-like "sheet" page at
 # the grid's current on-screen size -- a page's actual columns still stretch evenly to
@@ -105,9 +114,10 @@ class AddressScanWorker(QThread):
 
     range_found = Signal(int, int)  # start, count -- a confirmed contiguous responding run
     range_not_responding = Signal(int)  # address -- a single address confirmed not to respond
+    range_inconclusive = Signal(int)  # address -- timed out even after narrowing to one address
     progress = Signal(int)  # 0-100
     output = Signal(str)
-    scan_complete = Signal(int, int)  # responding_count, probes_issued
+    scan_complete = Signal(int, int, int)  # responding_count, probes_issued, inconclusive_count
 
     def __init__(self, modbus, function_name, start_address, end_address, probe_timeout,
                  reserve_range=None, release_range=None):
@@ -137,6 +147,7 @@ class AddressScanWorker(QThread):
         responding = 0
         probes = 0
         resolved = 0
+        inconclusive = 0
         aborted = False
         try:
             pending = deque()
@@ -203,15 +214,37 @@ class AddressScanWorker(QThread):
                         left = count // 2
                         pending.appendleft((block_start + left, count - left))
                         pending.appendleft((block_start, left))
-                else:
-                    # No exception code at all -- a real timeout/connection failure, not
-                    # the device telling us "not here." Continuing would just probe a
-                    # dead connection.
+                elif self.modbus.last_error_category == "connection":
+                    # The link itself is down (socket/serial closed), not just one slow
+                    # reply -- further probing would just hit a dead connection.
                     self.output.emit(
                         f"Stopped at address {block_start}: {self.modbus.last_error or 'no response'}"
                     )
                     aborted = True
                     break
+                else:
+                    # A genuine I/O timeout with no exception code -- the device didn't
+                    # answer at all, not even with an error. On a flaky link (e.g. an
+                    # RS485 bus with no termination resistor) this happens more on larger
+                    # reads, which take longer to transmit and are more likely to collide
+                    # or get corrupted -- narrowing to smaller reads, exactly like the
+                    # exception-response case, usually gets a clean answer. Only a single
+                    # address that still can't be read after narrowing all the way down
+                    # is given up on, marked inconclusive rather than "confirmed not
+                    # responding" (a real exception) or green (never confirmed) -- and the
+                    # rest of the range keeps scanning instead of the whole scan stopping.
+                    if count == 1:
+                        resolved += 1
+                        inconclusive += 1
+                        self.output.emit(
+                            f"No response from address {block_start} after retries -- "
+                            "marked inconclusive, continuing."
+                        )
+                        self.range_inconclusive.emit(block_start)
+                    else:
+                        left = count // 2
+                        pending.appendleft((block_start + left, count - left))
+                        pending.appendleft((block_start, left))
 
                 self.progress.emit(int(resolved / total * 100) if total else 100)
         finally:
@@ -219,7 +252,7 @@ class AddressScanWorker(QThread):
 
         if not aborted:
             self.output.emit("Scan stopped." if self.should_stop else "Scan complete.")
-        self.scan_complete.emit(responding, probes)
+        self.scan_complete.emit(responding, probes, inconclusive)
 
 
 def _merge_ranges(ranges):
@@ -402,6 +435,24 @@ class RegisterScannerWidget(QWidget):
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
+        # Legend: what the grid's colors mean -- swatches recolor with the colorblind
+        # checkbox, so the legend always matches whatever's actually in the grid.
+        legend_row = QHBoxLayout()
+        legend_row.addWidget(QLabel("Legend:"))
+        self._legend_swatches = {}
+        for status, text in (
+            ("ok", "Responds"),
+            ("bad", "No response"),
+            ("timeout", "Timeout (inconclusive)"),
+        ):
+            swatch = QLabel()
+            swatch.setFixedSize(14, 14)
+            legend_row.addWidget(swatch)
+            legend_row.addWidget(QLabel(text))
+            self._legend_swatches[status] = swatch
+        legend_row.addStretch()
+        layout.addLayout(legend_row)
+
         # Result grid: one cell per scanned address, colored once the scan resolves it --
         # light green responding, light red not -- so the whole range's shape is visible
         # at a glance instead of read line by line out of a log.
@@ -434,6 +485,12 @@ class RegisterScannerWidget(QWidget):
         self._address_status = {}  # protocol address -> "ok"/"bad", for the whole scanned range
         self._pages = []  # [(page_start, page_end), ...] covering the whole scanned range
         self._current_page = 0
+        self._refresh_legend_colors()
+
+    def _refresh_legend_colors(self):
+        for status, swatch in self._legend_swatches.items():
+            bg, fg, _ = self._status_colors(status)
+            swatch.setStyleSheet(f"background-color: {bg.name()}; border: 1px solid {fg.name()}; border-radius: 2px;")
 
     def _cell_width(self):
         return max(40, self._cell_font_px * _GRID_CELL_WIDTH_PER_PX)
@@ -443,7 +500,11 @@ class RegisterScannerWidget(QWidget):
 
     def _status_colors(self, status):
         """(bg, fg, tooltip word) for a cell -- the colorblind-friendly palette swaps in
-        when that checkbox is on, same statuses either way."""
+        when that checkbox is on, same statuses either way. "timeout" (inconclusive after
+        retries) gets its own third color, picked per palette since the standard amber
+        sits too close to the colorblind palette's own orange "bad"."""
+        if status == "timeout":
+            return _TIMEOUT_COLOR_COLORBLIND if self._colorblind else _TIMEOUT_COLOR_STANDARD
         palette = _PALETTE_COLORBLIND if self._colorblind else _PALETTE_STANDARD
         c = self.parent_window._colors()
         return palette.get(status, (QColor(c["surface"]), QColor(c["text"]), "not yet resolved"))
@@ -465,6 +526,7 @@ class RegisterScannerWidget(QWidget):
 
     def _on_colorblind_toggled(self, checked):
         self._colorblind = checked
+        self._refresh_legend_colors()
         if self._pages:
             self._show_page(self._current_page)  # recolor what's on screen, same layout
 
@@ -696,6 +758,7 @@ class RegisterScannerWidget(QWidget):
         )
         self.address_worker.range_found.connect(self._on_address_range_found)
         self.address_worker.range_not_responding.connect(self._on_address_range_not_responding)
+        self.address_worker.range_inconclusive.connect(self._on_address_range_inconclusive)
         self.address_worker.progress.connect(self.progress_bar.setValue)
         self.address_worker.output.connect(self._log)
         self.address_worker.scan_complete.connect(self._on_address_scan_complete)
@@ -712,13 +775,28 @@ class RegisterScannerWidget(QWidget):
     def _on_address_range_not_responding(self, address):
         self._color_grid_range(address, 1, responding=False)
 
-    def _on_address_scan_complete(self, responding_count, probes_issued):
+    def _on_address_range_inconclusive(self, address):
+        self._address_status[address] = "timeout"
+        item = self._grid_items.get(address)
+        if item is None:
+            return  # resolved address is on a page that isn't the one on screen
+        bg, fg, tip = self._status_colors("timeout")
+        item.setBackground(bg)
+        item.setForeground(fg)
+        item.setToolTip(f"Protocol address {address} -- {tip}")
+
+    def _on_address_scan_complete(self, responding_count, probes_issued, inconclusive_count):
         merged = _merge_ranges(self._found_ranges)
         if merged:
             summary = ", ".join(f"{s}" if s == e else f"{s}-{e}" for s, e in merged)
             self._log(f"Summary: {responding_count} responding address(es): {summary}")
         else:
             self._log("Summary: no responding addresses found in range.")
+        if inconclusive_count:
+            self._log(
+                f"{inconclusive_count} address(es) timed out even after retries (amber in the "
+                "grid) -- likely a flaky link; try scanning that narrow range again."
+            )
         self._log(f"({probes_issued} request(s) issued)")
         self.progress_bar.setVisible(False)
         self.addr_stop_btn.setEnabled(False)
