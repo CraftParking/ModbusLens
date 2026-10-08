@@ -699,7 +699,9 @@ section h2 {
 }
 
 .shot-preview .panel-card {
-  max-width: 760px;
+  width: 60vw;
+  max-width: 1100px;
+  min-width: 320px;
   margin: 0 auto;
 }
 
@@ -760,6 +762,11 @@ section h2 {
 
 .shot-stack img:hover {
   opacity: 0.85;
+}
+
+.shot-stack figure.panel-card.is-current {
+  border-color: var(--accent);
+  border-width: 2px;
 }
 
 /* ---------------- Lightbox ---------------- */
@@ -942,6 +949,11 @@ footer {
 
   .shot-stack {
     grid-template-columns: 1fr;
+  }
+
+  .shot-preview .panel-card {
+    width: 100%;
+    min-width: 0;
   }
 
   .download-grid {

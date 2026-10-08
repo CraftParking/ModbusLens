@@ -467,6 +467,7 @@ Download AppImage
   // timer, so it doesn't immediately flip away from what was just picked); clicking
   // the preview itself opens the lightbox like any other shot.
   var shotThumbs = Array.prototype.slice.call(document.querySelectorAll('#shot-stack img'));
+  var shotFigures = shotThumbs.map(function (thumb) { return thumb.closest('figure'); });
   var previewImg = document.getElementById('shot-preview-img');
   var previewDots = document.getElementById('shot-preview-dots');
   if (shotThumbs.length && previewImg && previewDots) {
@@ -491,6 +492,9 @@ Download AppImage
         previewImg.style.opacity = '1';
       }, 150);
       dots.forEach(function (dot, j) { dot.classList.toggle('is-active', j === i); });
+      shotFigures.forEach(function (fig, j) {
+        if (fig) fig.classList.toggle('is-current', j === i);
+      });
       if (restart) resetShotTimer();
     }
 
@@ -506,6 +510,7 @@ Download AppImage
     });
 
     dots[0].classList.add('is-active');  // matches the preview's initial markup -- no fade needed yet
+    if (shotFigures[0]) shotFigures[0].classList.add('is-current');
     resetShotTimer();
   }
 
