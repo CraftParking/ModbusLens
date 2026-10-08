@@ -19,6 +19,8 @@ import json
 import os
 import sys
 
+import theme
+
 from PySide6.QtWidgets import QComboBox, QDialog, QInputDialog, QLineEdit, QMenu, QMessageBox
 
 from app_paths import app_data_dir
@@ -282,8 +284,8 @@ class DeviceManagerMixin:
         # Top bar: Connect All / Disconnect All / Device Settings (of the active device).
         self.connect_btn.setEnabled(any(d["name"] not in self._connected_devices for d in self.tag_devices))
         self.disconnect_btn.setEnabled(bool(self._connected_devices))
-        self.settings_btn.setEnabled(any(d["name"] not in self._connected_devices for d in self.tag_devices))
         selected = self._status_bar_selection()
+        self.settings_btn.setEnabled(bool(selected))
         if hasattr(self, "connect_selected_btn"):
             self.connect_selected_btn.setEnabled(bool(selected - self._connected_devices))
         if hasattr(self, "disconnect_selected_btn"):
@@ -291,6 +293,29 @@ class DeviceManagerMixin:
         if hasattr(self, "tag_start_monitoring_btn"):
             self.tag_start_monitoring_btn.setEnabled(any_connected and not self.monitoring_active)
             self.tag_stop_monitoring_btn.setEnabled(self.monitoring_active)
+        if getattr(self, "_pending_theme_mode", None) and not any_connected:
+            # The interlock: a theme switch queued while something was connected
+            # (_set_theme_mode) only asks to restart once every device is disconnected,
+            # manually -- never forced closed to apply the switch, and never applied
+            # without asking first.
+            mode = self._pending_theme_mode
+            self._pending_theme_mode = None
+            reply = QMessageBox.question(
+                self, "Restart Required",
+                f"Every device is now disconnected. Restart ModbusLens now to apply the "
+                f"{mode.title()} theme?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+            )
+            if reply == QMessageBox.Yes:
+                self._restart_application()
+            else:
+                # Declining leaves the app running on its current (unchanged) theme, so
+                # the saved preference and the menu's checkmark must revert to match it --
+                # otherwise it looks stuck on the never-applied mode and re-picking it
+                # later does nothing (it already matches the saved preference).
+                theme.save_mode(self._theme_mode)
+                if hasattr(self, "_theme_actions"):
+                    self._theme_actions[self._theme_mode].setChecked(True)
 
     # ---------------------------------------------------------------- connect --
     def _connect_device(self, name, interactive=True):

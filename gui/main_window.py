@@ -248,6 +248,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         # custom-colored table/dialog) use matching colors instead of hardcoded light-only hex.
         self._theme_mode = theme.resolve_mode(theme.load_saved_mode(), QApplication.instance())
         self._c = theme.get_colors(self._theme_mode)
+        self._pending_theme_mode = None  # a theme switch queued while a device was connected
 
         self.modbus = None
         self.connection_history = []
@@ -941,6 +942,27 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
     def _set_theme_mode(self, mode):
         previous_mode = theme.load_saved_mode()
         if mode == previous_mode:
+            return
+
+        if self._any_device_connected():
+            # Don't force-close a live connection just to restart for a theme change --
+            # queue it instead; _refresh_connection_controls() fires the actual restart
+            # once every device is (manually) disconnected.
+            if mode == self._theme_mode:
+                # Picking the theme that's actually running right now cancels an
+                # earlier pending switch instead of queuing a now-pointless restart.
+                theme.save_mode(mode)
+                self._pending_theme_mode = None
+                self._log(f"Theme switch to {previous_mode} cancelled -- still on {mode}")
+                return
+            theme.save_mode(mode)
+            self._pending_theme_mode = mode
+            self._log(f"Theme switch to {mode} queued -- restarting once every device is disconnected")
+            QMessageBox.information(
+                self, "Restart Required",
+                f"ModbusLens will switch to the {mode.title()} theme once every device is "
+                "disconnected -- it needs to restart to apply this, and won't interrupt an "
+                "active connection to do it.")
             return
 
         reply = QMessageBox.question(
