@@ -88,6 +88,7 @@ and network diagnostics - in one tool.</p>
 <ul>
 <li>Overview tab: one card per device - live status, success rate, latency and pinned values</li>
 <li>Each device has its own connection and Unit ID; devices behind one gateway share one link</li>
+<li>Select devices in the top bar for Device Settings and Connect/Disconnect Selected, or check a card to Remove Selected</li>
 <li>Tags, Trend pens and Raw Data are per device, with device tabs and filters</li>
 <li>Address Table, Script, Scanner and diagnostics each pick their own device</li>
 </ul>
@@ -223,7 +224,8 @@ and network diagnostics - in one tool.</p>
 <h3>Register scanner</h3>
 <ul>
 <li>Auto-discovers which addresses respond for Coils, Discrete, Holding, or Input Registers</li>
-<li>Works the same way over TCP or serial</li>
+<li>Results shown as a color-coded grid (green = responds, red = no response), paginated like spreadsheet sheets for large ranges (coming in v2.4.0)</li>
+<li>Adjustable text size and a colorblind-friendly color option (coming in v2.4.0)</li>
 <li>Create Tags From Scan - turn responding addresses into Tags-tab rows in one click (coming in v2.4.0)</li>
 </ul>
 </article>
@@ -232,7 +234,7 @@ and network diagnostics - in one tool.</p>
 <p class="eyebrow">INTERFACE</p>
 <h3>Built for the job</h3>
 <ul>
-<li>Light / Dark / Follow System theme</li>
+<li>Light / Dark / Follow System theme - switching never force-disconnects a live device, it queues and asks to restart once everything's disconnected (coming in v2.4.0)</li>
 <li>Color-coded logs, and Ctrl+scroll zoom on logs and tables</li>
 <li>Built-in update checker against GitHub Releases</li>
 </ul>

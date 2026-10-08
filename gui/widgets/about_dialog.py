@@ -195,37 +195,31 @@ CHANGELOG_HTML = """
 <h3>v2.4.0 (upcoming)</h3>
 <p><u>New</u></p>
 <ul>
-<li>Multiple devices in one window - each device has its own name, connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link, so several meters behind one gateway or on one RS-485 line just work</li>
-<li>Overview tab (first tab) - a live card per device: status (Online, Device exception, No response, Reconnecting, Paused...), success rate, latency, last error and pinned values, with Connect/Disconnect, Open Tags, Pin Values and Pause; Add Device, Add from Profile, Find Unit IDs (Unit ID sweep) and Remove All Devices</li>
-<li>Top bar shows every device's status, with Device Settings, Connect All and Disconnect All</li>
+<li>Multiple devices in one window - each with its own name, connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link, so several meters behind one gateway or on one RS-485 line just work</li>
+<li>Overview tab - a live status card per device (status, success rate, latency, pinned values), with Add Device, Add from Profile, Find Unit IDs (Unit ID sweep), and Remove All or Remove Selected Devices (a checkbox per card)</li>
+<li>Top bar: select one or more devices there (click to highlight, separate from the Overview tab) for Device Settings, Connect Selected and Disconnect Selected, alongside the existing Connect All/Disconnect All</li>
 <li>Device dropdowns in Address Table, Script, Scanner and Diagnostic Functions - each tool works with its own device; scripts can switch device mid-run with a DEVICE line</li>
-<li>Devices in Tags - a Device column and per-device tabs; the same addresses can be used on every device; Import CSV on a device's tab imports into that device only; Write All and Remove All Tags follow the open tab; devices travel in Sessions and Tags CSVs</li>
-<li>Trend pages - up to 10 graphs, each with its own 20 pens, all polled while the trend runs; pens read from their own tag's device and show it in the legend; a bigger graph area with View Range on one row and Hide Stats in the tab</li>
-<li>Raw Data Device column and device filter; the Frame Viewer decodes each row with its device's framing; tag pickers (Trend pens, Script Add/Insert Tag) show each tag's device</li>
-<li>Tags Log to CSV and Raw Data Show Statistics include the device; write confirmations name each tag's device; File &gt; New Connection Window is now File &gt; New Window and Tools &gt; Connection Settings is now Tools &gt; Device Settings</li>
-<li>Calculated tags - a Calc mode in the Tags table: an expression over other tags' values (P1 + P2 + P3, V1 * I1 / 1000, or [METER 2].P1 for another device), worked out after every poll cycle with no extra bus traffic, with alarms, Trend pens, Overview pins, CSV logging and Script reads like any tag</li>
-<li>Workspace auto-save - devices, Tags, the Address Table range and Trend pages are saved every minute and on close, and restored on the next start (Save Session now includes Trend pages too)</li>
-<li>Write bounds (Min/Max) per device - each device on a shared gateway keeps its own limits, saved with the device so they survive reconnects and restarts</li>
-<li>Script tag names read and write like the Tags tab - Count, Format (F32, *_SWAP...) and scaling - so a meter's F32 tag gives its real value</li>
-<li>Address Table live monitoring and Tags monitoring run at the same time - they take turns on the connection instead of stopping each other</li>
-<li>TCP Framing option - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket</li>
-<li>Gateway mode (Server tab) - relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response, with a Gateway Activity log showing every relayed request and result</li>
-<li>Bit View - a live, per-bit breakdown of a register tag's raw value, each bit individually named; a Bool-format tag can expand its bits inline in the Tags table, with single-bit read-modify-write for Holding Registers</li>
-<li>Create Tags From Scan - generate Tags-tab rows directly from a Scanner result, one per responding address</li>
-<li>Profiles tab laid out like the other tabs, with a Profile Library box and Local/Community Profiles boxes</li>
-<li>Documentation rewritten for multiple devices, with every tool's options, limits and messages; the website docs gained the Overview topic</li>
+<li>Devices in Tags - a Device column and per-device tabs, per-device CSV import, and devices travel in Sessions and Tags CSVs; Trend pens and Raw Data gained the same per-device awareness</li>
+<li>Trend pages - up to 10 graphs, each with its own 20 pens, all polled while the trend runs</li>
+<li>Calculated tags - a Calc mode in the Tags table: an expression over other tags' values (P1 + P2 + P3, V1 * I1 / 1000, or [METER 2].P1 for another device), worked out after every poll cycle with no extra bus traffic, usable anywhere a tag is (alarms, Trend, Overview pins, CSV, Script)</li>
+<li>Workspace auto-save, and per-device write bounds (Min/Max) that survive reconnects and restarts</li>
+<li>Script tag names read and write like the Tags tab - Count, Format (F32, *_SWAP...) and scaling</li>
+<li>Address Table live monitoring and Tags monitoring run at the same time instead of stopping each other</li>
+<li>TCP Framing option - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH)</li>
+<li>Gateway mode (Server tab) - relay real requests to a real downstream serial device and return its actual response</li>
+<li>Bit View - a live, per-bit breakdown of a register tag's raw value, with inline bit expansion and single-bit read-modify-write</li>
+<li>Scanner reworked: an Excel-style color-coded results grid (light green responds, light red doesn't) replaces the text log, each cell labeled with its address; a large range splits into spreadsheet-style page tabs sized to fit the screen; adjustable text size and a colorblind-friendly color option; Create Tags From Scan turns a result straight into Tags rows</li>
+<li>Theme switching (View &gt; Theme) no longer force-disconnects a live device to restart - it queues the switch and asks "Restart now?" only once every device is manually disconnected, reverting cleanly if you say no</li>
+<li>Profiles tab relaid out like the other tabs; documentation rewritten for multiple devices</li>
 </ul>
 <p><u>Fixed</u></p>
 <ul>
-<li>Replies on a shared line are matched to their request - on an RTU-over-TCP gateway (or RS-485 bus) shared with another master, a reply meant for that master (e.g. a 30-register reply to a 2-register read) was accepted as this request's answer and shown as Success with the wrong data; it's now skipped, stale input is discarded before each request, and the Raw Data RX column shows only the matching reply</li>
-<li>Auto-reconnect now actually notices a dropped TCP link - the connection stayed flagged as connected after the peer reset it, so the watchdog never retried and every later request failed</li>
+<li>Replies on a shared line are matched to their request - on an RTU-over-TCP gateway (or RS-485 bus) shared with another master, a reply meant for that master was previously accepted as this request's answer and shown as Success with the wrong data</li>
+<li>Auto-reconnect now actually notices a dropped TCP link - the connection stayed flagged as connected after the peer reset it, so the watchdog never retried</li>
 <li>Script tag-name reads/writes hit the right register - a tag's 1-based Address was sent as the raw protocol offset, one register too high</li>
-<li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer (which could silently shift a tag's Address); the wheel now just scrolls - same for Trend's pen grid</li>
-<li>Raw Data Frame Viewer no longer flickers or pops its TX/RX tables out as empty "ModbusLens" windows once the table reaches 1000 rows, and the selection no longer rolls onto each new row</li>
-<li>A timeout on a standard Modbus TCP connection whose reply is really raw RTU now says so, pointing at Device Settings &gt; Framing: RTU over TCP</li>
-<li>Illegal Data Address explainer lists one more cause: a read covering only half of a 32-bit value, which many energy meters refuse</li>
-<li>Share to Community works again - submissions were being rejected with "Submission Failed" after the submission form's hosting plan changed</li>
-<li>Share to Community failures explain themselves in plain language (connection problem, submission limit reached, or service temporarily unavailable) instead of showing the submission service's raw error; the raw text is still under Show Details and in System Logs</li>
+<li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer - same for Trend's pen grid</li>
+<li>Raw Data Frame Viewer no longer flickers or pops its TX/RX tables out as empty windows past 1000 rows</li>
+<li>Share to Community works again, with clearer failure messages instead of the submission service's raw error</li>
 </ul>
 
 <h3>v2.3.0</h3>

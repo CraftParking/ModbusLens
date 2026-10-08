@@ -4,9 +4,9 @@ from collections import deque
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QCheckBox,
     QComboBox, QSpinBox, QProgressBar, QGroupBox, QDialog, QListWidget, QListWidgetItem,
-    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
+    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, QTabBar,
 )
 
 from theme import apply_dropdown_delegate
@@ -15,14 +15,26 @@ from widgets.device_selector import DeviceSelector
 # Excel's own "Good"/"Bad" conditional-format colors -- the scan result grid deliberately
 # looks like a spreadsheet regardless of the app's light/dark theme, the same way Excel's
 # own red/green never changes with Windows' theme.
-_GRID_RESPONDING_BG = QColor("#C6EFCE")
-_GRID_RESPONDING_FG = QColor("#006100")
-_GRID_NOT_RESPONDING_BG = QColor("#FFC7CE")
-_GRID_NOT_RESPONDING_FG = QColor("#9C0006")
+_PALETTE_STANDARD = {
+    "ok": (QColor("#C6EFCE"), QColor("#006100"), "responds"),
+    "bad": (QColor("#FFC7CE"), QColor("#9C0006"), "no response"),
+}
+# Blue/orange instead of green/red -- the classic colorblind-safe substitute (still
+# distinguishable under deuteranopia, protanopia and tritanopia, unlike red/green).
+_PALETTE_COLORBLIND = {
+    "ok": (QColor("#BFE1F5"), QColor("#003C64"), "responds"),
+    "bad": (QColor("#FFE1B3"), QColor("#7A4A00"), "no response"),
+}
 
-# Addresses per row -- the classic hex-dump width, a familiar, reasonably square layout
-# for the handful to tens of thousands of cells a scan range can produce.
-_GRID_COLUMNS = 16
+# Target cell size for working out how many addresses fit one Excel-like "sheet" page at
+# the grid's current on-screen size -- a page's actual columns still stretch evenly to
+# fill the width (QHeaderView.Stretch); this only decides where to split pages. Both grow
+# with the user's chosen text size so a page's cells stay readable at that size.
+_GRID_CELL_WIDTH_PER_PX = 6  # roughly how many px of cell width one px of font needs
+_GRID_ROW_HEIGHT_PADDING = 12
+_GRID_MIN_COLUMNS = 4
+_GRID_MIN_ROWS = 3
+_GRID_DEFAULT_FONT_PX = 10
 
 # Floor between any two Modbus requests the scanner issues, regardless of how short a
 # probe timeout is configured -- mirrors the Script tab's MIN_STEP_INTERVAL_MS and the
@@ -287,6 +299,9 @@ class RegisterScannerWidget(QWidget):
         self.parent_window = parent
         self.address_worker = None
         self._found_ranges = []
+        self._cell_font_px = _GRID_DEFAULT_FONT_PX
+        self._colorblind = False
+        self._scan_range = None  # (start, end) of the last prepared/run scan, for repagination
         self._setup_ui()
         self.refresh_connection_state()
 
@@ -337,6 +352,22 @@ class RegisterScannerWidget(QWidget):
         self.addr_timeout_input.setRange(50, 5000)
         self.addr_timeout_input.setValue(300)
         row2.addWidget(self.addr_timeout_input)
+
+        row2.addWidget(QLabel("Text size (px):"))
+        self.grid_font_size_input = QSpinBox()
+        self.grid_font_size_input.setStyleSheet(self.parent_window._get_input_style())
+        self.grid_font_size_input.setRange(8, 32)
+        self.grid_font_size_input.setValue(self._cell_font_px)
+        self.grid_font_size_input.setToolTip("Grid text size -- cell size grows to match, for readability")
+        self.grid_font_size_input.valueChanged.connect(self._on_grid_font_size_changed)
+        row2.addWidget(self.grid_font_size_input)
+
+        self.colorblind_checkbox = QCheckBox("Colorblind-friendly colors")
+        self.colorblind_checkbox.setToolTip(
+            "Blue/orange instead of green/red, distinguishable under color vision deficiency"
+        )
+        self.colorblind_checkbox.toggled.connect(self._on_colorblind_toggled)
+        row2.addWidget(self.colorblind_checkbox)
         row2.addStretch()
 
         self.addr_start_btn = QPushButton("Start Scan")
@@ -387,60 +418,157 @@ class RegisterScannerWidget(QWidget):
                 border: 1px solid {c["border"]};
                 gridline-color: {c["border"]};
                 font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 10px;
+                font-size: {self._cell_font_px}px;
             }}
         """)
         layout.addWidget(self.result_grid, 1)
 
-        self._grid_items = {}  # protocol address -> QTableWidgetItem, while a scan's grid is up
+        # Page strip: one tab per "sheet" of addresses, Excel-style -- as many as fit the
+        # grid's current on-screen size, labeled with that page's own address range.
+        self.page_tabbar = QTabBar()
+        self.page_tabbar.setExpanding(False)
+        self.page_tabbar.currentChanged.connect(self._on_page_tab_changed)
+        layout.addWidget(self.page_tabbar)
 
-    def _build_result_grid(self, start, end):
-        """Size the grid to the range about to be scanned, one cell per address, all
-        neutral until the scan resolves them green/red. Rebuilt fresh per scan (rather
-        than reused) since the range/shape can change between runs."""
-        total = end - start + 1
-        cols = min(_GRID_COLUMNS, total)
-        rows = math.ceil(total / cols)
-        one_based = getattr(self.parent_window, "tag_address_one_based", True)
+        self._grid_items = {}  # protocol address -> QTableWidgetItem, for the page on screen
+        self._address_status = {}  # protocol address -> "ok"/"bad", for the whole scanned range
+        self._pages = []  # [(page_start, page_end), ...] covering the whole scanned range
+        self._current_page = 0
+
+    def _cell_width(self):
+        return max(40, self._cell_font_px * _GRID_CELL_WIDTH_PER_PX)
+
+    def _row_height(self):
+        return self._cell_font_px + _GRID_ROW_HEIGHT_PADDING
+
+    def _status_colors(self, status):
+        """(bg, fg, tooltip word) for a cell -- the colorblind-friendly palette swaps in
+        when that checkbox is on, same statuses either way."""
+        palette = _PALETTE_COLORBLIND if self._colorblind else _PALETTE_STANDARD
         c = self.parent_window._colors()
-        neutral_bg = QColor(c["surface"])
-        neutral_fg = QColor(c["text"])
+        return palette.get(status, (QColor(c["surface"]), QColor(c["text"]), "not yet resolved"))
+
+    def _on_grid_font_size_changed(self, value):
+        self._cell_font_px = value
+        c = self.parent_window._colors()
+        self.result_grid.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {c["surface"]};
+                color: {c["text"]};
+                border: 1px solid {c["border"]};
+                gridline-color: {c["border"]};
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: {value}px;
+            }}
+        """)
+        self._repaginate()
+
+    def _on_colorblind_toggled(self, checked):
+        self._colorblind = checked
+        if self._pages:
+            self._show_page(self._current_page)  # recolor what's on screen, same layout
+
+    def _repaginate(self):
+        """Re-split the current scan's range into pages sized for the (changed) text
+        size, without losing already-resolved results or re-running the scan."""
+        if self._scan_range is not None:
+            self._prepare_scan_pages(*self._scan_range, reset=False)
+
+    def _prepare_scan_pages(self, start, end, reset=True):
+        """Split [start, end] into however many addresses fit one page at the grid's
+        current on-screen size and text size, Excel-sheet style. `reset` clears earlier
+        results for a genuinely new scan; a text-size change instead repaginates the same
+        results (reset=False), trying to keep showing the same address range."""
+        self._scan_range = (start, end)
+        viewport = self.result_grid.viewport()
+        cols = max(_GRID_MIN_COLUMNS, viewport.width() // self._cell_width())
+        rows = max(_GRID_MIN_ROWS, viewport.height() // self._row_height())
+        per_page = cols * rows
+
+        keep_address = None
+        if not reset and self._pages and 0 <= self._current_page < len(self._pages):
+            keep_address = self._pages[self._current_page][0]
+        else:
+            self._address_status = {}
+
+        self._pages = []
+        page_start = start
+        while page_start <= end:
+            page_end = min(end, page_start + per_page - 1)
+            self._pages.append((page_start, page_end))
+            page_start = page_end + 1
+        self._page_columns = cols
+
+        self.page_tabbar.blockSignals(True)
+        while self.page_tabbar.count():
+            self.page_tabbar.removeTab(0)
+        for page_start, page_end in self._pages:
+            label = f"{page_start}" if page_start == page_end else f"{page_start}-{page_end}"
+            self.page_tabbar.addTab(label)
+        self.page_tabbar.blockSignals(False)
+
+        target_index = 0
+        if keep_address is not None:
+            for i, (page_start, page_end) in enumerate(self._pages):
+                if page_start <= keep_address <= page_end:
+                    target_index = i
+                    break
+        self._current_page = target_index
+        self.page_tabbar.setCurrentIndex(target_index)
+        self._show_page(target_index)
+
+    def _on_page_tab_changed(self, index):
+        if index >= 0:
+            self._show_page(index)
+
+    def _show_page(self, index):
+        """(Re)populate the grid with one page's addresses, colored from whatever's
+        already resolved in _address_status -- a page keeps showing earlier results
+        correctly when the user flips back to it mid- or post-scan."""
+        if not (0 <= index < len(self._pages)):
+            return
+        self._current_page = index
+        page_start, page_end = self._pages[index]
+        cols = getattr(self, "_page_columns", _GRID_MIN_COLUMNS)
+        total = page_end - page_start + 1
+        cols = min(cols, total)
+        rows = math.ceil(total / cols)
 
         table = self.result_grid
         table.setUpdatesEnabled(False)
         try:
-            table.setRowCount(0)  # drop any stale items from a previous, differently-shaped scan
+            table.setRowCount(0)  # drop stale items from whichever page was shown before
             table.setColumnCount(cols)
             table.setRowCount(rows)
             self._grid_items = {}
-            address = start
+            address = page_start
+            row_height = self._row_height()
             for row in range(rows):
                 for col in range(cols):
-                    if address > end:
+                    if address > page_end:
                         break
-                    item = QTableWidgetItem(str(address + (1 if one_based else 0)))
+                    bg, fg, tip = self._status_colors(self._address_status.get(address))
+                    item = QTableWidgetItem(str(address))
                     item.setTextAlignment(Qt.AlignCenter)
-                    item.setBackground(neutral_bg)
-                    item.setForeground(neutral_fg)
-                    item.setToolTip(f"Protocol address {address} (not yet resolved)")
+                    item.setBackground(bg)
+                    item.setForeground(fg)
+                    item.setToolTip(f"Protocol address {address} -- {tip}")
                     table.setItem(row, col, item)
                     self._grid_items[address] = item
                     address += 1
-            # Columns stretch to fill the tab's width (set on the header once in
-            # _setup_ui); only row height needs setting here, per rebuild.
             for row in range(rows):
-                table.setRowHeight(row, 22)
+                table.setRowHeight(row, row_height)
         finally:
             table.setUpdatesEnabled(True)
 
     def _color_grid_range(self, start, count, responding):
-        bg = _GRID_RESPONDING_BG if responding else _GRID_NOT_RESPONDING_BG
-        fg = _GRID_RESPONDING_FG if responding else _GRID_NOT_RESPONDING_FG
-        label = "responds" if responding else "no response"
+        status = "ok" if responding else "bad"
+        bg, fg, label = self._status_colors(status)
         for address in range(start, start + count):
+            self._address_status[address] = status
             item = self._grid_items.get(address)
             if item is None:
-                continue
+                continue  # resolved address is on a page that isn't the one on screen
             item.setBackground(bg)
             item.setForeground(fg)
             item.setToolTip(f"Protocol address {address} -- {label}")
@@ -453,11 +581,18 @@ class RegisterScannerWidget(QWidget):
             self.parent_window._log(message)
 
     def _clear_results(self):
-        """Clear the result grid and any ranges the last scan found."""
+        """Clear the result grid, its page tabs, and any ranges the last scan found."""
         self._found_ranges = []
         self.result_grid.setRowCount(0)
         self.result_grid.setColumnCount(0)
         self._grid_items = {}
+        self._address_status = {}
+        self._pages = []
+        self._scan_range = None
+        self.page_tabbar.blockSignals(True)
+        while self.page_tabbar.count():
+            self.page_tabbar.removeTab(0)
+        self.page_tabbar.blockSignals(False)
         self.create_tags_btn.setEnabled(False)
 
     def _modbus(self):
@@ -540,7 +675,7 @@ class RegisterScannerWidget(QWidget):
 
         self._pause_shared_connection_monitoring()
         self._found_ranges = []
-        self._build_result_grid(start, end)
+        self._prepare_scan_pages(start, end)
         self._log(
             f"Scanning {self.addr_function_combo.currentText()} {start}-{end}..."
         )

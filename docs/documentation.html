@@ -162,7 +162,10 @@ way to keep several setups or move one to another PC.</p>
 <li><b>Theme</b> - a submenu with three options: <b>Light</b>, <b>Dark</b>, and
 <b>Follow System</b> (matches your OS setting). Only one is active at a time. Picking a different
 one asks to confirm, then restarts ModbusLens to apply it - the theme is set once at startup
-rather than switched live.</li>
+rather than switched live. If any device is connected, it doesn't force-disconnect to restart:
+the switch is queued (the menu shows your new choice right away) and ModbusLens asks "Restart now
+to apply the &lt;theme&gt; theme?" only once every device has been manually disconnected -
+answering No just leaves it running on the current theme until you restart some other way.</li>
 </ol>
 
 <h3>Tools menu</h3>
@@ -212,12 +215,15 @@ that checks GitHub Releases for a newer version.</li>
 
 <h3>Top bar (below the menu bar)</h3>
 <p>Always visible: one <b>pill per device</b> - a status dot, the device's name and its status
-word (Online, Disconnected, Reconnecting..., No response, ...). Click a pill to jump to that
-device's card on the Overview (it's briefly highlighted). On the right:</p>
+word (Online, Disconnected, Reconnecting..., No response, ...). <b>Click a pill to select it</b> -
+it highlights there, purely local to the top bar (it doesn't switch tabs or jump to the Overview).
+Click again to deselect; click more than one to select several at once. On the right:</p>
 <ul>
-<li><b>Device Settings</b> - edit a device's connection. With one device it opens straight away;
-with several it shows a menu of "Name -- target, Unit N" (connected devices are greyed out -
-disconnect first).</li>
+<li><b>Device Settings</b> - edit a device's connection. Greyed out until something's selected.
+With exactly one device selected it opens straight away; with none or several selected it shows a
+menu of "Name -- target, Unit N" instead (connected devices are greyed out - disconnect first).</li>
+<li><b>Connect Selected</b> / <b>Disconnect Selected</b> - act only on whatever's currently
+highlighted in the top bar.</li>
 <li><b>Connect All</b> - connects every device that isn't connected; any that fail are listed
 together in one message.</li>
 <li><b>Disconnect All</b> - disconnects every device (and stops monitoring).</li>
@@ -426,10 +432,14 @@ asked for holding register 0, and anything that answers - data or a Modbus excep
 Units already used on that link show greyed out as "(already: NAME)". Tick the ones you want and
 click <b>Add Selected as Devices</b>; they're named "Unit N" (rename them later). Stop monitoring
 first so the sweep has the line to itself, and keep the range small on a busy shared bus.</li>
+<li><b>Remove Selected</b> - each card has a small checkbox by its name; check the ones you want gone
+and click <b>Remove Selected</b> for one Keep Tags / Delete Their Tags Too confirmation covering
+all of them (same choice the single-device remove offers, just for a batch). Checking every
+device just runs Remove All Devices instead.</li>
 <li><b>Remove All Devices</b> - after a confirmation that shows how many devices and tags will go,
-disconnects and deletes every device and all their tags, alarms, scaling and pinned values, and
-starts again with one blank "Device 1" (Unit 1) on the first device's connection settings. Export
-CSV or Save Session first if you might need them.</li>
+disconnects and deletes every device and all their tags, alarms, scaling and pinned values,
+leaving zero devices - add one back from the Overview tab when you're ready. Export CSV or Save
+Session first if you might need them.</li>
 </ul>
 
 <h3>Device cards</h3>
@@ -1009,9 +1019,9 @@ the script to Server (Local), and run it exactly as it would run against the rea
 (Local) script can write all four types (it's simulating the device itself), uses the server's
 0-999 addresses, and doesn't work while the Server tab is in Gateway mode.</p>
 <p>With two or more devices, a <b>Device</b> dropdown next to Target picks which device a Client
-Connection script starts on (it's disabled for Server (Local)); a <code>DEVICE</code> line switches
-device mid-script, so one script can work with several meters. The device must be connected to
-Run.</p>
+Connection script starts on - it's hidden entirely while Target is Server (Local), since there's
+no device to pick in that mode; a <code>DEVICE</code> line switches device mid-script, so one
+script can work with several meters. The device must be connected to Run.</p>
 
 <h3>Variables panel</h3>
 <p>The panel on the right lists every variable your script assigns with <code>LET</code>, updating
@@ -1172,18 +1182,28 @@ the device isn't connected yet.</p>
 <p>Pick a <b>Function</b> (Coils/Discrete Inputs/Holding/Input Registers; default Holding
 Registers), a <b>Start</b>/<b>End</b> address (raw 0-based offsets, 0-65535; default 0-999) and a
 <b>Probe timeout</b> (50-5000 ms, default 300), then <b>Start Scan</b>; <b>Stop</b> ends it early
-and <b>Clear Results</b> empties the output. Rather than checking one address at a time, it
-probes the largest block the function allows first (125 registers or 2000 coils/inputs, with a
-short pause between probes) - a clean read means every address in that block responds. If a block doesn't fully respond, it's split in half and each half is probed
-again, narrowing down until it knows exactly which individual addresses do and don't respond.
-This is far fewer requests than a naive one-by-one sweep whenever most of a range is
-contiguous, which is the common case for a real device's register map.</p>
-<p>The <b>Summary</b> line lists the responding addresses as merged ranges (e.g.
-<code>0-15, 20, 45-99</code>). A device that returns <b>Illegal Function</b> for the whole
-range stops the scan immediately with a clear message, since every address would fail the same
-way - try a different Function instead. A genuine timeout or dropped connection also stops the
-scan, since that means the device itself stopped responding, not that a particular address is
-invalid.</p>
+and <b>Clear Results</b> empties the grid and its page tabs. Rather than checking one address at a
+time, it probes the largest block the function allows first (125 registers or 2000 coils/inputs,
+with a short pause between probes) - a clean read means every address in that block responds. If a
+block doesn't fully respond, it's split in half and each half is probed again, narrowing down
+until it knows exactly which individual addresses do and don't respond. This is far fewer requests
+than a naive one-by-one sweep whenever most of a range is contiguous, which is the common case for
+a real device's register map.</p>
+<p>Results show as a color-coded grid, one cell per address, labeled with its actual address:
+<b>light green</b> once that address is confirmed to respond, <b>light red</b> once it's confirmed
+not to - cells stay neutral until the scan actually reaches them. A range too large for one screen
+splits into page tabs along the bottom, Excel-sheet style, each labeled with its own address range
+(e.g. "1700-1909", "1910-2000"); switching tabs keeps showing whatever's already been resolved, so
+flipping back to an earlier page doesn't lose anything. <b>Text size (px)</b> scales the grid's
+cells and text together for readability, and <b>Colorblind-friendly colors</b> swaps the
+green/red palette for a blue/orange one that's distinguishable under color vision deficiency.</p>
+<p>A device that returns <b>Illegal Function</b> for the whole range stops the scan immediately,
+since every address would fail the same way - try a different Function instead. A genuine timeout
+or dropped connection also stops the scan early, since that means the device itself stopped
+responding, not that a particular address is invalid; addresses the scan never reached stay
+neutral in the grid rather than being marked either way. Scan start/stop, the final summary
+(responding addresses as merged ranges) and any error all go to <b>Diagnostics &gt; System
+Logs</b>, not a box inside the Scanner tab itself.</p>
 <p>Reuses the device's existing connection rather than opening a second one. So nothing else
 polls while a scan is in progress, starting one stops Tags monitoring (for every device) and
 Address Table Live Monitoring - restart them yourself afterwards - and pauses Trend polling and

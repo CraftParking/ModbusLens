@@ -32,7 +32,7 @@
 
 ## Highlights
 
-- **Coming in v2.4.0:** Multiple devices in one window - an Overview tab with a live card per device (status, success rate, latency, pinned values); each device has its own connection and Unit ID, and devices behind one gateway share one link
+- **Coming in v2.4.0:** Multiple devices in one window - an Overview tab with a live card per device (status, success rate, latency, pinned values); each device has its own connection and Unit ID, and devices behind one gateway share one link. Select one or more devices in the top bar for Device Settings, Connect/Disconnect Selected, or check a card to Remove Selected
 - **Coming in v2.4.0:** Per-device Tags (device tabs, Import CSV per meter), Trend pens, Raw Data filter, and a Device picker in Address Table, Script (plus a `DEVICE` command), Scanner and diagnostics
 - Modbus TCP and Modbus Serial (RTU or ASCII framing) client, switchable per connection
 - Fast parallel network scan, sized to your actual subnet mask - a full /24 in about a second, each hit already Modbus-verified
@@ -45,7 +45,7 @@
 - Integrated diagnostics + communication
 - Trend graphing with up to 20 tag-based pens (pages of 20 pens each coming in v2.4.0), detachable into its own resizable, always-on-top window
 - Act as a Modbus TCP slave for testing your own SCADA/PLC programs
-- Talk to several devices at once from independent windows (File > New Connection Window)
+- Talk to several devices at once from independent windows (File > New Window)
 - Simple scripting for repeatable write/wait/read test sequences, against either a live device or ModbusLens's own Server simulator
 - Serial Discovery: sweep common baud rate/parity/stop-bit/Unit ID combinations to find the settings a serial device actually uses
 - Scanner: auto-discover which addresses actually respond on a connected device (TCP or serial)
@@ -266,9 +266,10 @@
 - Reuses the app's existing connection (like Address Table/Tags/Script), pausing Tags/Address Table live monitoring first so nothing else is polling the same connection at the same time  
 - A configurable probe timeout keeps scanning fast over TCP; over a serial connection each probe is one bus round-trip, so a large range takes noticeably longer  
 - *(coming in v2.4.0)* Create Tags From Scan - after a scan finds responding addresses, pick which ranges to import and generate one new Tags-tab row per address, named with the classic 5-digit Modicon convention (e.g. `HR_40001`); an address that already has a tag of that type is skipped instead of duplicated  
+- *(coming in v2.4.0)* Results shown as an Excel-style color-coded grid (green = responds, red = no response) instead of a text log, each cell labeled with its address; a large range splits into spreadsheet-style page tabs sized to fit the screen, with an adjustable text size and a colorblind-friendly color option  
 
 ### UI
-- Light/Dark/Follow System theme, switchable from View > Theme (ModbusLens restarts to apply it)  
+- Light/Dark/Follow System theme, switchable from View > Theme - restarts to apply it, but never while a device is connected: it queues the switch and asks to restart only once everything is disconnected  
 - Help > About has an Updates tab that checks GitHub Releases for a newer version  
 - Color-coded logs (Address Table, System Logs, Script console) - writes in blue, connection events in green, errors in red  
 - Ctrl+scroll wheel zooms text size in the Status Log, System Logs, and Raw Data table  
@@ -311,7 +312,7 @@ Three downloads are provided:
 
 ## Upcoming Features
 
-- **v2.4.0 (built, not released yet):** multiple devices in one window - an Overview tab, per-device connections and Unit IDs, a Device picker in every tool, per-device Tags/Trend/Raw Data, Trend pages, Address Table and Tags monitoring together, Gateway mode, RTU over TCP, Bit View, Create Tags From Scan, calculated tags (expressions over other tags), and an auto-saved workspace  
+- **v2.4.0 (built, not released yet):** multiple devices in one window - an Overview tab with top-bar device selection (Connect/Disconnect Selected, Remove Selected), per-device connections and Unit IDs, a Device picker in every tool, per-device Tags/Trend/Raw Data, Trend pages, Address Table and Tags monitoring together, Gateway mode, RTU over TCP, Bit View, a reworked Scanner results grid, Create Tags From Scan, calculated tags (expressions over other tags), a restart-safe theme switch, and an auto-saved workspace  
 - Server tab simulating multiple devices/unit addresses at once, not just one  
 - Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
 - Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
