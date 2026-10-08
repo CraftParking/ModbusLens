@@ -1191,19 +1191,27 @@ than a naive one-by-one sweep whenever most of a range is contiguous, which is t
 a real device's register map.</p>
 <p>Results show as a color-coded grid, one cell per address, labeled with its actual address:
 <b>light green</b> once that address is confirmed to respond, <b>light red</b> once it's confirmed
-not to - cells stay neutral until the scan actually reaches them. A range too large for one screen
-splits into page tabs along the bottom, Excel-sheet style, each labeled with its own address range
-(e.g. "1700-1909", "1910-2000"); switching tabs keeps showing whatever's already been resolved, so
-flipping back to an earlier page doesn't lose anything. <b>Text size (px)</b> scales the grid's
-cells and text together for readability, and <b>Colorblind-friendly colors</b> swaps the
-green/red palette for a blue/orange one that's distinguishable under color vision deficiency.</p>
+not to, <b>amber</b> if it timed out with no response at all even after narrowing all the way down
+to that one address (inconclusive - not a confirmed answer either way, just try scanning it again)
+- cells stay neutral until the scan actually reaches them. A legend above the grid spells out what
+each color means, and its swatches update to match whenever Colorblind-friendly colors is toggled.
+A range too large for one screen splits into page tabs along the bottom, Excel-sheet style, each
+labeled with its own address range (e.g. "1700-1909", "1910-2000"); switching tabs keeps showing
+whatever's already been resolved, so flipping back to an earlier page doesn't lose anything.
+<b>Text size (px)</b> scales the grid's cells and text together for readability, and
+<b>Colorblind-friendly colors</b> swaps the green/red palette for a blue/orange one that's
+distinguishable under color vision deficiency - the amber "timeout" color becomes plain gray in
+that mode instead, so it stays distinct from the palette's own orange.</p>
 <p>A device that returns <b>Illegal Function</b> for the whole range stops the scan immediately,
 since every address would fail the same way - try a different Function instead. A genuine timeout
-or dropped connection also stops the scan early, since that means the device itself stopped
-responding, not that a particular address is invalid; addresses the scan never reached stay
-neutral in the grid rather than being marked either way. Scan start/stop, the final summary
-(responding addresses as merged ranges) and any error all go to <b>Diagnostics &gt; System
-Logs</b>, not a box inside the Scanner tab itself.</p>
+with no response at all is treated like any other inconclusive block, though: it's narrowed down
+the same way a device-exception reply is, and only marked amber at the single address level once
+narrowing can't get a clean answer - the rest of the range keeps scanning rather than the whole
+scan stopping, since one bad reply (common on a flaky link, especially one shared with another
+Modbus master) doesn't mean the device itself is gone. Only a real dropped connection stops the
+scan early; addresses it never reached stay neutral in the grid. Scan start/stop, the final summary
+(responding addresses as merged ranges, plus how many came back inconclusive) and any error all go
+to <b>Diagnostics &gt; System Logs</b>, not a box inside the Scanner tab itself.</p>
 <p>Reuses the device's existing connection rather than opening a second one. So nothing else
 polls while a scan is in progress, starting one stops Tags monitoring (for every device) and
 Address Table Live Monitoring - restart them yourself afterwards - and pauses Trend polling and

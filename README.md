@@ -32,8 +32,8 @@
 
 ## Highlights
 
-- **Coming in v2.4.0:** Multiple devices in one window - an Overview tab with a live card per device (status, success rate, latency, pinned values); each device has its own connection and Unit ID, and devices behind one gateway share one link. Select one or more devices in the top bar for Device Settings, Connect/Disconnect Selected, or check a card to Remove Selected
-- **Coming in v2.4.0:** Per-device Tags (device tabs, Import CSV per meter), Trend pens, Raw Data filter, and a Device picker in Address Table, Script (plus a `DEVICE` command), Scanner and diagnostics
+- **Multiple devices in one window** - an Overview tab with a live card per device (status, success rate, latency, pinned values); each device has its own connection and Unit ID, and devices behind one gateway share one link. Select one or more devices in the top bar for Device Settings, Connect/Disconnect Selected, or check a card to Remove Selected
+- **Per-device everything** - Tags (device tabs, Import CSV per meter), Trend pens, Raw Data filter, and a Device picker in Address Table, Script (plus a `DEVICE` command), Scanner and diagnostics
 - Modbus TCP and Modbus Serial (RTU or ASCII framing) client, switchable per connection
 - Fast parallel network scan, sized to your actual subnet mask - a full /24 in about a second, each hit already Modbus-verified
 - Fast LAN Mode - short timeout, no retries, and an instant reachability check instead of retrying every tag when a device drops off
@@ -43,7 +43,7 @@
 - Continuous live scanning (no repeated manual scans)
 - Clean, non-spam device listing
 - Integrated diagnostics + communication
-- Trend graphing with up to 20 tag-based pens (pages of 20 pens each coming in v2.4.0), detachable into its own resizable, always-on-top window
+- Trend graphing with up to 20 tag-based pens, pages of 20 pens each, detachable into its own resizable, always-on-top window
 - Act as a Modbus TCP slave for testing your own SCADA/PLC programs
 - Talk to several devices at once from independent windows (File > New Window)
 - Simple scripting for repeatable write/wait/read test sequences, against either a live device or ModbusLens's own Server simulator
@@ -60,7 +60,7 @@
 
 ## Screenshots
 
-### Overview - Multiple Devices (coming in v2.4.0)
+### Overview - Multiple Devices
 <p align="center">
   <img src="assets/Overview.png" width="90%">
 </p>
@@ -160,7 +160,7 @@
 - Optional interface binding in Connection Settings - "Auto" leaves routing to the OS (default); picking a NIC binds the outgoing TCP socket to it  
 - Fast LAN Mode (Connection Settings, TCP) - 200ms timeout, no retries; on a poll failure it probes reachability once instead of paying a timeout for every remaining tag  
 - Save/Load Session (File menu) - connection settings, Tags (with scaling), Address Table range, and any live write bounds together in one `.mlsession` file, not just Tags on their own (Export/Import CSV is still there for Tags-only round trips)  
-- *(coming in v2.4.0)* TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing  
+- TCP Framing option (Connection Settings, TCP) - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH) that tunnel raw RTU frames over a plain TCP socket instead of translating them to real Modbus-TCP framing  
 
 ### Data Handling
 - BOOL, U16/S16, U32/S32/F32, U64/S64/F64, HEX support  
@@ -181,7 +181,7 @@
 - Tag names are validated as they're typed - letters/numbers/underscore only, no spaces, and script keywords/reserved words are rejected with a warning, since a tag's name also doubles as its reference in a Script and in Trend's pen picker  
 - Per-tag **Enabled** checkbox - unchecked, a tag is skipped by continuous polling (both the Read cycle and Write-mode refresh) without deleting the row; manual actions (Write Selected, one-shot write via Enter) still work regardless  
 - Column reorder (drag a header) and a show/hide picker (right-click a header) on the Tags table, so columns you don't need (e.g. Comment, Timestamp) can be hidden without touching the underlying data  
-- *(coming in v2.4.0)* Bit View - for a Holding/Input Register tag, right-click > **Bit View...** opens a live, per-bit breakdown of its raw value (each bit individually named and shown as 0/1), for VFD-style control/status words that pack several booleans into one register; a Bool-format tag can also expand its bits inline as rows directly under it in the Tags table. For a Holding Register (writable), each bit row gets its own Write Value cell - type 1/0 and press Enter to read-modify-write just that one bit, without touching the rest of the register  
+- Bit View - for a Holding/Input Register tag, right-click > **Bit View...** opens a live, per-bit breakdown of its raw value (each bit individually named and shown as 0/1), for VFD-style control/status words that pack several booleans into one register; a Bool-format tag can also expand its bits inline as rows directly under it in the Tags table. For a Holding Register (writable), each bit row gets its own Write Value cell - type 1/0 and press Enter to read-modify-write just that one bit, without touching the rest of the register  
 - Log live tag values to CSV  
 - CSV import/export (Enabled included as a column; older exports without it import as enabled)  
 
@@ -223,8 +223,8 @@
 - Act as a Modbus TCP slave so another master can poll ModbusLens directly  
 - Coils, Discrete Inputs, Holding Registers, and Input Registers are all editable live, as if you were the field device  
 - Useful for testing your own SCADA/PLC program without real hardware  
-- *(coming in v2.4.0)* Gateway mode - instead of simulating a device, relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response, turning a serial-only device into one reachable over TCP; runs only while ModbusLens stays open (an interactive bridge for testing/commissioning, not an unattended 24/7 production gateway)  
-- *(coming in v2.4.0)* Gateway Activity log shows every relayed request (time, direction, function, address, result), including real device exceptions and gateway-side failures (no response / downstream unreachable) passed through transparently  
+- Gateway mode - instead of simulating a device, relay real requests to a real downstream serial (RTU/ASCII) device and return its actual response, turning a serial-only device into one reachable over TCP; runs only while ModbusLens stays open (an interactive bridge for testing/commissioning, not an unattended 24/7 production gateway)  
+- Gateway Activity log shows every relayed request (time, direction, function, address, result), including real device exceptions and gateway-side failures (no response / downstream unreachable) passed through transparently  
 
 ### Scripting
 - A small, purpose-built test-sequence language instead of embedded Python - built so a controls/automation engineer can write a test sequence without knowing how to program: no imports, no client objects, no exception handling to write, just `WRITE HR 1 = 100`. The tradeoff is deliberate - it can only do Modbus reads/writes/waits/logging/arithmetic, never arbitrary code, which is also what makes the safety limits below possible in the first place  
@@ -265,8 +265,9 @@
 - Probes the largest block the function allows first, and only narrows down address-by-address where a block doesn't fully respond - far fewer requests than checking one address at a time  
 - Reuses the app's existing connection (like Address Table/Tags/Script), pausing Tags/Address Table live monitoring first so nothing else is polling the same connection at the same time  
 - A configurable probe timeout keeps scanning fast over TCP; over a serial connection each probe is one bus round-trip, so a large range takes noticeably longer  
-- *(coming in v2.4.0)* Create Tags From Scan - after a scan finds responding addresses, pick which ranges to import and generate one new Tags-tab row per address, named with the classic 5-digit Modicon convention (e.g. `HR_40001`); an address that already has a tag of that type is skipped instead of duplicated  
-- *(coming in v2.4.0)* Results shown as an Excel-style color-coded grid (green = responds, red = no response) instead of a text log, each cell labeled with its address; a large range splits into spreadsheet-style page tabs sized to fit the screen, with an adjustable text size and a colorblind-friendly color option  
+- Create Tags From Scan - after a scan finds responding addresses, pick which ranges to import and generate one new Tags-tab row per address, named with the classic 5-digit Modicon convention (e.g. `HR_40001`); an address that already has a tag of that type is skipped instead of duplicated  
+- Results shown as an Excel-style color-coded grid (green = responds, red = no response, amber = timed out even after narrowing down - inconclusive, not a confirmed answer) instead of a text log, with a legend above explaining the colors; each cell labeled with its address; a large range splits into spreadsheet-style page tabs sized to fit the screen, with an adjustable text size and a colorblind-friendly color option  
+- A timeout on one address narrows down and keeps scanning instead of stopping the whole range - a flaky link shouldn't cost you every result after the first bad reply  
 
 ### UI
 - Light/Dark/Follow System theme, switchable from View > Theme - restarts to apply it, but never while a device is connected: it queues the switch and asks to restart only once everything is disconnected  
@@ -312,13 +313,11 @@ Three downloads are provided:
 
 ## Upcoming Features
 
-- **v2.4.0 (built, not released yet):** multiple devices in one window - an Overview tab with top-bar device selection (Connect/Disconnect Selected, Remove Selected), per-device connections and Unit IDs, a Device picker in every tool, per-device Tags/Trend/Raw Data, Trend pages, Address Table and Tags monitoring together, Gateway mode, RTU over TCP, Bit View, a reworked Scanner results grid, Create Tags From Scan, calculated tags (expressions over other tags), a restart-safe theme switch, and an auto-saved workspace  
 - Server tab simulating multiple devices/unit addresses at once, not just one  
 - Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
 - Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
 - A string/text data type, beyond the current numeric format set  
 - A user-configurable UI scale/zoom factor for very high-resolution displays run at 100% OS scaling (separate from the per-log Ctrl+scroll zoom, and from OS-level HiDPI scaling, which the app already follows automatically)  
-  
 
 ---
 

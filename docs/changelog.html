@@ -44,7 +44,7 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <div class="changelog-stack">
 
 <article class="panel-card changelog-card reveal">
-<h3>v2.4.0 <span class="version-tag is-upcoming">Upcoming</span></h3>
+<h3>v2.4.0 <span class="version-tag is-current">Current</span></h3>
 <p class="changelog-sub">New</p>
 <ul>
 <li>Multiple devices in one window - each with its own connection (Modbus TCP, RTU over TCP, or serial) and Unit ID; devices sharing a link (several meters behind one gateway or on one RS-485 line) automatically share one connection</li>
@@ -55,7 +55,7 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <li>Workspace auto-save, and per-device write bounds that survive reconnects</li>
 <li>TCP Framing option for transparent serial-to-Ethernet gateways (RTU over TCP), and Gateway mode - relay real requests to a downstream serial device and return its actual response</li>
 <li>Bit View - a per-bit breakdown of a register's raw value, with inline expansion and single-bit writes</li>
-<li>Scanner reworked: an Excel-style color-coded results grid (green/red) replaces the text log, paginated like spreadsheet sheets for large ranges, with an adjustable text size and a colorblind-friendly color option; Create Tags From Scan turns a result straight into Tags rows</li>
+<li>Scanner reworked: an Excel-style color-coded results grid (green/red, with a legend) replaces the text log, paginated like spreadsheet sheets for large ranges, with an adjustable text size and a colorblind-friendly color option; Create Tags From Scan turns a result straight into Tags rows</li>
 <li>Theme switching no longer force-disconnects a live device - it queues the switch and asks to restart only once everything's disconnected</li>
 <li>Profiles tab relaid out; documentation rewritten for multiple devices</li>
 </ul>
@@ -66,11 +66,12 @@ GitHub repository</a> or ModbusLens's own Help &gt; About &gt; Changelog tab.</p
 <li>Script tag-name reads/writes hit the correct register (a one-off addressing bug)</li>
 <li>Tags table mouse-wheel scrolling no longer changes the dropdown/number box under the pointer</li>
 <li>Share to Community works again, with clearer failure messages</li>
+<li>Scanner no longer aborts the whole scan on an address that times out with no response (common on a flaky link) - it narrows down the same way as a device exception instead, marking an address that's still inconclusive a third color rather than stopping the rest of the range</li>
 </ul>
 </article>
 
 <article class="panel-card changelog-card reveal">
-<h3>v2.3.0 <span class="version-tag is-current">Current</span></h3>
+<h3>v2.3.0</h3>
 <p class="changelog-sub">New</p>
 <ul>
 <li>Device Profiles tab - save a device's Address Table range and Tags as a named, reusable profile (Name/Manufacturer/Type/Author); View Profile shows which tags are already in your live list (red/green, yellow for a mixed Tag Group) before importing any, and Apply doesn't close the dialog so you can adjust and import again</li>

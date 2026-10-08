@@ -192,7 +192,7 @@ FEATURES_HTML = """
 # Newest first. Older releases are summarized at a higher level than the current one -
 # see the git history/README for exact commit-level detail on those.
 CHANGELOG_HTML = """
-<h3>v2.4.0 (upcoming)</h3>
+<h3>v2.4.0</h3>
 <p><u>New</u></p>
 <ul>
 <li>Multiple devices in one window - each with its own name, connection (Modbus TCP, RTU over TCP or serial) and Unit ID; devices with identical settings share one link, so several meters behind one gateway or on one RS-485 line just work</li>
@@ -208,7 +208,7 @@ CHANGELOG_HTML = """
 <li>TCP Framing option - "Modbus TCP (standard)" or "RTU over TCP", for transparent serial-to-Ethernet gateways (e.g. Waveshare RS485-TO-ETH)</li>
 <li>Gateway mode (Server tab) - relay real requests to a real downstream serial device and return its actual response</li>
 <li>Bit View - a live, per-bit breakdown of a register tag's raw value, with inline bit expansion and single-bit read-modify-write</li>
-<li>Scanner reworked: an Excel-style color-coded results grid (light green responds, light red doesn't) replaces the text log, each cell labeled with its address; a large range splits into spreadsheet-style page tabs sized to fit the screen; adjustable text size and a colorblind-friendly color option; Create Tags From Scan turns a result straight into Tags rows</li>
+<li>Scanner reworked: an Excel-style color-coded results grid (light green responds, light red doesn't) replaces the text log, each cell labeled with its address and a legend above explaining the colors; a large range splits into spreadsheet-style page tabs sized to fit the screen; adjustable text size and a colorblind-friendly color option; Create Tags From Scan turns a result straight into Tags rows</li>
 <li>Theme switching (View &gt; Theme) no longer force-disconnects a live device to restart - it queues the switch and asks "Restart now?" only once every device is manually disconnected, reverting cleanly if you say no</li>
 <li>Profiles tab relaid out like the other tabs; documentation rewritten for multiple devices</li>
 </ul>
@@ -220,6 +220,7 @@ CHANGELOG_HTML = """
 <li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer - same for Trend's pen grid</li>
 <li>Raw Data Frame Viewer no longer flickers or pops its TX/RX tables out as empty windows past 1000 rows</li>
 <li>Share to Community works again, with clearer failure messages instead of the submission service's raw error</li>
+<li>Scanner no longer aborts the whole scan on a single address that times out with no response (common on a flaky link) - it narrows down the same way as a device exception, and if an address still can't get a clean answer it's marked a third color ("inconclusive") instead of stopping the rest of the range; that color is also distinguished from the colorblind palette's own orange "no response" instead of sitting too close to it</li>
 </ul>
 
 <h3>v2.3.0</h3>

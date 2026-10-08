@@ -694,6 +694,50 @@ section h2 {
 
 /* ---------------- Screenshots ---------------- */
 
+.shot-preview {
+  margin-bottom: 24px;
+}
+
+.shot-preview .panel-card {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.shot-preview img {
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: top;
+  cursor: zoom-in;
+  transition: opacity 0.15s ease;
+}
+
+.shot-preview-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.shot-preview-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--line);
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.shot-preview-dot:hover {
+  background: var(--muted);
+}
+
+.shot-preview-dot.is-active {
+  background: var(--accent);
+  transform: scale(1.2);
+}
+
 .shot-stack {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

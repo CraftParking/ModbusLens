@@ -73,7 +73,7 @@ and network diagnostics - in one tool.</p>
 
 <div class="hero-shot reveal">
 <div class="panel-card">
-<img src="assets/main_window.png" alt="ModbusLens Address Table window reading live holding registers">
+<img src="assets/Scanner.PNG" alt="ModbusLens register scanner showing a color-coded results grid" tabindex="0" role="button" aria-label="View larger">
 </div>
 </div>
 </div>
@@ -83,7 +83,7 @@ and network diagnostics - in one tool.</p>
 <h2 class="reveal">What it does</h2>
 <div class="feature-grid">
 <article class="panel-card feature-card reveal">
-<p class="eyebrow">MULTI-DEVICE &middot; COMING IN v2.4.0</p>
+<p class="eyebrow">MULTI-DEVICE</p>
 <h3>Every device at a glance</h3>
 <ul>
 <li>Overview tab: one card per device - live status, success rate, latency and pinned values</li>
@@ -101,7 +101,7 @@ and network diagnostics - in one tool.</p>
 <li>TCP or Serial (RTU/ASCII) client, multiple simultaneous connections</li>
 <li>Auto-reconnect with backoff, monitoring resumes on its own</li>
 <li>Fast LAN Mode for quick failure detection over TCP</li>
-<li>RTU-over-TCP framing for transparent serial-to-Ethernet gateways (coming in v2.4.0)</li>
+<li>RTU-over-TCP framing for transparent serial-to-Ethernet gateways</li>
 <li>Save/Load a full session, or just Tags via CSV</li>
 </ul>
 </article>
@@ -125,7 +125,7 @@ and network diagnostics - in one tool.</p>
 <li>Drag-and-drop reorder, multi-select Write Selected / Write All</li>
 <li>Per-tag Enabled toggle, column show/hide and reorder</li>
 <li>Per-tag alarms with red highlighting</li>
-<li>Bit View - name and read/write individual bits within a register (coming in v2.4.0)</li>
+<li>Bit View - name and read/write individual bits within a register</li>
 <li>Log live values to CSV</li>
 </ul>
 </article>
@@ -155,7 +155,7 @@ and network diagnostics - in one tool.</p>
 <p class="eyebrow">TRENDING</p>
 <h3>Trend graphing</h3>
 <ul>
-<li>Up to 20 pens, picked straight from your Tags list (pages and per-device pens coming in v2.4.0)</li>
+<li>Up to 20 pens, picked straight from your Tags list, with pages and per-device pens</li>
 <li>Detachable window, zoom/pan, live crosshair and stats</li>
 <li>Record a session and replay it later at 1x-8x speed</li>
 </ul>
@@ -167,7 +167,7 @@ and network diagnostics - in one tool.</p>
 <ul>
 <li>Act as a Modbus TCP slave for testing your own SCADA/PLC program</li>
 <li>Coils, discrete inputs, holding &amp; input registers all editable live</li>
-<li>Gateway mode - relay real requests to a real serial device over TCP (coming in v2.4.0)</li>
+<li>Gateway mode - relay real requests to a real serial device over TCP</li>
 </ul>
 </article>
 
@@ -176,7 +176,7 @@ and network diagnostics - in one tool.</p>
 <h3>Scripting</h3>
 <ul>
 <li>Purpose-built test-sequence language - no imports, no exceptions to write</li>
-<li>WRITE, READ, WAIT, LOG, LET, REPEAT, IF, ASSERT, and a live Variables panel (DEVICE command coming in v2.4.0)</li>
+<li>WRITE, READ, WAIT, LOG, LET, REPEAT, IF, ASSERT, a live Variables panel, and a DEVICE command to switch mid-run</li>
 <li>Target a real connected device or the built-in Server simulator</li>
 </ul>
 </article>
@@ -224,9 +224,10 @@ and network diagnostics - in one tool.</p>
 <h3>Register scanner</h3>
 <ul>
 <li>Auto-discovers which addresses respond for Coils, Discrete, Holding, or Input Registers</li>
-<li>Results shown as a color-coded grid (green = responds, red = no response), paginated like spreadsheet sheets for large ranges (coming in v2.4.0)</li>
-<li>Adjustable text size and a colorblind-friendly color option (coming in v2.4.0)</li>
-<li>Create Tags From Scan - turn responding addresses into Tags-tab rows in one click (coming in v2.4.0)</li>
+<li>Results shown as a color-coded grid with a legend (green = responds, red = no response, amber = timed out - inconclusive), paginated like spreadsheet sheets for large ranges</li>
+<li>Adjustable text size and a colorblind-friendly color option</li>
+<li>A timeout on one address narrows down and keeps scanning instead of stopping the whole range</li>
+<li>Create Tags From Scan - turn responding addresses into Tags-tab rows in one click</li>
 </ul>
 </article>
 
@@ -234,7 +235,7 @@ and network diagnostics - in one tool.</p>
 <p class="eyebrow">INTERFACE</p>
 <h3>Built for the job</h3>
 <ul>
-<li>Light / Dark / Follow System theme - switching never force-disconnects a live device, it queues and asks to restart once everything's disconnected (coming in v2.4.0)</li>
+<li>Light / Dark / Follow System theme - switching never force-disconnects a live device, it queues and asks to restart once everything's disconnected</li>
 <li>Color-coded logs, and Ctrl+scroll zoom on logs and tables</li>
 <li>Built-in update checker against GitHub Releases</li>
 </ul>
@@ -280,7 +281,15 @@ relying on it.</p>
 
 <section id="screenshots">
 <h2 class="reveal">Screenshots</h2>
-<div class="shot-stack">
+
+<div class="shot-preview reveal">
+<div class="panel-card">
+<img id="shot-preview-img" src="assets/raw_data.png" alt="Raw Data view" tabindex="0" role="button" aria-label="View larger">
+</div>
+<div class="shot-preview-dots" id="shot-preview-dots"></div>
+</div>
+
+<div class="shot-stack" id="shot-stack">
 <figure class="panel-card reveal">
 <img src="assets/raw_data.png" alt="Raw Data view" tabindex="0" role="button" aria-label="View larger">
 </figure>
@@ -302,7 +311,7 @@ relying on it.</p>
 </figure>
 
 <figure class="panel-card reveal">
-<img src="assets/overview.png" alt="Coming in v2.4.0: Overview tab with two meters online, live values and per-device status" tabindex="0" role="button" aria-label="View larger">
+<img src="assets/overview.png" alt="Overview tab with two meters online, live values and per-device status" tabindex="0" role="button" aria-label="View larger">
 </figure>
 </div>
 </section>
@@ -443,7 +452,7 @@ Download AppImage
     document.body.style.overflow = '';
   }
 
-  document.querySelectorAll('.shot-stack img').forEach(function (img) {
+  document.querySelectorAll('.shot-stack img, .hero-shot img, .shot-preview img').forEach(function (img) {
     img.addEventListener('click', function () { openLightbox(img); });
     img.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -452,6 +461,53 @@ Download AppImage
       }
     });
   });
+
+  // Screenshots: a big preview that auto-advances through the thumbnails below it.
+  // Clicking a thumbnail jumps the preview straight to that shot (and restarts the
+  // timer, so it doesn't immediately flip away from what was just picked); clicking
+  // the preview itself opens the lightbox like any other shot.
+  var shotThumbs = Array.prototype.slice.call(document.querySelectorAll('#shot-stack img'));
+  var previewImg = document.getElementById('shot-preview-img');
+  var previewDots = document.getElementById('shot-preview-dots');
+  if (shotThumbs.length && previewImg && previewDots) {
+    var shotIndex = 0;
+    var shotTimer = null;
+    var dots = shotThumbs.map(function (thumb, i) {
+      var dot = document.createElement('button');
+      dot.className = 'shot-preview-dot';
+      dot.type = 'button';
+      dot.setAttribute('aria-label', 'Show screenshot ' + (i + 1) + ': ' + thumb.alt);
+      dot.addEventListener('click', function () { showShot(i, true); });
+      previewDots.appendChild(dot);
+      return dot;
+    });
+
+    function showShot(i, restart) {
+      shotIndex = i;
+      previewImg.style.opacity = '0';
+      window.setTimeout(function () {
+        previewImg.src = shotThumbs[shotIndex].src;
+        previewImg.alt = shotThumbs[shotIndex].alt;
+        previewImg.style.opacity = '1';
+      }, 150);
+      dots.forEach(function (dot, j) { dot.classList.toggle('is-active', j === i); });
+      if (restart) resetShotTimer();
+    }
+
+    function resetShotTimer() {
+      if (shotTimer) window.clearInterval(shotTimer);
+      shotTimer = window.setInterval(function () {
+        showShot((shotIndex + 1) % shotThumbs.length, false);
+      }, 4000);
+    }
+
+    shotThumbs.forEach(function (thumb, i) {
+      thumb.addEventListener('click', function () { showShot(i, true); });
+    });
+
+    dots[0].classList.add('is-active');  // matches the preview's initial markup -- no fade needed yet
+    resetShotTimer();
+  }
 
   lightbox.addEventListener('click', function (e) {
     if (e.target === lightbox) closeLightbox();
