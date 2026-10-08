@@ -100,6 +100,9 @@ class DeviceCard(QFrame):
         layout.setSpacing(6)
 
         top = QHBoxLayout()
+        self.select_checkbox = QCheckBox()
+        self.select_checkbox.setToolTip("Select this device, for Remove Selected")
+        top.addWidget(self.select_checkbox)
         self.title = QLabel()
         self.title.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {colors['heading']};")
         top.addWidget(self.title, 1)
@@ -529,6 +532,13 @@ class OverviewWidget(QWidget):
             btn.clicked.connect(slot)
             add_row.addWidget(btn)
         add_row.addStretch()
+        self.remove_selected_btn = QPushButton("Remove Selected")
+        self.remove_selected_btn.setStyleSheet(button_style)
+        self.remove_selected_btn.setMinimumWidth(130)
+        self.remove_selected_btn.setToolTip("Disconnect and delete the device(s) checked above (asks first)")
+        self.remove_selected_btn.setEnabled(False)
+        self.remove_selected_btn.clicked.connect(self._remove_selected)
+        add_row.addWidget(self.remove_selected_btn)
         remove_all_btn = QPushButton("Remove All Devices")
         remove_all_btn.setStyleSheet(button_style)
         remove_all_btn.setMinimumWidth(150)
@@ -599,9 +609,11 @@ class OverviewWidget(QWidget):
             return
         self._link_interval()
         keys, tags = self.device_keys()
+        removed_any = False
         for key in list(self.cards):
             if key not in keys:
                 self.cards.pop(key).deleteLater()
+                removed_any = True
         for key in keys:
             if key not in self.cards:
                 card = DeviceCard(key, self.colors, self.mw._get_button_style(small=True))
@@ -611,7 +623,10 @@ class OverviewWidget(QWidget):
                 card.edit_device.connect(self.mw._edit_tag_device)
                 card.remove_device.connect(self.mw._remove_tag_device)
                 card.toggle_connect.connect(self._toggle_connect)
+                card.select_checkbox.stateChanged.connect(self._update_remove_selected_enabled)
                 self.cards[key] = card
+        if removed_any:
+            self._update_remove_selected_enabled()
         self._layout_cards(keys)
         self.empty_label.setVisible(not self.mw.tag_devices)
         self.scroll.setVisible(bool(self.mw.tag_devices))
@@ -702,6 +717,16 @@ class OverviewWidget(QWidget):
 
     def _remove_all(self):
         self.mw._remove_all_tag_devices()
+        self.refresh()
+
+    def _update_remove_selected_enabled(self, *_args):
+        self.remove_selected_btn.setEnabled(any(c.select_checkbox.isChecked() for c in self.cards.values()))
+
+    def _remove_selected(self):
+        names = [key for key, card in self.cards.items() if card.select_checkbox.isChecked()]
+        if not names:
+            return
+        self.mw._remove_selected_tag_devices(names)
         self.refresh()
 
     def _add_blank(self):

@@ -1,13 +1,28 @@
+import math
 from collections import deque
 
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QWidget,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget,
     QComboBox, QSpinBox, QProgressBar, QGroupBox, QDialog, QListWidget, QListWidgetItem,
+    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
 )
 
 from theme import apply_dropdown_delegate
 from widgets.device_selector import DeviceSelector
+
+# Excel's own "Good"/"Bad" conditional-format colors -- the scan result grid deliberately
+# looks like a spreadsheet regardless of the app's light/dark theme, the same way Excel's
+# own red/green never changes with Windows' theme.
+_GRID_RESPONDING_BG = QColor("#C6EFCE")
+_GRID_RESPONDING_FG = QColor("#006100")
+_GRID_NOT_RESPONDING_BG = QColor("#FFC7CE")
+_GRID_NOT_RESPONDING_FG = QColor("#9C0006")
+
+# Addresses per row -- the classic hex-dump width, a familiar, reasonably square layout
+# for the handful to tens of thousands of cells a scan range can produce.
+_GRID_COLUMNS = 16
 
 # Floor between any two Modbus requests the scanner issues, regardless of how short a
 # probe timeout is configured -- mirrors the Script tab's MIN_STEP_INTERVAL_MS and the
@@ -77,6 +92,7 @@ class AddressScanWorker(QThread):
     mostly-contiguous register map, while still resolving individually where it matters."""
 
     range_found = Signal(int, int)  # start, count -- a confirmed contiguous responding run
+    range_not_responding = Signal(int)  # address -- a single address confirmed not to respond
     progress = Signal(int)  # 0-100
     output = Signal(str)
     scan_complete = Signal(int, int)  # responding_count, probes_issued
@@ -170,6 +186,7 @@ class AddressScanWorker(QThread):
                     # Keep narrowing rather than treating it as fatal.
                     if count == 1:
                         resolved += 1  # confirmed: this single address doesn't respond
+                        self.range_not_responding.emit(block_start)
                     else:
                         left = count // 2
                         pending.appendleft((block_start + left, count - left))
@@ -269,7 +286,6 @@ class RegisterScannerWidget(QWidget):
         super().__init__(parent)
         self.parent_window = parent
         self.address_worker = None
-        self.output_text = None
         self._found_ranges = []
         self._setup_ui()
         self.refresh_connection_state()
@@ -355,24 +371,93 @@ class RegisterScannerWidget(QWidget):
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
-        self.output_text = QTextEdit()
-        self.output_text.setReadOnly(True)
-        self.output_text.document().setMaximumBlockCount(5000)
-        self.output_text.setStyleSheet(f"""
-            QTextEdit {{
+        # Result grid: one cell per scanned address, colored once the scan resolves it --
+        # light green responding, light red not -- so the whole range's shape is visible
+        # at a glance instead of read line by line out of a log.
+        self.result_grid = QTableWidget()
+        self.result_grid.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.result_grid.setSelectionMode(QAbstractItemView.NoSelection)
+        self.result_grid.horizontalHeader().setVisible(False)
+        self.result_grid.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.result_grid.verticalHeader().setVisible(False)
+        self.result_grid.setStyleSheet(f"""
+            QTableWidget {{
                 background-color: {c["surface"]};
                 color: {c["text"]};
                 border: 1px solid {c["border"]};
+                gridline-color: {c["border"]};
                 font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 11px;
+                font-size: 10px;
             }}
         """)
-        layout.addWidget(self.output_text, 1)
+        layout.addWidget(self.result_grid, 1)
+
+        self._grid_items = {}  # protocol address -> QTableWidgetItem, while a scan's grid is up
+
+    def _build_result_grid(self, start, end):
+        """Size the grid to the range about to be scanned, one cell per address, all
+        neutral until the scan resolves them green/red. Rebuilt fresh per scan (rather
+        than reused) since the range/shape can change between runs."""
+        total = end - start + 1
+        cols = min(_GRID_COLUMNS, total)
+        rows = math.ceil(total / cols)
+        one_based = getattr(self.parent_window, "tag_address_one_based", True)
+        c = self.parent_window._colors()
+        neutral_bg = QColor(c["surface"])
+        neutral_fg = QColor(c["text"])
+
+        table = self.result_grid
+        table.setUpdatesEnabled(False)
+        try:
+            table.setRowCount(0)  # drop any stale items from a previous, differently-shaped scan
+            table.setColumnCount(cols)
+            table.setRowCount(rows)
+            self._grid_items = {}
+            address = start
+            for row in range(rows):
+                for col in range(cols):
+                    if address > end:
+                        break
+                    item = QTableWidgetItem(str(address + (1 if one_based else 0)))
+                    item.setTextAlignment(Qt.AlignCenter)
+                    item.setBackground(neutral_bg)
+                    item.setForeground(neutral_fg)
+                    item.setToolTip(f"Protocol address {address} (not yet resolved)")
+                    table.setItem(row, col, item)
+                    self._grid_items[address] = item
+                    address += 1
+            # Columns stretch to fill the tab's width (set on the header once in
+            # _setup_ui); only row height needs setting here, per rebuild.
+            for row in range(rows):
+                table.setRowHeight(row, 22)
+        finally:
+            table.setUpdatesEnabled(True)
+
+    def _color_grid_range(self, start, count, responding):
+        bg = _GRID_RESPONDING_BG if responding else _GRID_NOT_RESPONDING_BG
+        fg = _GRID_RESPONDING_FG if responding else _GRID_NOT_RESPONDING_FG
+        label = "responds" if responding else "no response"
+        for address in range(start, start + count):
+            item = self._grid_items.get(address)
+            if item is None:
+                continue
+            item.setBackground(bg)
+            item.setForeground(fg)
+            item.setToolTip(f"Protocol address {address} -- {label}")
+
+    def _log(self, message):
+        """Scan status/errors go to the app's own System Logs (Diagnostics tab) -- the
+        same already-existing channel connect/disconnect/device events use -- rather than
+        a scanner-local text box."""
+        if self.parent_window is not None and hasattr(self.parent_window, "_log"):
+            self.parent_window._log(message)
 
     def _clear_results(self):
-        """Clear the scanner's output log and any ranges it has found so far."""
+        """Clear the result grid and any ranges the last scan found."""
         self._found_ranges = []
-        self.output_text.clear()
+        self.result_grid.setRowCount(0)
+        self.result_grid.setColumnCount(0)
+        self._grid_items = {}
         self.create_tags_btn.setEnabled(False)
 
     def _modbus(self):
@@ -405,7 +490,7 @@ class RegisterScannerWidget(QWidget):
         Start/Stop button states don't flip and confuse the user mid-scan."""
         if getattr(self.parent_window, "monitoring_active", False):
             self.parent_window._stop_monitoring()
-            self.output_text.append("Stopped Tags monitoring for the scan (restart it afterwards).")
+            self._log("Stopped Tags monitoring for the scan (restart it afterwards).")
         monitoring_manager = getattr(self.parent_window, "monitoring_manager", None)
         if monitoring_manager is not None:
             # Tags monitoring's own poll worker now runs its reads on a background
@@ -419,12 +504,12 @@ class RegisterScannerWidget(QWidget):
         address_table = getattr(self.parent_window, "address_table_widget", None)
         if address_table is not None and getattr(address_table, "monitoring_active", False):
             address_table.monitoring_checkbox.setChecked(False)
-            self.output_text.append("Stopped Address Table live monitoring for the scan (restart it afterwards).")
+            self._log("Stopped Address Table live monitoring for the scan (restart it afterwards).")
         trend_widget = getattr(self.parent_window, "trend_widget", None)
         self._trend_was_running = bool(trend_widget and trend_widget.poll_timer.isActive())
         if self._trend_was_running:
             trend_widget.poll_timer.stop()
-            self.output_text.append("Paused Trend polling for the scan.")
+            self._log("Paused Trend polling for the scan.")
         watchdog = getattr(self.parent_window, "_reconnect_watchdog_timer", None)
         self._watchdog_was_active = bool(watchdog and watchdog.isActive())
         if watchdog is not None:
@@ -436,7 +521,7 @@ class RegisterScannerWidget(QWidget):
             self.refresh_connection_state()
             return
         if self._scan_in_progress():
-            self.output_text.append("A scan is already running -- wait for it to finish first.")
+            self._log("A scan is already running -- wait for it to finish first.")
             return
         script_widget = getattr(self.parent_window, "script_widget", None)
         if script_widget is not None and getattr(script_widget, "running", False):
@@ -444,18 +529,19 @@ class RegisterScannerWidget(QWidget):
             # user-directed sequence, not a background poll -- silently pausing its
             # step_timer would leave no clean, timing-safe way to resume mid-WAIT, so
             # this refuses the scan instead of pausing the script out from under it.
-            self.output_text.append("A script is currently running -- stop it before starting a scan.")
+            self._log("A script is currently running -- stop it before starting a scan.")
             return
 
         start = self.addr_start_input.value()
         end = self.addr_end_input.value()
         if start > end:
-            self.output_text.append("Start address must not be greater than End address.")
+            self._log("Start address must not be greater than End address.")
             return
 
         self._pause_shared_connection_monitoring()
         self._found_ranges = []
-        self.output_text.append(
+        self._build_result_grid(start, end)
+        self._log(
             f"Scanning {self.addr_function_combo.currentText()} {start}-{end}..."
         )
         self.progress_bar.setVisible(True)
@@ -474,8 +560,9 @@ class RegisterScannerWidget(QWidget):
             release_range=getattr(self.parent_window, "_release_range", None),
         )
         self.address_worker.range_found.connect(self._on_address_range_found)
+        self.address_worker.range_not_responding.connect(self._on_address_range_not_responding)
         self.address_worker.progress.connect(self.progress_bar.setValue)
-        self.address_worker.output.connect(self.output_text.append)
+        self.address_worker.output.connect(self._log)
         self.address_worker.scan_complete.connect(self._on_address_scan_complete)
         self.address_worker.start()
 
@@ -485,17 +572,19 @@ class RegisterScannerWidget(QWidget):
 
     def _on_address_range_found(self, start, count):
         self._found_ranges.append((start, count))
-        end = start + count - 1
-        self.output_text.append(f"  responding: {start}" if count == 1 else f"  responding: {start}-{end}")
+        self._color_grid_range(start, count, responding=True)
+
+    def _on_address_range_not_responding(self, address):
+        self._color_grid_range(address, 1, responding=False)
 
     def _on_address_scan_complete(self, responding_count, probes_issued):
         merged = _merge_ranges(self._found_ranges)
         if merged:
             summary = ", ".join(f"{s}" if s == e else f"{s}-{e}" for s, e in merged)
-            self.output_text.append(f"Summary: {responding_count} responding address(es): {summary}")
+            self._log(f"Summary: {responding_count} responding address(es): {summary}")
         else:
-            self.output_text.append("Summary: no responding addresses found in range.")
-        self.output_text.append(f"({probes_issued} request(s) issued)")
+            self._log("Summary: no responding addresses found in range.")
+        self._log(f"({probes_issued} request(s) issued)")
         self.progress_bar.setVisible(False)
         self.addr_stop_btn.setEnabled(False)
         self.create_tags_btn.setEnabled(bool(merged))
@@ -517,7 +606,7 @@ class RegisterScannerWidget(QWidget):
             trend_widget = getattr(self.parent_window, "trend_widget", None)
             if trend_widget is not None and self.parent_window._any_device_connected():
                 trend_widget.poll_timer.start(trend_widget.interval_input.value())
-                self.output_text.append("Resumed Trend polling.")
+                self._log("Resumed Trend polling.")
 
     def _create_tags_from_scan(self):
         """"Create Tags..." -- lets the user pick which found ranges to import, then adds
@@ -570,7 +659,7 @@ class RegisterScannerWidget(QWidget):
         message = f"Created {created} tag(s) from scan results"
         if skipped:
             message += f", skipped {skipped} address(es) that already had a tag"
-        self.output_text.append(message + ".")
+        self._log(message + ".")
 
         if created:
             tab_widget = getattr(self.parent_window, "tab_widget", None)

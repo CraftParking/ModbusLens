@@ -795,6 +795,70 @@ class DeviceManagerMixin:
         self._sync_active_device()
         self._log(f"Removed device '{name}'" + (" and its tags" if choice == "delete" else f"; its tags moved to {heir}"))
 
+    def _remove_selected_tag_devices(self, names, choice=None):
+        """Overview's Remove Selected (one card checkbox each): like _remove_tag_device
+        but for several devices at once, with a single Keep/Delete/Cancel dialog instead
+        of one per device. Selecting every device is the same end state as Remove All, so
+        that's delegated there for its own all-or-nothing confirmation wording."""
+        names = [n for n in names if self._device(n) is not None]
+        if not names:
+            return False
+        name_set = set(names)
+        if name_set == {d["name"] for d in self.tag_devices}:
+            return self._remove_all_tag_devices()
+
+        label = ", ".join(f"'{n}'" for n in names)
+        rows = [r for r in range(self.monitoring_tag_table.rowCount())
+                if r not in self.monitoring_manager.group_header_rows
+                and r not in self.monitoring_manager.tag_bit_rows and self._row_device(r) in name_set]
+        remaining = [d["name"] for d in self.tag_devices if d["name"] not in name_set]
+        heir = self.active_device if self.active_device not in name_set else remaining[0]
+
+        if choice is None:
+            box = QMessageBox(self)
+            box.setWindowTitle("Remove Selected Devices")
+            box.setIcon(QMessageBox.Question)
+            delete_btn = None
+            if rows:
+                box.setText(f"Remove {len(names)} device(s) ({label})? They have {len(rows)} tag(s) total.")
+                keep_btn = box.addButton(f"Keep Tags (move to {heir})", QMessageBox.AcceptRole)
+                delete_btn = box.addButton("Delete Their Tags Too", QMessageBox.DestructiveRole)
+            else:
+                box.setText(f"Remove {len(names)} device(s) ({label})?")
+                keep_btn = box.addButton("Remove", QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is keep_btn:
+                choice = "keep"
+            elif delete_btn is not None and clicked is delete_btn:
+                choice = "delete"
+            else:
+                return False
+
+        for name in names:
+            self._disconnect_device(name)
+        if choice == "delete" and rows:
+            self._remove_tag_rows(rows)
+        elif choice == "keep":
+            for row in rows:
+                combo = self.monitoring_tag_table.cellWidget(row, TAG_DEVICE_COLUMN)
+                if isinstance(combo, QComboBox):
+                    self._fill_device_combo(combo, heir)
+        for name in names:
+            self.monitoring_manager.device_stats.pop(name, None)
+        self.tag_devices = [d for d in self.tag_devices if d["name"] not in name_set]
+        if self.active_device in name_set:
+            self.active_device = heir
+        self._refresh_tag_device_ui()
+        if choice == "keep":
+            for row in rows:
+                self._ensure_unique_monitoring_tag_address(row)
+        self._sync_active_device()
+        self._log(f"Removed {len(names)} device(s) ({label})"
+                  + (" and their tags" if choice == "delete" else f"; their tags moved to {heir}"))
+        return True
+
     def _remove_all_tag_devices(self, confirm=True):
         """Overview's Remove All Devices: disconnect and delete every device and all their
         tags, leaving zero devices -- same end state as removing them one at a time down to
