@@ -1,10 +1,13 @@
 """Devices and their connections, mixed into the main window (ModbusGUI).
 
 Every device is a dict -- {"name", "unit", "connection": {...}} plus Overview settings
-("pinned", "paused", "profile") -- configured on the Overview tab. There is always at
-least one device: a fresh window starts with "Device 1" built from the classic
-connection settings, and old sessions/CSVs migrate onto it. Devices with identical
-connection settings share one link (see device_links.LinkPool).
+("pinned", "paused", "profile") -- configured on the Overview tab. A fresh install starts
+with "Device 1" built from the classic connection settings, and old sessions/CSVs with no
+device concept migrate onto a stand-in device the same way -- but zero devices is a real,
+supported state once the user has one: removing every device (one at a time or via Remove
+All) leaves `tag_devices` empty and `active_device` None, same as a brand new Tags/Overview
+tab with nothing in it yet. Devices with identical connection settings share one link (see
+device_links.LinkPool).
 
 Each tool picks its own device (widgets/device_selector.py); there is no user-facing active
 device. `active_device` survives internally as the *default* device: `self.modbus` is a
@@ -34,16 +37,24 @@ class DeviceManagerMixin:
     # ------------------------------------------------------------------ model --
     def _init_devices(self):
         """Called once at the end of __init__: restore the saved device list (first
-        window only -- extra windows are independent), else start with "Device 1"."""
+        window only -- extra windows are independent, and always seed "Device 1" since
+        they have no file of their own to consult). No devices.json yet (a fresh install)
+        also seeds "Device 1"; once a real devices.json holds a deliberate empty list (the
+        user removed everything), that's respected and nothing is resurrected."""
         self.link_pool = getattr(self, "link_pool", None) or LinkPool()
         self._connected_devices = set()
         if DeviceManagerMixin._devices_file_owner is None and not os.environ.get("MODBUSLENS_NO_DEVICE_FILE"):
             DeviceManagerMixin._devices_file_owner = self
+        explicit_empty = False
         if DeviceManagerMixin._devices_file_owner is self:
-            for saved in self._read_devices_file():
-                self._add_device_record(saved)
-        self._ensure_default_device()
-        self.active_device = self.tag_devices[0]["name"]
+            saved = self._read_devices_file()
+            if saved is not None:
+                for record in saved:
+                    self._add_device_record(record)
+                explicit_empty = not self.tag_devices
+        if not explicit_empty:
+            self._ensure_default_device()
+        self.active_device = self.tag_devices[0]["name"] if self.tag_devices else None
         self._refresh_tag_device_ui()
         self._sync_active_device()
 
@@ -174,7 +185,11 @@ class DeviceManagerMixin:
     # Settings dialog, connection history and other legacy single-device code.
     def _ask_device_for_settings(self):
         """Which device a Connection Settings change is for: the only device, else the
-        user's pick among the disconnected ones (None = cancelled / nothing editable)."""
+        user's pick among the disconnected ones (None = cancelled / nothing editable /
+        no device exists yet)."""
+        if not self.tag_devices:
+            QMessageBox.information(self, "Connection Settings", "Add a device first (Overview tab).")
+            return None
         if len(self.tag_devices) == 1:
             return self.tag_devices[0]["name"]
         free = [d["name"] for d in self.tag_devices if d["name"] not in self._connected_devices]
@@ -186,10 +201,23 @@ class DeviceManagerMixin:
         choice, ok = QInputDialog.getItem(self, "Connection Settings", "Apply to which device?", list(labels), 0, False)
         return labels[choice] if ok else None
 
+    def _status_bar_selection(self):
+        """Names currently highlighted in the top bar's device strip, or an empty set if
+        there's no status bar yet (fresh window) or nothing selected."""
+        bar = getattr(self, "device_status_bar", None)
+        return bar.selected_devices() if bar is not None else set()
+
     def _device_settings_clicked(self):
-        """Top bar Device Settings: edit one device's connection (pick which when there
-        are several; connected devices are disabled -- disconnect first)."""
-        if len(self.tag_devices) == 1:
+        """Top bar Device Settings: edit one device's connection -- the one selected in
+        the top bar when exactly one is, else pick (when there are several; connected
+        devices are disabled -- disconnect first)."""
+        if not self.tag_devices:
+            QMessageBox.information(self, "Device Settings", "Add a device first (Overview tab).")
+            return
+        selected = self._status_bar_selection()
+        if len(selected) == 1:
+            name = next(iter(selected))
+        elif len(self.tag_devices) == 1:
             name = self.tag_devices[0]["name"]
         else:
             menu = QMenu(self)
@@ -210,11 +238,24 @@ class DeviceManagerMixin:
         self._show_connection_settings(device=name)
 
     def _sync_active_device(self):
-        """Point the classic single-connection state at the default device."""
+        """Point the classic single-connection state at the default device, or clear it
+        (self.modbus = None; the classic connection_*/target_* attrs just keep their last
+        values, unused while nothing is connected) when there are zero devices."""
         device = self._device(self.active_device)
         if device is None:
-            device = self.tag_devices[0]
-            self.active_device = device["name"]
+            device = self.tag_devices[0] if self.tag_devices else None
+            self.active_device = device["name"] if device else None
+        if device is None:
+            self.modbus = None
+            self._update_connection_info()
+            if hasattr(self, "connection_status"):
+                self.connection_status.setText("No devices")
+            self._refresh_connection_controls()
+            if hasattr(self, "device_status_bar"):
+                self.device_status_bar.refresh()
+            if hasattr(self, "overview_widget"):
+                self.overview_widget.refresh()
+            return
         conn = normalize_connection(device["connection"])
         self.connection_mode = conn["mode"]
         self.target_ip, self.target_port = conn["ip"], conn["port"]
@@ -242,6 +283,11 @@ class DeviceManagerMixin:
         self.connect_btn.setEnabled(any(d["name"] not in self._connected_devices for d in self.tag_devices))
         self.disconnect_btn.setEnabled(bool(self._connected_devices))
         self.settings_btn.setEnabled(any(d["name"] not in self._connected_devices for d in self.tag_devices))
+        selected = self._status_bar_selection()
+        if hasattr(self, "connect_selected_btn"):
+            self.connect_selected_btn.setEnabled(bool(selected - self._connected_devices))
+        if hasattr(self, "disconnect_selected_btn"):
+            self.disconnect_selected_btn.setEnabled(bool(selected & self._connected_devices))
         if hasattr(self, "tag_start_monitoring_btn"):
             self.tag_start_monitoring_btn.setEnabled(any_connected and not self.monitoring_active)
             self.tag_stop_monitoring_btn.setEnabled(self.monitoring_active)
@@ -363,6 +409,27 @@ class DeviceManagerMixin:
             self._log("Disconnected all devices")
         self._sync_active_device()
 
+    def _connect_selected(self):
+        """Top bar Connect Selected: connect every device highlighted in the top bar
+        that isn't already connected."""
+        selected = self._status_bar_selection()
+        failures = []
+        for device in list(self.tag_devices):
+            name = device["name"]
+            if name in selected and name not in self._connected_devices \
+                    and not self._connect_device(name, interactive=False):
+                failures.append(f"{name} ({describe(device['connection'])}): "
+                                f"{self.link_pool.link_for(device['connection']).last_error}")
+        if failures:
+            QMessageBox.warning(self, "Connect Selected", "These devices couldn't connect:\n\n" + "\n".join(failures))
+
+    def _disconnect_selected(self):
+        """Top bar Disconnect Selected: disconnect every connected device highlighted in
+        the top bar, one at a time (unlike Disconnect All, this leaves the others alone)."""
+        for name in list(self._connected_devices):
+            if name in self._status_bar_selection():
+                self._disconnect_device(name)
+
     def _check_connection_watchdog(self):
         """Auto-reconnect, per link: a dropped link with connected devices is retried with
         backoff; monitoring auto-stopped by the drop restarts once it's back."""
@@ -444,12 +511,19 @@ class DeviceManagerMixin:
         return app_data_dir() / DEVICES_FILE
 
     def _read_devices_file(self):
+        """None = no devices.json yet (fresh install -- _init_devices seeds a default
+        device); a list, possibly empty, = a real saved state, including a deliberate
+        "removed everything" that must not be silently undone."""
         try:
             with open(self._devices_path(), "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return [d for d in data.get("devices", []) if isinstance(d, dict)]
+        except FileNotFoundError:
+            return None
         except (OSError, ValueError, AttributeError):
             return []
+        if not isinstance(data, dict):
+            return []
+        return [d for d in data.get("devices", []) if isinstance(d, dict)]
 
     def _save_devices(self):
         if DeviceManagerMixin._devices_file_owner is not self:
@@ -553,15 +627,6 @@ class DeviceManagerMixin:
                 self.tab_widget.setCurrentIndex(i)
                 break
 
-    def _show_device_card(self, key):
-        """Top-bar click: open the Overview tab on that device's card."""
-        for i in range(self.tab_widget.count()):
-            if self.tab_widget.tabText(i) == "Overview":
-                self.tab_widget.setCurrentIndex(i)
-                break
-        if hasattr(self, "overview_widget"):
-            self.overview_widget.show_device(key)
-
     def _show_tag_device_tab_menu(self, pos):
         index = self.tag_device_tabs.tabAt(pos)
         name = self.tag_device_tabs.tabData(index) if index >= 0 else None
@@ -628,6 +693,7 @@ class DeviceManagerMixin:
         if show_tab and len(self.tag_devices) > 1:
             self._tag_device_filter = device["name"]
         self._refresh_tag_device_ui()
+        self._sync_active_device()
 
     def _edit_tag_device(self, name):
         device = self._device(name)
@@ -651,24 +717,28 @@ class DeviceManagerMixin:
 
     def _remove_tag_device(self, name, choice=None):
         """choice skips the dialog (tests): "keep" moves the device's tags to the active
-        (or first remaining) device, "delete" removes them along with the device."""
-        if len(self.tag_devices) <= 1:
-            QMessageBox.information(self, "Remove Device", "The last device can't be removed -- edit it instead.")
-            return
+        (or first remaining) device, "delete" removes them along with the device. Removing
+        the last device is allowed -- it leaves zero devices, same as Remove All Devices;
+        there is then no "heir" to move kept tags to, so that option isn't offered."""
         rows = [r for r in range(self.monitoring_tag_table.rowCount())
                 if r not in self.monitoring_manager.group_header_rows
                 and r not in self.monitoring_manager.tag_bit_rows and self._row_device(r) == name]
         remaining = [d["name"] for d in self.tag_devices if d["name"] != name]
-        heir = self.active_device if self.active_device != name else remaining[0]
+        is_last = not remaining
+        heir = None if is_last else (self.active_device if self.active_device != name else remaining[0])
         if choice is None:
             box = QMessageBox(self)
             box.setWindowTitle("Remove Device")
             box.setIcon(QMessageBox.Question)
             keep_btn = delete_btn = None
-            if rows:
+            if rows and not is_last:
                 box.setText(f"Remove device '{name}'? It has {len(rows)} tag(s).")
                 keep_btn = box.addButton(f"Keep Tags (move to {heir})", QMessageBox.AcceptRole)
                 delete_btn = box.addButton("Delete Its Tags Too", QMessageBox.DestructiveRole)
+            elif rows:
+                box.setText(f"Remove device '{name}'? It's the last device, so its {len(rows)} tag(s) "
+                           "have nowhere to move to and are deleted with it.")
+                delete_btn = box.addButton("Remove Device and Its Tags", QMessageBox.DestructiveRole)
             else:
                 box.setText(f"Remove device '{name}'?")
                 keep_btn = box.addButton("Remove", QMessageBox.AcceptRole)
@@ -702,8 +772,8 @@ class DeviceManagerMixin:
 
     def _remove_all_tag_devices(self, confirm=True):
         """Overview's Remove All Devices: disconnect and delete every device and all their
-        tags, leaving a blank "Device 1" (there is always one) on the active device's
-        connection settings. Returns True if done."""
+        tags, leaving zero devices -- same end state as removing them one at a time down to
+        none (see _remove_tag_device). Returns True if done."""
         tag_count = sum(1 for r in range(self.monitoring_tag_table.rowCount())
                         if r not in self.monitoring_manager.group_header_rows
                         and r not in self.monitoring_manager.tag_bit_rows)
@@ -715,34 +785,34 @@ class DeviceManagerMixin:
             box.setInformativeText(
                 "Every device is disconnected and deleted, along with all of its tags, alarms, "
                 "scaling and pinned values. This can't be undone -- Export CSV or Save Session first "
-                "if you might need them.\n\nYou'll start again with one blank device (Device 1) "
-                "using the first device's connection settings.")
+                "if you might need them.\n\nYou'll start with no devices; add one back from the "
+                "Overview tab when you're ready.")
             remove_btn = box.addButton("Remove All Devices", QMessageBox.DestructiveRole)
             box.addButton(QMessageBox.Cancel)
             box.setDefaultButton(QMessageBox.Cancel)
             box.exec()
             if box.clickedButton() is not remove_btn:
                 return False
-        conn = self._device_connection(self.tag_devices[0]["name"])
         self._disconnect()
         self._remove_tag_rows([r for r in range(self.monitoring_tag_table.rowCount())
                                if r not in self.monitoring_manager.group_header_rows
                                and r not in self.monitoring_manager.tag_bit_rows])
         self.monitoring_manager.tag_alarms.clear()
         self.monitoring_manager.device_stats.clear()
-        self.tag_devices = [{"name": "Device 1", "unit": 1, "connection": conn}]
-        self.active_device = "Device 1"
+        self.tag_devices = []
+        self.active_device = None
         self._tag_device_filter = None
         self._refresh_tag_device_ui()
         self._sync_active_device()
-        self._log(f"Removed all devices and {tag_count} tag(s); started over with Device 1")
+        self._log(f"Removed all devices and {tag_count} tag(s)")
         return True
 
     def _ensure_tag_devices(self, entries, connection=None):
         """Create devices referenced by imported rows that don't exist yet. entries:
         (name, unit) pairs; new ones use `connection` (default: the active device's)."""
         added = False
-        conn = connection or self._device_connection(self.active_device)
+        conn = connection or (self._device_connection(self.active_device) if self.active_device
+                             else self._legacy_connection())
         for name, unit in entries:
             if name and not self._device(str(name).strip()):
                 if self._add_device_record({"name": name, "unit": unit}, default_connection=conn):

@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from widgets.status_indicator import StatusIndicator
 from widgets.address_table import AddressTableWidget
 from widgets.device_profiles import DeviceProfilesPanel
-from widgets.tag_devices import ADD_DEVICE_SENTINEL, TAG_DEVICE_COLUMN
+from widgets.tag_devices import ADD_DEVICE_SENTINEL, TAG_DEVICE_COLUMN, TAG_EXPRESSION_COLUMN
 from device_manager import DeviceManagerMixin
 from wheel_guard import install_wheel_guard
 from device_links import normalize_connection
@@ -280,7 +280,8 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         self.tag_group_names = []
         self.collapsed_groups = set()
         # Devices, each with its own connection + Unit ID (see device_manager.py). Filled
-        # by _init_devices() at the end of __init__ -- there's always at least one.
+        # by _init_devices() at the end of __init__ -- a fresh install seeds one, but zero
+        # is a valid, reachable state once the user removes every device.
         self.tag_devices = []
         self.active_device = None
         self._device_selectors = []  # every tab's DeviceSelector (see widgets/device_selector.py)
@@ -496,22 +497,39 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
 
         # 3. Control Buttons
         self.settings_btn = QPushButton("Device Settings")
-        self.settings_btn.setToolTip("Connection settings of a device (pick one when there are several)")
+        self.settings_btn.setToolTip("Connection settings of a device (pick one when there are several,"
+                                     " or select exactly one in the top bar first)")
         self.settings_btn.setFixedSize(110, 30)
         self.settings_btn.setStyleSheet(self._get_button_style(small=True))
         self.settings_btn.clicked.connect(self._device_settings_clicked)
         main_layout.addWidget(self.settings_btn)
 
+        self.connect_selected_btn = QPushButton("Connect Selected")
+        self.connect_selected_btn.setToolTip("Connect the device(s) selected in the top bar")
+        self.connect_selected_btn.setFixedSize(130, 30)
+        self.connect_selected_btn.setStyleSheet(self._get_button_style(small=True))
+        self.connect_selected_btn.setEnabled(False)
+        self.connect_selected_btn.clicked.connect(self._connect_selected)
+        main_layout.addWidget(self.connect_selected_btn)
+
+        self.disconnect_selected_btn = QPushButton("Disconnect Selected")
+        self.disconnect_selected_btn.setToolTip("Disconnect the device(s) selected in the top bar")
+        self.disconnect_selected_btn.setFixedSize(140, 30)
+        self.disconnect_selected_btn.setStyleSheet(self._get_button_style(small=True))
+        self.disconnect_selected_btn.setEnabled(False)
+        self.disconnect_selected_btn.clicked.connect(self._disconnect_selected)
+        main_layout.addWidget(self.disconnect_selected_btn)
+
         self.connect_btn = QPushButton("Connect All")
         self.connect_btn.setFixedSize(100, 30)
         self.connect_btn.setStyleSheet(self._get_button_style(small=True))
-        main_layout.addWidget(self.connect_btn) 
- 
+        main_layout.addWidget(self.connect_btn)
+
         self.disconnect_btn = QPushButton("Disconnect All")
         self.disconnect_btn.setFixedSize(110, 30)
         self.disconnect_btn.setStyleSheet(self._get_button_style(small=True))
-        self.disconnect_btn.setEnabled(False) 
-        main_layout.addWidget(self.disconnect_btn) 
+        self.disconnect_btn.setEnabled(False)
+        main_layout.addWidget(self.disconnect_btn)
 
         parent_layout.addWidget(connection_frame)
 
@@ -726,8 +744,8 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         tag_layout.setContentsMargins(15, 25, 15, 15)  # Extra top margin for title
 
         self.monitoring_tag_table = TagTableWidget(self)
-        self.monitoring_tag_table.setColumnCount(16)
-        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Group", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale", "Enabled", "Device"])
+        self.monitoring_tag_table.setColumnCount(17)
+        self.monitoring_tag_table.setHorizontalHeaderLabels(["Tag Name", "Group", "Mode", "Type", "Address", "Count", "Format", "Read Value", "Raw (Hex)", "Write Value", "Comment", "Timestamp", "Engineering Value", "Scale", "Enabled", "Device", "Expression"])
         self._update_tag_address_header()
         self.monitoring_tag_table.horizontalHeader().setStretchLastSection(True)
         self.monitoring_tag_table.setColumnWidth(12, 130)
@@ -748,6 +766,11 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         # order is semantically meaningful).
         self.monitoring_tag_table.horizontalHeader().setSectionsMovable(True)
         self.monitoring_tag_table.horizontalHeader().moveSection(TAG_DEVICE_COLUMN, 1)
+        # Expression sits right after Mode; only shown once a Calc tag exists.
+        header = self.monitoring_tag_table.horizontalHeader()
+        header.moveSection(header.visualIndex(TAG_EXPRESSION_COLUMN), header.visualIndex(2) + 1)
+        self.monitoring_tag_table.setColumnWidth(TAG_EXPRESSION_COLUMN, 220)
+        self.monitoring_tag_table.setColumnHidden(TAG_EXPRESSION_COLUMN, True)
         self.monitoring_tag_table.setColumnHidden(TAG_DEVICE_COLUMN, True)  # until a device exists
         self.monitoring_tag_table.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
         self.monitoring_tag_table.horizontalHeader().customContextMenuRequested.connect(self._show_tag_column_picker)
@@ -1052,7 +1075,8 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             w.setStyleSheet(self._get_input_style())
         elif widget_type == "mode_combo":
             w = QComboBox()
-            w.addItems(["Read", "Write"])
+            w.addItems(["Read", "Write", "Calc"])
+            w.setItemData(2, "Calculated tag: an expression over other tags' values, e.g. P1 + P2 + P3", Qt.ToolTipRole)
             if value:
                 w.setCurrentText(value)
         elif widget_type == "type_combo":
@@ -1112,7 +1136,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
 
     def _add_monitoring_tag(self, tag_name="", mode="Read", tag_type="Coil", address=1, count=1, value_format=None,
                              comment="", insert_row=None, read_value="", raw_hex="", write_value="", timestamp="",
-                             engineering_value="", enabled=True, group="", device=None):
+                             engineering_value="", enabled=True, group="", device=None, expression=""):
         # An explicit insert_row is used when rebuilding a row that's being dragged to a new
         # position (see _move_tag_row) -- otherwise fall back to the normal Add Tag behavior.
         if insert_row is None:
@@ -1138,7 +1162,16 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         self.monitoring_manager.tag_groups[insert_row] = group
         group_widget.currentTextChanged.connect(self._on_monitoring_tag_group_changed)
 
-        self.monitoring_tag_table.setCellWidget(insert_row, 2, self._create_monitoring_tag_widget("mode_combo", mode))
+        mode_widget = self._create_monitoring_tag_widget("mode_combo", mode)
+        self.monitoring_tag_table.setCellWidget(insert_row, 2, mode_widget)
+        expression_widget = self._create_monitoring_tag_widget("lineedit", expression)
+        expression_widget.setPlaceholderText("e.g. P1 + P2 + P3")
+        expression_widget.setToolTip(
+            "Calculated tag expression: numbers, + - * / and ( ), and other tags' names.\n"
+            "A plain name is a tag on this tag's device; [DEVICE NAME].TAG is another device's tag.\n"
+            "Evaluated after every Tags poll cycle -- no extra bus traffic.")
+        self.monitoring_tag_table.setCellWidget(insert_row, TAG_EXPRESSION_COLUMN, expression_widget)
+        expression_widget.editingFinished.connect(self._on_monitoring_tag_expression_edited)
         type_widget = self._create_monitoring_tag_widget("type_combo", tag_type)
         self.monitoring_tag_table.setCellWidget(insert_row, 3, type_widget)
 
@@ -1198,6 +1231,8 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         if hasattr(name_widget, "editingFinished"):
             name_widget.editingFinished.connect(self._on_monitoring_tag_name_edited)
         name_widget.textChanged.connect(self._update_tag_name_column_width)
+        mode_widget.currentTextChanged.connect(self._on_monitoring_tag_mode_changed)
+        self._apply_tag_mode_ui(insert_row)
 
         self._coerce_monitoring_tag_count(insert_row)
         self._ensure_unique_monitoring_tag_address(insert_row)
@@ -1271,6 +1306,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             "engineering_value": eng_value_widget.text() if eng_value_widget else "",
             "enabled": enabled_widget.checkbox.isChecked() if enabled_widget else True,
             "device": self._row_device(row),
+            "expression": self._row_expression(row),
         }
 
     def _move_tag_row(self, source_row, target_row):
@@ -1722,7 +1758,77 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         finally:
             self._updating_tag_table = False
 
+    # --- Calculated tags (Mode "Calc") ---------------------------------------------
+    CALC_DISABLED_COLUMNS = (3, 4, 5, 6, 9)  # Type, Address, Count, Format, Write Value
+
+    def _row_mode(self, row):
+        widget = self.monitoring_tag_table.cellWidget(row, 2)
+        return widget.currentText() if isinstance(widget, QComboBox) else ""
+
+    def _row_expression(self, row):
+        widget = self.monitoring_tag_table.cellWidget(row, TAG_EXPRESSION_COLUMN)
+        return widget.text().strip() if isinstance(widget, QLineEdit) else ""
+
+    def _apply_tag_mode_ui(self, row):
+        """Calc rows: Type/Address/Count/Format/Write Value/Scale don't apply (nothing is
+        read from the wire) and the Expression cell does; other rows the other way round."""
+        table = self.monitoring_tag_table
+        is_calc = self._row_mode(row) == "Calc"
+        for column in self.CALC_DISABLED_COLUMNS:
+            widget = table.cellWidget(row, column)
+            if widget is not None:
+                widget.setEnabled(not is_calc)
+        scale_cell = table.cellWidget(row, 13)
+        if scale_cell is not None:
+            scale_cell.setEnabled(not is_calc)
+        expression = table.cellWidget(row, TAG_EXPRESSION_COLUMN)
+        if expression is not None:
+            expression.setEnabled(is_calc)
+        if is_calc:
+            # A fixed numeric shape so alarms/Trend treat the value as a number.
+            type_widget, format_widget, count_widget = (table.cellWidget(row, c) for c in (3, 6, 5))
+            self._updating_tag_table = True
+            try:
+                if type_widget is not None:
+                    type_widget.setCurrentText("Holding Register")
+                if format_widget is not None:
+                    format_widget.setCurrentText("F32")
+                if count_widget is not None:
+                    count_widget.setValue(2)
+            finally:
+                self._updating_tag_table = False
+        self._refresh_expression_column()
+
+    def _refresh_expression_column(self):
+        table = self.monitoring_tag_table
+        any_calc = any(self._row_mode(r) == "Calc" for r in range(table.rowCount()))
+        table.setColumnHidden(TAG_EXPRESSION_COLUMN, not any_calc)
+
+    def _on_monitoring_tag_mode_changed(self, _text=None):
+        if self._updating_tag_table:
+            return
+        row = self._find_monitoring_tag_row(self.sender(), 2)
+        if row is not None:
+            self._apply_tag_mode_ui(row)
+
+    def _on_monitoring_tag_expression_edited(self):
+        widget = self.sender()
+        row = self._find_monitoring_tag_row(widget, TAG_EXPRESSION_COLUMN)
+        if row is None or self._row_mode(row) != "Calc":
+            return
+        from monitoring.calc_tags import CalcError, compile_expression
+        try:
+            compile_expression(widget.text())
+            widget.setToolTip("Calculated tag expression -- evaluated after every Tags poll cycle.")
+            widget.setStyleSheet(self._get_input_style())
+        except CalcError as e:
+            widget.setToolTip(f"Expression error: {e}")
+            widget.setStyleSheet(self._get_input_style() + " QLineEdit { border: 1px solid #C62828; }")
+            self._log(f"Calculated tag expression error: {e}")
+
     def _ensure_unique_monitoring_tag_address(self, row):
+        if self._row_mode(row) == "Calc":
+            return  # a calculated tag has no address on the wire
         type_widget = self.monitoring_tag_table.cellWidget(row, 3)
         address_widget = self.monitoring_tag_table.cellWidget(row, 4)
         count_widget = self.monitoring_tag_table.cellWidget(row, 5)
@@ -1745,6 +1851,8 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             if not (other_type and other_addr):
                 continue
             if other_type.currentText() != tag_type or self._row_device(other_row) != device:
+                continue
+            if self._row_mode(other_row) == "Calc":
                 continue
             used.add(int(other_addr.value()))
 
@@ -2472,7 +2580,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
 
     TAG_ROW_FIELDS = ['Tag Name', 'Group', 'Mode', 'Type', 'Address', 'Count', 'Format', 'Comment', 'Enabled',
                       'Scale Enabled', 'Scale Mode', 'Raw Min', 'Raw Max', 'Scaled Min',
-                      'Scaled Max', 'Factor', 'Value Type', 'Bit Names', 'Device', 'Unit ID']
+                      'Scaled Max', 'Factor', 'Value Type', 'Bit Names', 'Expression', 'Device', 'Unit ID']
     # Per-installation, not part of a device *type* -- left out of saved Profiles.
     DEVICE_ROW_FIELDS = ('Device', 'Unit ID')
 
@@ -2505,6 +2613,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
                 'Bit Names': json.dumps(bit_names) if bit_names else '',
                 # Unit ID travels with the name so an import elsewhere can recreate the
                 # device; blank for the connection's own unit.
+                'Expression': tag.get('expression', ''),
                 'Device': tag.get('device', ''),
                 'Unit ID': tag['unit'] if tag.get('unit') is not None else '',
             })
@@ -2542,6 +2651,11 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         # Old exports have no Device/Unit ID columns -- every tag then simply stays on
         # the connection's own unit, exactly like before devices existed.
         self._ensure_tag_devices((r.get('Device', ''), r.get('Unit ID', '')) for r in rows)
+        if not self.tag_devices and any(not (r.get('Device') or '').strip() for r in rows):
+            # Old-format rows with no Device column need somewhere to land even when
+            # every device was explicitly removed -- same rescue Load Session uses.
+            self._ensure_default_device()
+            self.active_device = self.tag_devices[0]["name"]
         known_devices = {d["name"] for d in self.tag_devices}
 
         imported_count = 0
@@ -2565,6 +2679,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
                     comment=row.get('Comment', '').strip(),
                     enabled=enabled,
                     group=group,
+                    expression=(row.get('Expression') or '').strip(),
                     # Not "" -- that means "the open device tab" for a new tag, which would
                     # put a whole Device-less (older) import on whatever tab was open.
                     device=device if device in known_devices else self.active_device,
@@ -2641,6 +2756,13 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         # Rows land on `device` (default: whichever device tab is open). A tag only counts
         # as already present on that same device -- two meters both get their own "V1".
         target_device = self._default_tag_device() if device is None else device
+        if not target_device:
+            # No device exists to land these tags on (e.g. every device was removed) --
+            # same rescue CSV import and Load Session use.
+            self._ensure_default_device()
+            self.active_device = self.tag_devices[0]["name"]
+            self._refresh_tag_device_ui()
+            target_device = self.active_device
         existing_names = {(t['name'], t.get('device', '')) for t in self.monitoring_manager.get_monitoring_tags()}
 
         imported_count = 0
@@ -2666,6 +2788,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
                     comment=row.get('Comment', '').strip(),
                     enabled=str(row.get('Enabled', 'True')).strip().lower() in ('true', '1', 'yes'),
                     group=group,
+                    expression=(row.get('Expression') or '').strip(),
                     device=target_device,
                 )
                 existing_names.add((name, target_device))
@@ -3453,6 +3576,10 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             QMessageBox.warning(self, "No Tags", "Please add at least one read or write tag before starting monitoring.")
             return
 
+        if not read_tags and any(tag["mode"] == "Calc" for tag in tags):
+            QMessageBox.warning(self, "No Tags", "Calculated tags need at least one Read tag to work from.")
+            return
+        tags = [tag for tag in tags if tag["mode"] != "Calc"]  # nothing on the wire to clash
         duplicate_messages = self._find_duplicate_tag_addresses(tags)
         if duplicate_messages:
             QMessageBox.critical(
@@ -3918,7 +4045,8 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             # is only kept for older versions reading a newer session.
             "write_bounds": (
                 [[int(offset), bound[0], bound[1]]
-                 for offset, bound in (self.tag_devices[0].get("write_bounds") or {}).items()]
+                 for offset, bound in ((self.tag_devices[0].get("write_bounds") or {})
+                                       if self.tag_devices else {}).items()]
             ),
         }
 
@@ -3940,14 +4068,17 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         for saved in (data.get("devices") or []):
             if isinstance(saved, dict):
                 self._add_device_record(saved, default_connection=session_conn)
-        if not self.tag_devices or any(not (r.get("Device") or "").strip() for r in (data.get("tags") or [])):
+        # Old-format tags with no Device column need somewhere to land -- unlike a
+        # modern session genuinely saved with zero devices (and zero/already-tagged
+        # tags), which stays empty rather than being resurrected.
+        if any(not (r.get("Device") or "").strip() for r in (data.get("tags") or [])):
             unit = connection.get("unit", self.target_unit_id) if connection else self.target_unit_id
             if not any(d["unit"] == int(unit) and d["connection"] == session_conn for d in self.tag_devices):
                 name, n = "Device 1", 2
                 while self._device(name):
                     name, n = f"Device {n}", n + 1
                 self.tag_devices.insert(0, {"name": name, "unit": int(unit), "connection": session_conn})
-        self.active_device = self.tag_devices[0]["name"]
+        self.active_device = self.tag_devices[0]["name"] if self.tag_devices else None
         self._sync_active_device()
         tags = data.get("tags")
         if tags is not None:
@@ -3961,7 +4092,7 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         # Bounds come back inside each device record; an older session's flat list (before
         # devices existed) belongs to its single device, now the first one.
         legacy = data.get("write_bounds") or []
-        if legacy and not any(d.get("write_bounds") for d in (data.get("devices") or [])):
+        if legacy and self.tag_devices and not any(d.get("write_bounds") for d in (data.get("devices") or [])):
             first = self.tag_devices[0]
             first["write_bounds"] = {str(int(a)): [mn, mx] for a, mn, mx in legacy}
             self._save_devices()

@@ -483,7 +483,7 @@ up or down to reorder it - a blue line shows exactly where it will land as you d
 live values, comment, and alarm configuration (if any) all move with it. Reordering is only
 available while monitoring is stopped, the same as adding or removing a tag. Each row has:</p>
 <ul>
-<li><b>Tag Name</b>, <b>Mode</b> (Read or Write), <b>Type</b> (Coil/Discrete Input/Holding
+<li><b>Tag Name</b>, <b>Mode</b> (Read, Write, or Calc - see Calculated tags below), <b>Type</b> (Coil/Discrete Input/Holding
 Register/Input Register), <b>Address</b>, <b>Count</b>, <b>Format</b>.</li>
 <li><b>Read Value</b> - the decoded live value.</li>
 <li><b>Raw (Hex)</b> - the same value in hex, straight from the register(s), independent of format.</li>
@@ -570,6 +570,29 @@ of a device sending a value scaled by a fixed power of ten.</li>
 Value, live as the tag is polled - and in Trend, if a pen's tag has scaling enabled. Choose
 <b>Real</b> or <b>Integer</b> for how the scaled result is displayed. Unchecking <b>Scale</b> (or
 Cancelling the popup) turns scaling back off for that row.</p>
+
+<h3>Calculated tags</h3>
+<p>Set a row's <b>Mode</b> to <b>Calc</b> to make it a <b>calculated tag</b>: instead of reading a
+register, its value is an expression over other tags' current values - for example
+<code>P1 + P2 + P3</code> for a total, or <code>V1 * I1 * PF / 1000</code> for kW. An
+<b>Expression</b> column appears next to Mode once a Calc tag exists; Type, Address, Count, Format,
+Write Value and Scale don't apply to a Calc row and are greyed out.</p>
+<ul>
+<li>Expressions use the Script language's arithmetic: numbers, <code>+ - * /</code> and
+parentheses, and tag names. A plain name means that tag on the calc tag's own device, so the same
+<code>V1 * I1</code> works on every meter; <code>[DEVICE NAME].TAG</code> (e.g.
+<code>[METER 2].P1</code>) uses another device's tag, for site totals.</li>
+<li>Inputs use the value the Tags tab shows: the Engineering Value when scaling is on, otherwise
+the decoded Read Value; coils count as 1/0. Calc tags can use other calc tags.</li>
+<li>Calc tags are worked out after every Tags poll cycle from the values just read, so they add no
+traffic on the bus. Start Monitoring needs at least one Read tag to work from.</li>
+<li>If an input is missing or failed, a name isn't a tag, or two calc tags depend on each other,
+the Read Value shows <code>ERROR</code> - hover it for the reason. An expression with a mistake
+gets a red border when you finish typing it.</li>
+<li>A calc tag works like any other tag: alarms (High/Low), Trend pens, Overview pinned values,
+Log to CSV, and Script reads. CSV export/import, Sessions, Profiles and the saved workspace carry
+the expression. A Script can read a calc tag but can't write to it.</li>
+</ul>
 
 <h3>Alarms</h3>
 <p>Right-click a tag row and choose <b>Configure Alarm...</b>. Numeric tags get a High and/or
@@ -769,7 +792,7 @@ Enable the ones you want, click the &#8942; button in the Tag column to pick a t
 <b>Select Tag</b> popup, and set a color. With two or more devices the popup has a <b>Device</b>
 filter and lists each tag as "V1 (METER 2)"; the legend then shows the device too. A pen's type,
 address, count, and format all come from whichever tag you pick, not from separate fields here.
-Only tags on Holding or Input Registers with a numeric (or Hex) format show up in that list - Coils,
+Only tags on Holding or Input Registers with a numeric (or Hex) format, and calculated tags (which plot their computed value), show up in that list - Coils,
 Discrete Inputs, and the Bool format are left out, since a trend line is meant for continuously
 varying values rather than on/off state. If you need to watch a digital point over time, add it
 as a Tag and check its Read Value column instead. If none exist yet, the popup's tag list is just
@@ -958,7 +981,9 @@ tag gives the voltage, not a raw word. <code>READ &lt;tag&gt;</code> logs that v
 Format and writes all its registers at once. The tag's Address is converted with the Tags tab's
 0-/1-based setting, so it hits the same register the Tags tab does. Tag names
 are case-sensitive; with several devices, the current device's tag of that name is used (else the
-first one found on any device), and the read always goes to the current device. A tag name is only tried if
+first one found on any device); <code>[DEVICE NAME].TAG</code> picks a tag on a specific device. A tag
+is always read from and written to its own device, wherever the script currently points. A
+calculated tag gives its latest computed value (Tags monitoring must be running). A tag name is only tried if
 the name isn't already a variable you've assigned with <code>LET</code> - a LET variable always
 takes priority over a tag of the same name. <code>+</code> also concatenates text
 with numbers, so <code>LOG "value is " + x</code> works as expected. Types: COIL, DI (Discrete

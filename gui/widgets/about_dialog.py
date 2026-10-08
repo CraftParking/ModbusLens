@@ -85,6 +85,7 @@ FEATURES_HTML = """
 <li>A single misconfigured or failing tag doesn't stop the rest of the list from updating</li>
 <li>Per-tag alarms (High/Low limits, or ON/OFF for coils/discrete/BOOL) with red highlighting</li>
 <li>Engineering-unit scaling per tag - linear (Raw/Scaled Min/Max) or multiply-by-constant, shown live in the Engineering Value column</li>
+<li>Calculated tags (Mode Calc) - an expression over other tags' values, e.g. P1 + P2 + P3, or [METER 2].P1 across devices, usable in alarms, Trend, Overview pins and Scripts</li>
 <li>Bit View - a live, per-bit breakdown of a Holding/Input Register tag's raw value, each bit individually named; a Bool-format tag can also expand its bits inline as rows in the Tags table, with a Write Value cell per bit (Holding Register only) to read-modify-write just that one bit</li>
 <li>Log live tag values to CSV; CSV import/export of the tag list (with Device and Unit ID)</li>
 </ul>
@@ -202,6 +203,7 @@ CHANGELOG_HTML = """
 <li>Trend pages - up to 10 graphs, each with its own 20 pens, all polled while the trend runs; pens read from their own tag's device and show it in the legend; a bigger graph area with View Range on one row and Hide Stats in the tab</li>
 <li>Raw Data Device column and device filter; the Frame Viewer decodes each row with its device's framing; tag pickers (Trend pens, Script Add/Insert Tag) show each tag's device</li>
 <li>Tags Log to CSV and Raw Data Show Statistics include the device; write confirmations name each tag's device; File &gt; New Connection Window is now File &gt; New Window and Tools &gt; Connection Settings is now Tools &gt; Device Settings</li>
+<li>Calculated tags - a Calc mode in the Tags table: an expression over other tags' values (P1 + P2 + P3, V1 * I1 / 1000, or [METER 2].P1 for another device), worked out after every poll cycle with no extra bus traffic, with alarms, Trend pens, Overview pins, CSV logging and Script reads like any tag</li>
 <li>Workspace auto-save - devices, Tags, the Address Table range and Trend pages are saved every minute and on close, and restored on the next start (Save Session now includes Trend pages too)</li>
 <li>Write bounds (Min/Max) per device - each device on a shared gateway keeps its own limits, saved with the device so they survive reconnects and restarts</li>
 <li>Script tag names read and write like the Tags tab - Count, Format (F32, *_SWAP...) and scaling - so a meter's F32 tag gives its real value</li>

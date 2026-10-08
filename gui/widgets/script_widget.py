@@ -174,7 +174,7 @@ _TOKEN_RE = re.compile(r"""
         (?P<string>"(?:[^"\\]|\\.)*")
       | (?P<hex>0[xX][0-9a-fA-F]+)
       | (?P<number>\d+\.\d+|\d+)
-      | (?P<ident>[A-Za-z_][A-Za-z0-9_]*)
+      | (?P<ident>\[[^\]\n]+\]\.[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*)
       | (?P<op>==|!=|>=|<=|[()+\-*/><])
     )""", re.VERBOSE)
 
@@ -502,7 +502,7 @@ class ScriptRunner:
     def __init__(self, modbus_getter, server_getter, target_mode, log_callback, raw_data_callback=None,
                  tags_getter=None, reserve_range=None, release_range=None, result_callback=None,
                  device=None, device_resolver=None, device_modbus_getter=None, address_converter=None,
-                 register_decoder=None, register_encoder=None, tag_scaler=None):
+                 register_decoder=None, register_encoder=None, tag_scaler=None, calc_value_getter=None):
         self.modbus_getter = modbus_getter
         # Multi-device: the script talks to `device` (the Script tab's Device selector) until
         # a DEVICE line switches it. device_resolver(name) -> canonical name or None;
@@ -519,6 +519,7 @@ class ScriptRunner:
         self.register_decoder = register_decoder  # (registers, format) -> [values]
         self.register_encoder = register_encoder  # (text, format, count) -> [registers]
         self.tag_scaler = tag_scaler              # (tag, registers) -> float or None
+        self.calc_value_getter = calc_value_getter  # (tag) -> latest calc result or None
         self.server_getter = server_getter
         self.target_mode = target_mode  # "client" or "server"
         self.tags_getter = tags_getter or (lambda: [])
@@ -632,6 +633,16 @@ class ScriptRunner:
         if instr.op == "WRITE":
             data_type, address = self._resolve_type_address(instr.args)
             tag = self._find_tag(instr.args["tag_name"]) if "tag_name" in instr.args else None
+            if tag is not None and tag.get("mode") == "Calc":
+                raise ScriptError(f"'{tag['name']}' is a calculated tag and can't be written")
+            if (tag is not None and tag.get("device") and tag["device"] != self.device
+                    and self.device_modbus_getter is not None):
+                # A tag is written on its own device, wherever the script currently points.
+                current, self.device = self.device, tag["device"]
+                try:
+                    return self._execute(instr)
+                finally:
+                    self.device = current
             if tag is not None and self._tag_is_multi_register(tag):
                 value = self._eval(parse_expression(instr.args["value_text"]))
                 try:
@@ -767,7 +778,11 @@ class ScriptRunner:
 
     def _find_tag(self, name):
         """The current device's tag of that name (two meters both have a V1), else the
-        first tag with that name on any device."""
+        first tag with that name on any device. [DEVICE NAME].TAG picks a device's tag."""
+        if name.startswith("[") and "]." in name:
+            device, tag_name = name[1:].split("].", 1)
+            device = (self.device_resolver(device.strip()) if self.device_resolver else None) or device.strip()
+            return next((t for t in self.tags_getter() if t["name"] == tag_name and t.get("device") == device), None)
         matches = [tag for tag in self.tags_getter() if tag["name"] == name]
         own = [tag for tag in matches if tag.get("device") == self.device]
         return (own or matches or [None])[0]
@@ -851,6 +866,18 @@ class ScriptRunner:
     def _read_tag(self, tag):
         """A tag's current value the way the Tags tab shows it: its Count registers,
         decoded with its Format, scaled if scaling is on; bit types read one bit."""
+        if tag.get("mode") == "Calc":
+            value = self.calc_value_getter(tag) if self.calc_value_getter else None
+            if value is None:
+                raise ScriptError(f"calculated tag '{tag['name']}' has no value yet (start Tags monitoring)")
+            return value
+        if tag.get("device") and tag.get("device") != self.device and self.device_modbus_getter is not None:
+            # A tag is read from its own device, wherever the script currently points.
+            current, self.device = self.device, tag["device"]
+            try:
+                return self._read_tag(tag)
+            finally:
+                self.device = current
         data_type = tag["type"]
         try:
             address = self.address_converter(tag)
@@ -1036,7 +1063,7 @@ class ScriptWidget(QWidget):
             tooltip="The device a Client Connection script starts on -- a DEVICE <name> line switches it")
         toolbar.addWidget(self.device_selector)
         self.target_combo.currentIndexChanged.connect(
-            lambda _i: self.device_selector.combo.setEnabled(self._target_mode() == "client"))
+            lambda _i: self.device_selector.setVisible(self._target_mode() == "client"))
         toolbar.addSpacing(10)
 
         self.compile_btn = QPushButton("Compile")
@@ -1466,6 +1493,8 @@ class ScriptWidget(QWidget):
             register_decoder=getattr(self.parent_window, "_decode_register_values", None),
             register_encoder=getattr(self.parent_window, "_parse_register_values", None),
             tag_scaler=self._tag_scaled_value,
+            calc_value_getter=lambda tag: getattr(self.parent_window, "monitoring_manager").calc_values.get(
+                (tag.get("device", ""), tag["name"])),
         )
         self.runner.load(instructions)
         self._reset_variables_panel(collect_variable_names(instructions))

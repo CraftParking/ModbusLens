@@ -51,6 +51,7 @@ class TrendPen:
         self.enabled = False
         self.name = ""  # the bound tag's exact name -- used to match Tags-tab scaling config, not for display
         self.device = ""  # the bound tag's device -- two meters can both have a "V1"; reads go to this one
+        self.calc = False  # bound to a calculated tag: plots its computed value, never reads the wire
         self.show_device = False  # set by TrendWidget while there are 2+ devices (see display_name)
         self.label = ""  # optional custom display name; falls back to `name` when blank (see display_name)
         self.type = "Holding Register"
@@ -370,6 +371,7 @@ class AddPenDialog(QDialog):
             if tag:
                 pen.name = tag["name"]
                 pen.device = tag.get("device", "")
+                pen.calc = tag.get("mode") == "Calc"
                 pen.type = tag["type"]
                 pen.address = tag["address"]
                 pen.count = tag["count"]
@@ -715,7 +717,7 @@ class TrendWidget(QWidget):
         page.chart_view.deleteLater()
         self._rebuild_page_tabs()
 
-    PEN_FIELDS = ("enabled", "name", "device", "label", "type", "address", "count", "format", "index", "scale_mode")
+    PEN_FIELDS = ("enabled", "name", "device", "label", "type", "address", "count", "format", "index", "scale_mode", "calc")
 
     def to_data(self):
         """Pages and their configured pens (not the plotted points), for Save Session and
@@ -1262,10 +1264,15 @@ class TrendWidget(QWidget):
         for pen in self._all_pens():
             if not (pen.is_active() and pen.series is not None):
                 continue
-            pen_modbus, unit, link = self._pen_client(pen, modbus)
-            if pen_modbus is None:
-                continue  # its device is offline
-            value = self._read_pen_value(pen_modbus, pen, unit=unit, link=link)
+            if pen.calc:
+                # A calculated tag's latest result (computed after each Tags poll cycle).
+                manager = getattr(self.parent_window, "monitoring_manager", None)
+                value = manager.calc_values.get((pen.device, pen.name)) if manager is not None else None
+            else:
+                pen_modbus, unit, link = self._pen_client(pen, modbus)
+                if pen_modbus is None:
+                    continue  # its device is offline
+                value = self._read_pen_value(pen_modbus, pen, unit=unit, link=link)
             if value is None:
                 continue
             pen.series.append(now_ms, value)

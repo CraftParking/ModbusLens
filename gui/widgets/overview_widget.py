@@ -469,7 +469,6 @@ class OverviewWidget(QWidget):
         self.mw = main_window
         self.colors = c = main_window._colors()
         self.cards = {}
-        self._highlighted = None  # a card pointed at from the top bar (see show_device)
         group_style = main_window._get_groupbox_style()
         button_style = main_window._get_button_style()
         label_style = f"color: {c['text_secondary']}; font-weight: normal;"
@@ -657,20 +656,6 @@ class OverviewWidget(QWidget):
             card = self.cards[key]
             card.update_view(title, " · ".join(subtitle_parts), status, detail, values, paused,
                              connected=link_state in ("connected", "reconnecting"))
-            card.set_active(key == self._highlighted)
-
-    def show_device(self, key):
-        """Highlight `key`'s card and scroll it into view (top-bar click)."""
-        self._highlighted = key
-        self.refresh()
-        card = self.cards.get(key)
-        if card is not None:
-            self.scroll.ensureWidgetVisible(card)
-        QTimer.singleShot(2500, self._clear_highlight)
-
-    def _clear_highlight(self):
-        self._highlighted = None
-        self.refresh()
 
     def _layout_cards(self, keys):
         columns = max(1, (self.scroll.viewport().width() - 12) // (DeviceCard.WIDTH + 12))
@@ -730,8 +715,10 @@ class OverviewWidget(QWidget):
             QMessageBox.information(self, "Add Device from Profile",
                                     "No saved profiles with tags yet -- create or download one in the Profiles tab.")
             return
+        default_conn = (self.mw._device_connection(self.mw.tag_devices[0]["name"]) if self.mw.tag_devices
+                       else self.mw._legacy_connection())
         dialog = AddFromProfileDialog(profiles, self.mw.tag_devices, self.mw._get_input_style(), self,
-                                      connection=self.mw._device_connection(self.mw.tag_devices[0]["name"]),
+                                      connection=default_conn,
                                       edit_connection=self.mw._edit_connection_dialog)
         if dialog.exec() != QDialog.Accepted:
             return
@@ -781,13 +768,16 @@ class OverviewWidget(QWidget):
 
 class DeviceStatusBar(QWidget):
     """The top bar's device strip: one entry per device -- status dot, name, status word.
-    Click an entry to jump to that device's card on the Overview tab."""
+    Click an entry to select/highlight it there (multiple at once) for the top bar's
+    Device Settings / Connect Selected / Disconnect Selected actions -- purely a top-bar
+    selection, it doesn't navigate the Overview tab or anything else."""
 
     def __init__(self, main_window):
         super().__init__(main_window)
         self.mw = main_window
         self.colors = main_window._colors()
         self.entries = {}
+        self._selected = set()
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         self.scroll = QScrollArea()
@@ -810,11 +800,26 @@ class DeviceStatusBar(QWidget):
         self.timer.timeout.connect(self.refresh)
         self.timer.start()
 
+    def selected_devices(self):
+        """Names currently highlighted in the top bar (for Device Settings / Connect
+        Selected / Disconnect Selected) -- a plain set, owned here."""
+        return set(self._selected)
+
+    def _toggle_selected(self, name):
+        if name in self._selected:
+            self._selected.discard(name)
+        else:
+            self._selected.add(name)
+        self.refresh()
+        if hasattr(self.mw, "_refresh_connection_controls"):
+            self.mw._refresh_connection_controls()
+
     def refresh(self):
         mw = self.mw
         if not hasattr(mw, "monitoring_manager") or not hasattr(mw, "link_pool"):
             return
         names = [d["name"] for d in mw.tag_devices]
+        self._selected &= set(names)
         for name in list(self.entries):
             if name not in names:
                 self.entries.pop(name).deleteLater()
@@ -822,7 +827,7 @@ class DeviceStatusBar(QWidget):
         for name in names:
             if name not in self.entries:
                 entry = _StatusEntry(name, self.colors)
-                entry.clicked.connect(mw._show_device_card)
+                entry.clicked.connect(self._toggle_selected)
                 self.entries[name] = entry
         if order != [self.entries[n] for n in names]:
             for widget in order:
@@ -837,9 +842,9 @@ class DeviceStatusBar(QWidget):
             status = device_status(mw.monitoring_manager.device_stats.get(name, {}),
                                    bool(getattr(mw, "monitoring_active", False)), bool(meta.get("paused")),
                                    len(device_tags) or 1, mw._device_link_state(name))
-            entry.update_view(status, False,
+            entry.update_view(status, name in self._selected,
                               f"{name}: {describe(meta.get('connection'))}, Unit {meta.get('unit')}\n"
-                              f"{STATUS_LABELS.get(status, status)}\nClick to show it on the Overview")
+                              f"{STATUS_LABELS.get(status, status)}\nClick to select")
 
 
 class _StatusEntry(QFrame):

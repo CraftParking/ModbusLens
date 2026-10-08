@@ -15,6 +15,8 @@ ADD_DEVICE_SENTINEL = "+ Add Device..."
 # Logical index of the Tags table's Device column. Appended last so every existing
 # hard-coded column index stays valid; it is only *displayed* next to Tag Name.
 TAG_DEVICE_COLUMN = 15
+# Expression of a calculated (Mode "Calc") tag -- appended after Device, shown after Mode.
+TAG_EXPRESSION_COLUMN = 16
 
 
 def validate_device(name, unit, existing, editing=None, connection=None):

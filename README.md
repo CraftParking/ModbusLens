@@ -311,13 +311,13 @@ Three downloads are provided:
 
 ## Upcoming Features
 
-- **v2.4.0 (built, not released yet):** multiple devices in one window - an Overview tab, per-device connections and Unit IDs, a Device picker in every tool, per-device Tags/Trend/Raw Data, Trend pages, Address Table and Tags monitoring together, Gateway mode, RTU over TCP, Bit View, and Create Tags From Scan  
+- **v2.4.0 (built, not released yet):** multiple devices in one window - an Overview tab, per-device connections and Unit IDs, a Device picker in every tool, per-device Tags/Trend/Raw Data, Trend pages, Address Table and Tags monitoring together, Gateway mode, RTU over TCP, Bit View, Create Tags From Scan, calculated tags (expressions over other tags), and an auto-saved workspace  
 - Server tab simulating multiple devices/unit addresses at once, not just one  
 - Auto-varying simulated values in Server mode (sine wave, ramp, random noise) instead of only static manually-set values  
 - Raw byte injection - send a custom/malformed frame by hand, for testing non-standard device behavior or protocol compliance  
 - A string/text data type, beyond the current numeric format set  
 - A user-configurable UI scale/zoom factor for very high-resolution displays run at 100% OS scaling (separate from the per-log Ctrl+scroll zoom, and from OS-level HiDPI scaling, which the app already follows automatically)  
-- Calculated tags combining multiple registers via an expression, as a persistent Tag/Trend source (Scripting can already do this ad hoc; this would make it a saved, always-on tag)  
+  
 
 ---
 

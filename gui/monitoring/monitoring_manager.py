@@ -33,6 +33,10 @@ class MonitoringManager:
         self.group_header_rows = {}  # row index -> group name, for a group's own header row
         self.tag_bits = {}  # row index -> {bit index (str) -> name}, for Bit View
         self.tag_last_raw = {}  # row index -> last-read raw register list, for Bit View
+        # Calculated tags: latest number per polled tag (engineering value when scaled), and
+        # the latest result per calc tag -- both keyed by (device, tag name).
+        self.tag_numbers = {}
+        self.calc_values = {}
         self.tag_bit_rows = {}  # bit-child row index -> {"parent_row": int, "bit_index": int}
         self.expanded_bit_tags = set()  # parent row indices currently showing inline bit rows
         self._log_file = None
@@ -210,6 +214,7 @@ class MonitoringManager:
                 # The tag's device: its Unit ID, and the client of the device's link (None
                 # while that device isn't connected -- polling skips it, writes refuse).
                 "device": self.parent._row_device(row),
+                "expression": self.parent._row_expression(row) if mode == "Calc" else "",
                 "unit": self.parent._tag_device_unit(self.parent._row_device(row)),
                 "client": self.parent._device_client(self.parent._row_device(row)),
             })
@@ -284,6 +289,72 @@ class MonitoringManager:
         timestamp_widget = target_table.cellWidget(target_row, 11)
         if timestamp_widget:
             timestamp_widget.setText(timestamp)
+
+    # --- Calculated tags --------------------------------------------------------------
+    def _remember_number(self, tag, value, engineering_value):
+        key = (tag.get("device", ""), tag["name"])
+        number = None
+        if engineering_value not in ("", None):
+            try:
+                number = float(engineering_value)
+            except (TypeError, ValueError):
+                number = None
+        if number is None:
+            if tag["type"] in ("Coil", "Discrete Input"):
+                raw = value[0] if isinstance(value, list) else value
+                number = 1 if raw else 0
+            else:
+                number = self._decode_numeric_value(tag, value)
+        if number is None:
+            self.tag_numbers.pop(key, None)
+        else:
+            self.tag_numbers[key] = number
+
+    def _update_calc_tags(self):
+        """Evaluate every enabled calc tag from this cycle's values and show the results
+        like any polled tag (Read Value, Timestamp, alarm colouring, CSV log)."""
+        from monitoring.calc_tags import CalcError, evaluate_all, format_value
+        calc_tags = [t for t in self.get_monitoring_tags() if t["mode"] == "Calc" and t["enabled"]]
+        if not calc_tags:
+            self.calc_values = {}
+            return
+        inputs = dict(self.tag_numbers)
+        results = evaluate_all(calc_tags, inputs, [d["name"] for d in self.parent.tag_devices])
+        timestamp = getattr(self, "_current_poll_timestamp", "") or time.strftime("%H:%M:%S")
+        log_timestamp = getattr(self, "_current_poll_log_timestamp", "") or time.strftime("%Y-%m-%d %H:%M:%S")
+        self.calc_values = {k: v for k, v in results.items() if not isinstance(v, CalcError)}
+        for tag in calc_tags:
+            key = (tag.get("device", ""), tag["name"])
+            result = results.get(key)
+            if isinstance(result, CalcError) or result is None:
+                text = "ERROR"
+                self._set_calc_error_tooltip(tag, str(result) if result is not None else "no value")
+                self.add_monitoring_row(tag["name"], tag["mode"], tag["type"], tag["address"], text, "",
+                                        tag["comment"], timestamp, device=key[0])
+                self._log_row(tag, log_timestamp, text, "")
+                continue
+            text = format_value(result)
+            self._set_calc_error_tooltip(tag, None)
+            self.add_monitoring_row(tag["name"], tag["mode"], tag["type"], tag["address"], text, "",
+                                    tag["comment"], timestamp, "", self.check_alarm_number(tag, result),
+                                    device=key[0])
+            self._log_row(tag, log_timestamp, text, "")
+
+    def _set_calc_error_tooltip(self, tag, error):
+        widget = self.parent.monitoring_tag_table.cellWidget(tag["row"], 7)
+        if widget is not None:
+            widget.setToolTip(f"Calculation error: {error}" if error else "")
+
+    def check_alarm_number(self, tag, number):
+        """Alarm check for a value that's already a number (calculated tags)."""
+        alarm = self.tag_alarms.get(tag["row"])
+        if not alarm or not alarm.get("enabled") or number is None:
+            return False
+        if alarm.get("high_enabled") and number > alarm.get("high", float("inf")):
+            return True
+        if alarm.get("low_enabled") and number < alarm.get("low", float("-inf")):
+            return True
+        return False
 
     def clear_monitoring_results(self):
         """Clear cached monitoring values."""
@@ -465,6 +536,7 @@ class MonitoringManager:
             raw_hex = self.format_raw_hex(tag, value)
             in_alarm = self.check_alarm(tag, value)
             engineering_value = self.compute_engineering_value(tag, value)
+            self._remember_number(tag, value, engineering_value)
             if tag["type"] in ("Holding Register", "Input Register"):
                 # Cached for Bit View, which redraws from here on its own timer rather
                 # than needing a push from every poll result.
@@ -480,6 +552,7 @@ class MonitoringManager:
             self._log_row(tag, log_timestamp, display_value, raw_hex)
             return
 
+        self.tag_numbers.pop((tag.get("device", ""), tag["name"]), None)  # no stale input for calcs
         self.add_monitoring_row(
             tag["name"], tag["mode"], tag["type"], tag["address"], "ERROR", "", tag["comment"], timestamp,
             device=tag.get("device", ""),
@@ -564,6 +637,7 @@ class MonitoringManager:
         self._poll_worker = None
         self._monitoring_poll_in_progress = False
         self._commit_device_cycle()
+        self._update_calc_tags()
 
         # Only treat this as a lost-connection-style failure (and count toward auto-stop)
         # when every tag failed -- a single bad tag (e.g. a newly added one with a bad
