@@ -688,9 +688,28 @@ class DeviceManagerMixin:
         conn = normalize_connection(conn)
         current = _ConnectionView(conn, unit)
         dialog_cls = sys.modules[type(self).__module__].ConnectionSettingsDialog
-        dialog = dialog_cls(self, self.connection_history, current)
-        if dialog.exec() != QDialog.Accepted:
-            return None
+        serial_overrides = tcp_overrides = None
+        while True:
+            dialog = dialog_cls(self, self.connection_history, current,
+                                serial_overrides=serial_overrides, tcp_overrides=tcp_overrides)
+            if dialog.exec() == QDialog.Accepted:
+                break
+            mode = dialog.find_devices_requested_mode
+            if mode is None:
+                return None
+            # "Find Devices..." -- pick a match modally, then reopen this dialog pre-filled
+            # with it (Find Devices' normal Apply would edit some other device instead).
+            picked = self.find_devices.pick_match(
+                initial_ip=current.target_ip, initial_port=current.target_port,
+                initial_com_port=current.serial_port, initial_mode=mode,
+            )
+            serial_overrides = tcp_overrides = None
+            if picked is not None:
+                kind, data = picked
+                if kind == "tcp":
+                    tcp_overrides = data
+                else:
+                    serial_overrides = data
         vals = dialog.get_values()
         self.connection_history = vals.get("history", self.connection_history)
         self._save_settings()

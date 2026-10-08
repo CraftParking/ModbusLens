@@ -43,9 +43,30 @@ class FindDevicesDialog:
         self.dialog = None
         self.tcp_scanner = None
         self.serial_worker = None
+        self._pick_mode = False
+        self._picked = None
+
+    def pick_match(self, initial_ip=None, initial_port=None, initial_com_port=None,
+                   initial_mode="tcp"):
+        """Run Find Devices modally for a caller that is itself inside a modal dialog
+        (Add/Edit Device): returns the (kind, data) of the match the user applied, or
+        None if they closed it without applying. Nothing is handed to Connection Settings."""
+        self._pick_mode, self._picked = True, None
+        try:
+            self._prepare_dialog(initial_ip, initial_port, initial_com_port, initial_mode)
+            self.dialog.exec()
+        finally:
+            self._pick_mode = False
+        return self._picked
 
     def show_dialog(self, initial_ip=None, initial_port=None, initial_com_port=None,
                      initial_mode="tcp"):
+        self._prepare_dialog(initial_ip, initial_port, initial_com_port, initial_mode)
+        self.dialog.show()
+        self.dialog.raise_()
+        self.dialog.activateWindow()
+
+    def _prepare_dialog(self, initial_ip, initial_port, initial_com_port, initial_mode):
         if self.dialog is None:
             self._build_dialog()
 
@@ -56,10 +77,6 @@ class FindDevicesDialog:
         if initial_com_port:
             self.port_combo.setCurrentText(initial_com_port)
         self.transport_combo.setCurrentIndex(1 if initial_mode == "serial" else 0)
-
-        self.dialog.show()
-        self.dialog.raise_()
-        self.dialog.activateWindow()
 
     def _build_dialog(self):
         c = self.parent._colors()
@@ -389,6 +406,10 @@ class FindDevicesDialog:
             return
         row = items[0].row()
         kind, data = self.results_table.item(row, 0).data(Qt.UserRole)
+        if self._pick_mode:
+            self._picked = (kind, data)
+            self.dialog.accept()
+            return
         self.dialog.hide()
         if kind == TCP_ROW:
             self.parent._show_connection_settings(tcp_overrides=data)
