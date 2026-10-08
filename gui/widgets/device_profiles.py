@@ -1159,12 +1159,12 @@ class DeviceProfilesPanel(QWidget):
                 if skipped_count:
                     message += f" ({skipped_count} already present, skipped)"
                 mw._log(message)
-            return {t.get("Tag Name", "") for t in mw._build_tag_export_rows()}
+            return mw._live_tag_names_for_import()
 
         def on_download():
             self._save_community_profile(entry, data)
 
-        live_tag_names = {t.get("Tag Name", "") for t in mw._build_tag_export_rows()}
+        live_tag_names = mw._live_tag_names_for_import()
         dialog = CreateProfileDialog(
             self._colors(), self._button_style(), preset=data, parent=self,
             view_only=True, live_tag_names=live_tag_names, input_style=self._input_style(),
@@ -1267,9 +1267,9 @@ class DeviceProfilesPanel(QWidget):
                 if skipped_count:
                     message += f" ({skipped_count} already present, skipped)"
                 mw._log(message)
-            return {t.get("Tag Name", "") for t in mw._build_tag_export_rows()}
+            return mw._live_tag_names_for_import()
 
-        live_tag_names = {t.get("Tag Name", "") for t in mw._build_tag_export_rows()}
+        live_tag_names = mw._live_tag_names_for_import()
         dialog = CreateProfileDialog(
             self._colors(), self._button_style(), preset=profile, parent=self,
             view_only=True, live_tag_names=live_tag_names, input_style=self._input_style(),

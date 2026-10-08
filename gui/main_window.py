@@ -2759,6 +2759,14 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         self._refresh_tag_device_ui()
         return imported_count
 
+    def _live_tag_names_for_import(self):
+        """Names of the tags already on the device an import would land on -- what the
+        Profiles View status dots compare against. Same rule as _import_additional_tag_rows'
+        duplicate check: a name only counts as present on that same device."""
+        target = self._default_tag_device()
+        return {t.get("Tag Name", "") for t in self._build_tag_export_rows()
+                if (t.get("Device") or "") == (target or "")}
+
     def _import_additional_tag_rows(self, rows, device=None):
         """Add `rows` (the same per-tag dict shape _build_tag_export_rows produces) as
         NEW tags alongside whatever's already in the Tags table, instead of
