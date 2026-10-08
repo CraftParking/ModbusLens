@@ -707,8 +707,8 @@ section h2 {
 
 .shot-preview img {
   aspect-ratio: 16 / 10;
-  object-fit: cover;
-  object-position: top;
+  object-fit: contain;
+  object-position: center;
   cursor: zoom-in;
   transition: opacity 0.15s ease;
 }
