@@ -6,6 +6,7 @@ per-widget re-styling at runtime (see README's Upcoming Features / this feature'
 own scope: restart-to-apply, not live switching).
 """
 import os
+import tempfile
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor, QPalette, QPen
@@ -95,7 +96,32 @@ def get_colors(mode):
     return DARK if mode == "dark" else LIGHT
 
 
-_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_generated_icons")
+_icon_dir_cache = None
+
+
+def _icon_dir():
+    """A writable per-user dir for generated icons.
+
+    Never next to __file__: in an AppImage (or any read-only install) the bundle is
+    not writable. Resolved lazily so QApplication's org/app name are already set.
+    """
+    global _icon_dir_cache
+    if _icon_dir_cache:
+        return _icon_dir_cache
+    from PySide6.QtCore import QStandardPaths
+    base = QStandardPaths.writableLocation(QStandardPaths.CacheLocation)
+    candidates = [os.path.join(base, "icons")] if base else []
+    candidates.append(os.path.join(tempfile.gettempdir(), "modbuslens-icons"))
+    for path in candidates:
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError:
+            continue
+        if os.access(path, os.W_OK):
+            _icon_dir_cache = path
+            return path
+    _icon_dir_cache = tempfile.mkdtemp(prefix="modbuslens-icons-")
+    return _icon_dir_cache
 
 
 def _draw_arrow_icon(path, direction, color_hex):
@@ -130,13 +156,13 @@ def get_arrow_icon_paths(mode):
     colored from the same token table as everything else.
     """
     c = get_colors(mode)
-    os.makedirs(_ICON_DIR, exist_ok=True)
-    up_path = os.path.join(_ICON_DIR, f"spin_up_{mode}.png").replace("\\", "/")
-    down_path = os.path.join(_ICON_DIR, f"spin_down_{mode}.png").replace("\\", "/")
-    if not os.path.exists(up_path):
-        _draw_arrow_icon(up_path, "up", c["text_secondary"])
-    if not os.path.exists(down_path):
-        _draw_arrow_icon(down_path, "down", c["text_secondary"])
+    icon_dir = _icon_dir()
+    up_path = os.path.join(icon_dir, f"spin_up_{mode}.png").replace("\\", "/")
+    down_path = os.path.join(icon_dir, f"spin_down_{mode}.png").replace("\\", "/")
+    # Regenerate every launch (two 10x10 PNGs): a stale cache from an older build
+    # or colour table would otherwise stick around forever.
+    _draw_arrow_icon(up_path, "up", c["text_secondary"])
+    _draw_arrow_icon(down_path, "down", c["text_secondary"])
     return up_path, down_path
 
 
