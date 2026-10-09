@@ -428,6 +428,13 @@ class RegisterScannerWidget(QWidget):
         )
         self.create_tags_btn.clicked.connect(self._create_tags_from_scan)
         row2.addWidget(self.create_tags_btn)
+
+        self.export_btn = QPushButton("Export CSV...")
+        self.export_btn.setStyleSheet(self.parent_window._get_button_style())
+        self.export_btn.setEnabled(False)
+        self.export_btn.setToolTip("Save every address this scan resolved (responds / no response / timeout) to a CSV file")
+        self.export_btn.clicked.connect(self._export_results_csv)
+        row2.addWidget(self.export_btn)
         control_layout.addLayout(row2)
         layout.addWidget(control_group)
 
@@ -656,6 +663,29 @@ class RegisterScannerWidget(QWidget):
             self.page_tabbar.removeTab(0)
         self.page_tabbar.blockSignals(False)
         self.create_tags_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
+
+    def _export_results_csv(self):
+        """One row per address the scan resolved, in address order -- the same statuses
+        the grid colors show. Addresses a stopped scan never reached are left out."""
+        if not self._address_status:
+            return
+        from gui.csv_export import export_rows_csv
+        device = getattr(self, "_scanned_device", None) or self.device_selector.device() or ""
+        record = self.parent_window._device(device) if device else None
+        unit = record["unit"] if record else ""
+        function_name = getattr(self, "_scanned_function", None) or self.addr_function_combo.currentText()
+        one_based = getattr(self.parent_window, "tag_address_one_based", True)
+        labels = {"ok": "Responds", "bad": "No response", "timeout": "Timeout (inconclusive)"}
+        rows = [
+            [device, unit, function_name, address, address + (1 if one_based else 0), labels.get(status, status)]
+            for address, status in sorted(self._address_status.items())
+        ]
+        export_rows_csv(
+            self, "Export Scanner Results", "scanner_results",
+            ["Device", "Unit ID", "Function", "Protocol Address", "Tag Address", "Status"],
+            rows, log=self._log,
+        )
 
     def _modbus(self):
         """The device picked in this tab's Device selector (None while it's offline)."""
@@ -746,6 +776,7 @@ class RegisterScannerWidget(QWidget):
         self.addr_start_btn.setEnabled(False)
         self.addr_stop_btn.setEnabled(True)
         self.create_tags_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
 
         self._scanned_device = self.device_selector.device()
         self._scanned_function = self.addr_function_combo.currentText()
@@ -786,6 +817,7 @@ class RegisterScannerWidget(QWidget):
         item.setToolTip(f"Protocol address {address} -- {tip}")
 
     def _on_address_scan_complete(self, responding_count, probes_issued, inconclusive_count):
+        self.export_btn.setEnabled(bool(self._address_status))
         merged = _merge_ranges(self._found_ranges)
         if merged:
             summary = ", ".join(f"{s}" if s == e else f"{s}-{e}" for s, e in merged)

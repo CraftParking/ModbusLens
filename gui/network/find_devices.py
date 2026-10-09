@@ -151,6 +151,12 @@ class FindDevicesDialog:
 
         apply_row = QHBoxLayout()
         apply_row.addStretch()
+        self.export_btn = QPushButton("Export CSV...")
+        self.export_btn.setStyleSheet(self.parent._get_button_style())
+        self.export_btn.setEnabled(False)
+        self.export_btn.setToolTip("Save every device found so far to a CSV file")
+        self.export_btn.clicked.connect(self._export_results_csv)
+        apply_row.addWidget(self.export_btn)
         self.apply_btn = QPushButton("Apply to Device...")
         self.apply_btn.setStyleSheet(self.parent._get_button_style())
         self.apply_btn.setEnabled(False)
@@ -388,11 +394,26 @@ class FindDevicesDialog:
         self.results_table.setItem(row, 1, QTableWidgetItem(target))
         self.results_table.setItem(row, 2, QTableWidgetItem(params))
         self.results_table.setItem(row, 3, QTableWidgetItem(unit_id_text))
+        self.export_btn.setEnabled(True)
 
     def _clear_results(self):
         self.results_table.setRowCount(0)
         self.output_text.clear()
         self.apply_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
+
+    def _export_results_csv(self):
+        table = self.results_table
+        rows = [[table.item(r, c).text() if table.item(r, c) else "" for c in range(table.columnCount())]
+                for r in range(table.rowCount())]
+        if not rows:
+            return
+        from gui.csv_export import export_rows_csv
+        export_rows_csv(
+            self.dialog, "Export Found Devices", "found_devices",
+            ["Transport", "Target", "Parameters", "Unit ID"], rows,
+            log=getattr(self.parent, "_log", None),
+        )
 
     def _on_selection_changed(self):
         self.apply_btn.setEnabled(bool(self.results_table.selectedItems()))
