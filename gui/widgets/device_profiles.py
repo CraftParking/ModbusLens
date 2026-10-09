@@ -62,7 +62,24 @@ def _without_device_fields(mw):
 
 
 COMMUNITY_FORM_ENDPOINT = "https://api.staticforms.dev/submit"
-COMMUNITY_FORM_API_KEY = "sf_bcbc80673c44a67501b9b103"
+COMMUNITY_FORM_API_KEY = "sf_bcbc80673c44a67501b9b103"  # built-in fallback, see below
+# The key is also looked up live from this small file in the repo (once per session), so it
+# can be rotated by editing one file on GitHub instead of shipping a release -- the built-in
+# key above is only used when that file can't be fetched or doesn't look like a key. Only the
+# KEY is fetched; the endpoint stays fixed in the app so a changed file can never redirect
+# submissions to another server.
+COMMUNITY_FORM_KEY_URL = f"https://raw.githubusercontent.com/{COMMUNITY_REPO}/{COMMUNITY_BRANCH}/community-form.json"
+_FORM_KEY_RE = re.compile(r"^sf_[0-9a-f]{24}$")
+_live_form_key = None  # the key fetched this session, once one has been
+
+
+def _parse_form_key(body):
+    """The `apiKey` from community-form.json's body, or None if it isn't a valid one."""
+    try:
+        key = json.loads(body.decode("utf-8")).get("apiKey")
+    except (ValueError, AttributeError, UnicodeDecodeError):
+        return None
+    return key if isinstance(key, str) and _FORM_KEY_RE.match(key) else None
 
 
 def _slugify(name):
@@ -1421,9 +1438,43 @@ class DeviceProfilesPanel(QWidget):
                 mw._log(f"'{name}' was already submitted to the Community list previously -- skipped")
             return
 
+        self.share_btn.setEnabled(False)
+        self.share_btn.setText("Submitting...")
+        self._with_community_key(lambda key: self._post_submission(profile, name, content_hash, key))
+
+    def _with_community_key(self, callback):
+        """Calls callback(api_key) with the key fetched live from GitHub (cached for the
+        session), or the built-in one if that can't be fetched/validated -- never fails."""
+        global _live_form_key
+        if _live_form_key:
+            callback(_live_form_key)
+            return
+
+        def resolve(key, why=""):
+            global _live_form_key
+            if key:
+                _live_form_key = key
+            else:
+                mw = self.parent_window
+                if mw is not None and hasattr(mw, "_log"):
+                    mw._log(f"Using the built-in Community form key ({why})")
+            callback(key or COMMUNITY_FORM_API_KEY)
+
+        worker = _HttpFetchWorker(COMMUNITY_FORM_KEY_URL, timeout=4, parent=self)
+        worker.succeeded.connect(
+            lambda u, body: resolve(_parse_form_key(body), "the key file wasn't valid")
+        )
+        worker.failed.connect(lambda u, err: resolve(None, "couldn't fetch the key file"))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _post_submission(self, profile, name, content_hash, api_key):
+        """POSTs the submission. If it fails while using a live-fetched key that differs from
+        the built-in one (e.g. a typo in community-form.json), retries once with the built-in
+        key rather than showing a failure the user can do nothing about."""
         export = {k: v for k, v in profile.items() if not k.startswith("_")}
         payload = {
-            "apiKey": COMMUNITY_FORM_API_KEY,
+            "apiKey": api_key,
             "subject": f"ModbusLens profile submission: {name}",
             "name": name,
             "manufacturer": str(profile.get("manufacturer", "")).strip(),
@@ -1440,9 +1491,6 @@ class DeviceProfilesPanel(QWidget):
         }
         data = json.dumps(payload).encode("utf-8")
 
-        self.share_btn.setEnabled(False)
-        self.share_btn.setText("Submitting...")
-
         worker = _HttpFetchWorker(
             COMMUNITY_FORM_ENDPOINT, data=data,
             headers={"Content-Type": "application/json", "Accept": "application/json"},
@@ -1451,7 +1499,18 @@ class DeviceProfilesPanel(QWidget):
         worker.succeeded.connect(
             lambda u, body, name=name, content_hash=content_hash: self._on_share_submitted(name, content_hash)
         )
-        worker.failed.connect(self._on_share_failed)
+        def failed(url, error):
+            global _live_form_key
+            if api_key != COMMUNITY_FORM_API_KEY:
+                _live_form_key = None
+                mw = self.parent_window
+                if mw is not None and hasattr(mw, "_log"):
+                    mw._log("Submission with the fetched Community form key failed -- retrying with the built-in key")
+                self._post_submission(profile, name, content_hash, COMMUNITY_FORM_API_KEY)
+                return
+            self._on_share_failed(url, error)
+
+        worker.failed.connect(failed)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 

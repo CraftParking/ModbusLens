@@ -220,7 +220,7 @@ CHANGELOG_HTML = """
 <li>Script tag-name reads/writes hit the right register - a tag's 1-based Address was sent as the raw protocol offset, one register too high</li>
 <li>Scrolling the Tags table with the mouse wheel no longer changes the dropdowns and number boxes under the pointer - same for Trend's pen grid</li>
 <li>Raw Data Frame Viewer no longer flickers or pops its TX/RX tables out as empty windows past 1000 rows</li>
-<li>Share to Community works again, with clearer failure messages instead of the submission service's raw error</li>
+<li>Share to Community works again, with clearer failure messages; its submission key is now looked up from the project's GitHub, so it can be updated without a new release instead of the submission service's raw error</li>
 <li>Scanner no longer aborts the whole scan on a single address that times out with no response (common on a flaky link) - it narrows down the same way as a device exception, and if an address still can't get a clean answer it's marked a third color ("inconclusive") instead of stopping the rest of the range; that color is also distinguished from the colorblind palette's own orange "no response" instead of sitting too close to it</li>
 </ul>
 
