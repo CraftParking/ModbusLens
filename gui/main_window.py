@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QApplication, QMessageBox, QDialog, QCheckBox,
     QAbstractItemView, QFrame, QGridLayout, QSizePolicy, QMenu, QRadioButton, QInputDialog, QTabBar
 )
-from PySide6.QtCore import Qt, QTimer, QEvent, Signal, QItemSelectionModel
+from PySide6.QtCore import Qt, QTimer, QEvent, Signal
 from PySide6.QtGui import QIcon, QActionGroup, QShortcut, QKeySequence, QColor
 
 # Add the gui directory to the path for relative imports
@@ -236,8 +236,6 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
     _open_windows = []  # keeps extra connection windows alive (see _new_connection_window)
 
     WATCHDOG_HEALTHY_INTERVAL_MS = 3000  # how often to check a connection that's currently fine
-    RECONNECT_BASE_DELAY_MS = 2000  # first retry delay after a drop
-    RECONNECT_MAX_DELAY_MS = 30000  # cap for exponential backoff between retries
 
     def __init__(self):
         super().__init__()
@@ -354,8 +352,6 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
         self._reconnect_watchdog_timer = QTimer(self)
         self._reconnect_watchdog_timer.setSingleShot(True)
         self._reconnect_watchdog_timer.timeout.connect(self._check_connection_watchdog)
-        self._reconnecting = False
-        self._reconnect_attempt = 0
         self._monitoring_paused_by_disconnect = False
 
         self.diagnostics_dialogs.setup_diagnostics_widgets()  # Initialize diagnostics widgets early, the Raw Data tab needs them
@@ -3952,16 +3948,6 @@ class ModbusGUI(DeviceManagerMixin, QMainWindow):
             return 0x03  # Default to Read Holding Registers
         return 0x01  # Default to Read Coils
     
-    def _get_exception_code_from_error(self):
-        """The numeric Modbus exception code (1=Illegal Function, 2=Illegal Data Address, ...)
-        from the device's own exception response, captured directly on the client rather than
-        guessed from last_error's text -- pymodbus's error text doesn't spell out the exception
-        name, only its number, so string-matching against phrases like "illegal data address"
-        never actually matched anything real."""
-        if not self.modbus:
-            return None
-        return getattr(self.modbus, 'last_exception_code', None)
-
     def _load_settings(self):
         """Load user settings and preferences."""
         # Load connection history from a simple file
