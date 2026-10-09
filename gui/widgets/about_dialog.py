@@ -209,6 +209,7 @@ CHANGELOG_HTML = """
 <li>Gateway mode (Server tab) - relay real requests to a real downstream serial device and return its actual response</li>
 <li>Bit View - a live, per-bit breakdown of a register tag's raw value, with inline bit expansion and single-bit read-modify-write</li>
 <li>Scanner reworked: an Excel-style color-coded results grid (light green responds, light red doesn't) replaces the text log, each cell labeled with its address and a legend above explaining the colors; a large range splits into spreadsheet-style page tabs sized to fit the screen; adjustable text size and a colorblind-friendly color option; Create Tags From Scan turns a result straight into Tags rows</li>
+<li>Export CSV... on the Scanner, Find Devices and Serial Discovery - save what a scan found to a file you can open in Excel</li>
 <li>Theme switching (View &gt; Theme) no longer force-disconnects a live device to restart - it queues the switch and asks "Restart now?" only once every device is manually disconnected, reverting cleanly if you say no</li>
 <li>Profiles tab relaid out like the other tabs; documentation rewritten for multiple devices</li>
 </ul>

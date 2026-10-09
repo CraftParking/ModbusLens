@@ -186,7 +186,7 @@ optional ARP mode, Modbus detection). See <b>Troubleshooting &gt; Network Discov
 Scan)" or "Serial (Parameter Sweep)", <b>Start Scan</b> / <b>Stop Scan</b> / <b>Clear
 Results</b>, and a results table (Transport, Target, Parameters, Unit ID). Select a result and
 click <b>Apply to Device...</b> (or double-click it) to open Connection Settings
-pre-filled for the device you pick. Not the same as the Overview's <b>Find Unit IDs...</b>, which
+pre-filled for the device you pick, or <b>Export CSV...</b> to save every result to a file. Not the same as the Overview's <b>Find Unit IDs...</b>, which
 sweeps Unit IDs over an already connected link.</li>
 <li><b>Serial Discovery</b> - sweeps common baud rate/parity/stop-bit/Unit ID combinations against
 a COM port to find which one a serial device actually speaks. See <b>Serial Discovery</b>.</li>
@@ -1230,6 +1230,14 @@ for a Coil) so it stays addressable and unambiguous even without a real register
 that already has a tag of that type on that device is skipped rather than creating a duplicate.
 The tags are created on the device that was scanned, with the Function that was scanned, and use
 the Tags tab's 0-/1-based setting for their Address; the Tags tab opens afterwards.</p>
+<h3>Exporting Results</h3>
+<p><b>Export CSV...</b> (next to Create Tags...) saves what the last scan resolved to a CSV file you
+can open in Excel: one row per address, with the Device, Unit ID, Function, Protocol Address (the
+raw 0-based offset), Tag Address (the same address in the Tags tab's 0-/1-based setting) and a
+Status of Responds, No response, or Timeout (inconclusive). It is enabled once a scan has finished
+or been stopped - an address a stopped scan never reached is left out - and greyed out again by
+<b>Clear Results</b> or a new scan. Find Devices and Serial Discovery have the same button for their
+list of found devices.</p>
 </article>
 
 <article class="doc-section" id="serial-discovery">
@@ -1257,7 +1265,8 @@ not "these are the device's exact settings."</p>
 <p>Matches are listed under "Matches found (select one, then Apply)". Select one and click
 <b>Apply to Device...</b> (or double-click it) to open Connection Settings pre-filled with
 it - for the device you pick, if there are several - then <b>Save Settings</b>. The dialog doesn't
-block the main window; closing it stops the scan.</p>
+block the main window; closing it stops the scan. <b>Export CSV...</b> saves every match found
+so far (Port, Baud Rate, Parity, Stop Bits, Framing, Unit ID) to a file.</p>
 <p>This doesn't reuse the app's shared connection - it opens its own for each combination,
 since testing a physical serial setting means actually reopening the port with it. That also
 means the port needs to be free: if a connected device in this window uses the port, the scan

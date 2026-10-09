@@ -266,6 +266,7 @@
 - Reuses the app's existing connection (like Address Table/Tags/Script), pausing Tags/Address Table live monitoring first so nothing else is polling the same connection at the same time  
 - A configurable probe timeout keeps scanning fast over TCP; over a serial connection each probe is one bus round-trip, so a large range takes noticeably longer  
 - Create Tags From Scan - after a scan finds responding addresses, pick which ranges to import and generate one new Tags-tab row per address, named with the classic 5-digit Modicon convention (e.g. `HR_40001`); an address that already has a tag of that type is skipped instead of duplicated  
+- Export CSV... - save every address the scan resolved (Device, Unit ID, Function, protocol and tag address, Responds / No response / Timeout) to a CSV file; Find Devices and Serial Discovery export their found devices the same way  
 - Results shown as an Excel-style color-coded grid (green = responds, red = no response, amber = timed out even after narrowing down - inconclusive, not a confirmed answer) instead of a text log, with a legend above explaining the colors; each cell labeled with its address; a large range splits into spreadsheet-style page tabs sized to fit the screen, with an adjustable text size and a colorblind-friendly color option  
 - A timeout on one address narrows down and keeps scanning instead of stopping the whole range - a flaky link shouldn't cost you every result after the first bad reply  
 
