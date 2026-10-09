@@ -230,6 +230,12 @@ class SerialDiscoveryDialog:
 
         apply_row = QHBoxLayout()
         apply_row.addStretch()
+        self.export_btn = QPushButton("Export CSV...")
+        self.export_btn.setStyleSheet(self.parent._get_button_style())
+        self.export_btn.setEnabled(False)
+        self.export_btn.setToolTip("Save every match found so far to a CSV file")
+        self.export_btn.clicked.connect(self._export_matches_csv)
+        apply_row.addWidget(self.export_btn)
         self.apply_btn = QPushButton("Apply to Device...")
         self.apply_btn.setStyleSheet(self.parent._get_button_style())
         self.apply_btn.setEnabled(False)
@@ -294,6 +300,7 @@ class SerialDiscoveryDialog:
         self.output_text.append(f"Scanning serial settings on {port} ({total_combos} combination(s))...")
         self.matches_list.clear()
         self.apply_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.start_btn.setEnabled(False)
@@ -319,6 +326,21 @@ class SerialDiscoveryDialog:
         )
         item.setData(Qt.UserRole, (port, baud, parity, stopbits, unit_id, framer_value))
         self.matches_list.addItem(item)
+        self.export_btn.setEnabled(True)
+
+    def _export_matches_csv(self):
+        rows = []
+        for i in range(self.matches_list.count()):
+            port, baud, parity, stopbits, unit_id, framer = self.matches_list.item(i).data(Qt.UserRole)
+            rows.append([port, baud, PARITY_LABELS.get(parity, parity), stopbits, framer.upper(), unit_id])
+        if not rows:
+            return
+        from gui.csv_export import export_rows_csv
+        export_rows_csv(
+            self.dialog, "Export Serial Discovery Matches", "serial_matches",
+            ["Port", "Baud Rate", "Parity", "Stop Bits", "Framing", "Unit ID"], rows,
+            log=getattr(self.parent, "_log", None),
+        )
 
     def _on_match_selection_changed(self):
         self.apply_btn.setEnabled(self.matches_list.currentItem() is not None)
