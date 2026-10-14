@@ -24,10 +24,11 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QGroupBox, QMessageBox,
-    QDialog, QListWidget, QStackedWidget, QLineEdit, QCheckBox,
+    QDialog, QListWidget, QStackedWidget, QLineEdit, QCheckBox, QFileDialog,
 )
 
 from app_paths import app_data_dir, documents_dir
+import mbmap
 
 CARD_COLUMNS = 4
 
@@ -267,9 +268,10 @@ class ProfileCard(QFrame):
         # badge is the only thing that does; it disappears once the profile is
         # edited (source isn't one of the fields Edit's save carries forward),
         # which is correct: it's no longer literally the community file at that point.
-        if str(profile.get("source", "")).strip() == "community":
+        source = str(profile.get("source", "")).strip()
+        if source in ("community", "mbmap"):
             accent = colors.get("accent", "#f5a623")
-            badge_label = QLabel("Community")
+            badge_label = QLabel("Community" if source == "community" else "mbmap")
             badge_label.setAlignment(Qt.AlignCenter)
             badge_label.setStyleSheet(
                 f"font-size: 10px; font-weight: 600; color: {accent}; "
@@ -288,12 +290,19 @@ class ProfileCard(QFrame):
         # A community card's manifest entry carries only tag_count (not the full tag
         # list), so it passes the count in explicitly rather than a fake tags list.
         tag_count = len(profile.get("tags", [])) if tag_count is None else tag_count
-        created = profile.get("created") or profile.get("modified") or ""
-        created_date = str(created).split(" ")[0] if created else "-"
-        info_text = f"{tag_count} tag{'s' if tag_count != 1 else ''} · Created {created_date}"
-        author = str(profile.get("author", "")).strip()
-        if author:
-            info_text += f"\nby {author}"
+        if profile.get("library") == "mbmap":
+            # An mbmap library index entry: no creation date or author, but whether
+            # the map was checked against the manufacturer's manual is worth showing.
+            info_text = f"{tag_count} register{'s' if tag_count != 1 else ''}"
+            if profile.get("status") == "unverified":
+                info_text += "\nunverified"
+        else:
+            created = profile.get("created") or profile.get("modified") or ""
+            created_date = str(created).split(" ")[0] if created else "-"
+            info_text = f"{tag_count} tag{'s' if tag_count != 1 else ''} · Created {created_date}"
+            author = str(profile.get("author", "")).strip()
+            if author:
+                info_text += f"\nby {author}"
         info_label = QLabel(info_text)
         info_label.setAlignment(Qt.AlignCenter)
         info_label.setWordWrap(True)
@@ -866,6 +875,11 @@ class DeviceProfilesPanel(QWidget):
         self._community_selected_file = None
         self._community_loaded = False
         self._community_loading = False
+        self._mbmap_entries = []
+        self._mbmap_cards = []
+        self._mbmap_selected_file = None
+        self._mbmap_loaded = False
+        self._mbmap_loading = False
         self._build_ui()
         self.refresh_local_profiles()
 
@@ -900,11 +914,13 @@ class DeviceProfilesPanel(QWidget):
         toggle_row = library_layout
         self.local_btn = QPushButton("Local")
         self.community_btn = QPushButton("Community")
-        for btn in (self.local_btn, self.community_btn):
+        self.mbmap_btn = QPushButton("mbmap Library")
+        for btn in (self.local_btn, self.community_btn, self.mbmap_btn):
             btn.setCheckable(True)
             btn.setStyleSheet(self._button_style())
             btn.setMinimumWidth(110)
             toggle_row.addWidget(btn)
+        self.mbmap_btn.setMinimumWidth(140)
         toggle_row.addSpacing(16)
         self.mode_hint = QLabel()
         self.mode_hint.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-weight: normal;")
@@ -912,32 +928,40 @@ class DeviceProfilesPanel(QWidget):
         self.local_btn.setChecked(True)
         self.local_btn.clicked.connect(lambda: self._set_mode("local"))
         self.community_btn.clicked.connect(lambda: self._set_mode("community"))
+        self.mbmap_btn.clicked.connect(lambda: self._set_mode("mbmap"))
         layout.addWidget(library_group)
 
         self.local_page = self._build_local_page()
         self.community_page = self._build_community_page()
+        self.mbmap_page = self._build_mbmap_page()
         layout.addWidget(self.local_page, 1)
         layout.addWidget(self.community_page, 1)
+        layout.addWidget(self.mbmap_page, 1)
         self.community_page.setVisible(False)
+        self.mbmap_page.setVisible(False)
         self._update_mode_hint("local")
 
     LOCAL_HINT = ("Device templates saved on this PC - an Address Table range plus a Tags list. "
                   "Double-click a profile to view it and choose which tags to import.")
     COMMUNITY_HINT = ("Profiles shared by other ModbusLens users and checked by a maintainer. "
                       "Double-click one to preview, apply or download it.")
+    MBMAP_HINT = ("Register maps from the open .mbmap library. "
+                  "Double-click one to preview, apply or download it as a profile.")
 
     def _update_mode_hint(self, mode):
-        self.mode_hint.setText(self.LOCAL_HINT if mode == "local" else self.COMMUNITY_HINT)
+        self.mode_hint.setText({"local": self.LOCAL_HINT, "community": self.COMMUNITY_HINT}.get(mode, self.MBMAP_HINT))
 
     def _set_mode(self, mode):
-        is_local = mode == "local"
-        self.local_btn.setChecked(is_local)
-        self.community_btn.setChecked(not is_local)
-        self.local_page.setVisible(is_local)
-        self.community_page.setVisible(not is_local)
+        for name, btn, page in (("local", self.local_btn, self.local_page),
+                                ("community", self.community_btn, self.community_page),
+                                ("mbmap", self.mbmap_btn, self.mbmap_page)):
+            btn.setChecked(name == mode)
+            page.setVisible(name == mode)
         self._update_mode_hint(mode)
-        if not is_local and not self._community_loaded and not self._community_loading:
+        if mode == "community" and not self._community_loaded and not self._community_loading:
             self._fetch_community_index()
+        if mode == "mbmap" and not self._mbmap_loaded and not self._mbmap_loading:
+            self._fetch_mbmap_index()
 
     def _build_local_page(self):
         c = self._colors()
@@ -991,6 +1015,12 @@ class DeviceProfilesPanel(QWidget):
         self.delete_btn.setStyleSheet(self._button_style())
         self.delete_btn.clicked.connect(self._delete_selected)
         btn_row.addWidget(self.delete_btn)
+
+        self.import_mbmap_btn = QPushButton("Import .mbmap")
+        self.import_mbmap_btn.setStyleSheet(self._button_style())
+        self.import_mbmap_btn.setToolTip("Import a .mbmap.json register map file as a local profile")
+        self.import_mbmap_btn.clicked.connect(self._import_mbmap_file)
+        btn_row.addWidget(self.import_mbmap_btn)
 
         self.share_btn = QPushButton("Share to Community")
         self.share_btn.setStyleSheet(self._button_style())
@@ -1220,6 +1250,226 @@ class DeviceProfilesPanel(QWidget):
         mw = self.parent_window
         if mw is not None and hasattr(mw, "_log"):
             mw._log(f"Downloaded community profile '{name}' to Local profiles")
+
+    # -- mbmap library browsing ------------------------------------------
+
+    # The library has hundreds of maps; cards are only built for the ones matching the
+    # search box, capped so an empty search doesn't build every card at once.
+    MBMAP_MAX_CARDS = 120
+
+    def _build_mbmap_page(self):
+        c = self._colors()
+        page = QGroupBox("mbmap Library")
+        page.setStyleSheet(self._groupbox_style())
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(15, 20, 15, 15)
+        layout.setSpacing(10)
+
+        actions = QHBoxLayout()
+        self.mbmap_search = QLineEdit()
+        self.mbmap_search.setPlaceholderText("Search vendor or model, e.g. Janitza UMG 96")
+        self.mbmap_search.setStyleSheet(self._input_style())
+        self.mbmap_search.setClearButtonEnabled(True)
+        self.mbmap_search.textChanged.connect(self._rebuild_mbmap_cards)
+        actions.addWidget(self.mbmap_search, 1)
+        self.mbmap_refresh_btn = QPushButton("Refresh")
+        self.mbmap_refresh_btn.setStyleSheet(self._button_style())
+        self.mbmap_refresh_btn.clicked.connect(self._fetch_mbmap_index)
+        actions.addWidget(self.mbmap_refresh_btn)
+        layout.addLayout(actions)
+
+        self.mbmap_status_label = QLabel("")
+        self.mbmap_status_label.setAlignment(Qt.AlignCenter)
+        self.mbmap_status_label.setWordWrap(True)
+        self.mbmap_status_label.setStyleSheet(f"color: {c.get('text_secondary', '#666')}; font-size: 13px; padding: 10px;")
+        self.mbmap_status_label.setVisible(False)
+        layout.addWidget(self.mbmap_status_label)
+
+        self.mbmap_cards_scroll = QScrollArea()
+        self.mbmap_cards_scroll.setWidgetResizable(True)
+        self.mbmap_cards_scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {c.get("surface", "#fff")};
+                border: 1px solid {c.get("border", "#ccc")};
+                border-radius: 6px;
+            }}
+        """)
+        self.mbmap_cards_container = QWidget()
+        self.mbmap_cards_container.setStyleSheet(f"background-color: {c.get('surface', '#fff')};")
+        self.mbmap_cards_grid = QGridLayout(self.mbmap_cards_container)
+        self.mbmap_cards_grid.setContentsMargins(16, 16, 16, 16)
+        self.mbmap_cards_grid.setSpacing(14)
+        self.mbmap_cards_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.mbmap_cards_scroll.setWidget(self.mbmap_cards_container)
+        self.mbmap_cards_scroll.setVisible(False)
+        layout.addWidget(self.mbmap_cards_scroll, 1)
+        return page
+
+    def _set_mbmap_status(self, text):
+        self.mbmap_status_label.setText(text)
+        self.mbmap_status_label.setVisible(bool(text))
+
+    def _fetch_mbmap_index(self):
+        self._mbmap_loading = True
+        self.mbmap_refresh_btn.setEnabled(False)
+        self._set_mbmap_status("Loading the mbmap library...")
+        worker = _HttpFetchWorker(mbmap.MBMAP_INDEX_URL, parent=self)
+        worker.succeeded.connect(self._on_mbmap_index_loaded)
+        worker.failed.connect(self._on_mbmap_index_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_mbmap_index_loaded(self, url, body):
+        self._mbmap_loading = False
+        self.mbmap_refresh_btn.setEnabled(True)
+        try:
+            entries = mbmap.index_entries(body)
+        except (ValueError, UnicodeDecodeError, AttributeError):
+            self._set_mbmap_status("Couldn't parse the mbmap library index -- try Refresh.")
+            return
+        self._mbmap_loaded = True
+        self._mbmap_entries = entries
+        self._rebuild_mbmap_cards()
+
+    def _on_mbmap_index_failed(self, url, error):
+        self._mbmap_loading = False
+        self.mbmap_refresh_btn.setEnabled(True)
+        self._set_mbmap_status(f"Couldn't reach the mbmap library ({error}). Check your connection and try Refresh.")
+
+    def _rebuild_mbmap_cards(self, *_):
+        for card in self._mbmap_cards:
+            card.setParent(None)
+            card.deleteLater()
+        self._mbmap_cards = []
+        self._mbmap_selected_file = None
+        if not self._mbmap_loaded:
+            return
+
+        words = self.mbmap_search.text().lower().split()
+        matches = [e for e in self._mbmap_entries
+                   if all(w in f"{e['manufacturer']} {e['name']} {e['description']}".lower() for w in words)]
+        shown = matches[:self.MBMAP_MAX_CARDS]
+        if not matches:
+            self._set_mbmap_status("No map matches that search.")
+        elif len(matches) > len(shown):
+            self._set_mbmap_status(f"{len(matches)} maps match -- showing the first {len(shown)}. Type to narrow it down.")
+        else:
+            self._set_mbmap_status(f"{len(matches)} map{'s' if len(matches) != 1 else ''}")
+        self.mbmap_cards_scroll.setVisible(bool(shown))
+
+        colors = self._colors()
+        for i, entry in enumerate(shown):
+            card = ProfileCard(entry, colors, tag_count=entry.get("tag_count", 0))
+            card.setToolTip(entry["file"])
+            card.clicked.connect(lambda f=entry["file"]: self._select_mbmap(f))
+            card.double_clicked.connect(lambda f=entry["file"]: self._view_mbmap(f))
+            row, col = divmod(i, CARD_COLUMNS)
+            self.mbmap_cards_grid.addWidget(card, row, col)
+            self._mbmap_cards.append(card)
+
+    def _select_mbmap(self, file):
+        self._mbmap_selected_file = file
+        for card in self._mbmap_cards:
+            card.set_selected(card.profile.get("file") == file)
+
+    def _tag_addresses_one_based(self):
+        mw = self.parent_window
+        return bool(getattr(mw, "tag_address_one_based", True))
+
+    def _view_mbmap(self, file):
+        """Fetches one map, converts it (see mbmap.to_profile) and opens it in the same
+        preview dialog Community uses -- Apply adds its tags, Download saves it as a
+        local profile, independently of each other."""
+        if file is None or self.parent_window is None:
+            return
+        self._select_mbmap(file)
+        self.mbmap_refresh_btn.setEnabled(False)
+        self._set_mbmap_status(f"Loading {file}...")
+        worker = _HttpFetchWorker(mbmap.MBMAP_BASE_URL + file, timeout=20, parent=self)
+        worker.succeeded.connect(lambda u, body, file=file: self._on_mbmap_fetched(file, body))
+        worker.failed.connect(self._on_mbmap_fetch_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_mbmap_fetched(self, file, body):
+        self.mbmap_refresh_btn.setEnabled(True)
+        try:
+            profile, skipped = mbmap.load_profile(body, one_based=self._tag_addresses_one_based(), source_path=file)
+        except (mbmap.MbmapError, UnicodeDecodeError) as e:
+            self._set_mbmap_status(f"Couldn't open that map: {e}")
+            return
+        self._set_mbmap_status("")
+        self._open_mbmap_preview(profile, skipped)
+
+    def _on_mbmap_fetch_failed(self, url, error):
+        self.mbmap_refresh_btn.setEnabled(True)
+        self._set_mbmap_status(f"Couldn't load that map ({error}). Try again.")
+
+    def _mbmap_log_summary(self, profile, skipped):
+        mw = self.parent_window
+        if mw is None or not hasattr(mw, "_log"):
+            return
+        info = profile.get("mbmap", {})
+        conn = info.get("connection") or {}
+        if conn:
+            mw._log(f"mbmap '{profile.get('name', '')}' default connection: "
+                    + ", ".join(f"{k}={v}" for k, v in conn.items()))
+        if info.get("status") == "unverified":
+            mw._log("This map is marked unverified in the mbmap library -- check a value on the device before relying on it.")
+        if skipped:
+            mw._log(f"{len(skipped)} register(s) not imported: " + "; ".join(skipped[:5]) + (" ..." if len(skipped) > 5 else ""))
+
+    def _open_mbmap_preview(self, profile, skipped):
+        mw = self.parent_window
+
+        def on_apply(selected_tags):
+            imported_count, skipped_count = mw._import_additional_tag_rows(selected_tags)
+            if hasattr(mw, "_log"):
+                message = f"Imported {imported_count} tag(s) into {mw._default_tag_device()} from mbmap '{profile.get('name', '')}'"
+                if skipped_count:
+                    message += f" ({skipped_count} already present, skipped)"
+                mw._log(message)
+                self._mbmap_log_summary(profile, skipped)
+            return mw._live_tag_names_for_import()
+
+        def on_download():
+            self._save_mbmap_profile(profile)
+
+        dialog = CreateProfileDialog(
+            self._colors(), self._button_style(), preset=profile, parent=self,
+            view_only=True, live_tag_names=mw._live_tag_names_for_import(), input_style=self._input_style(),
+            on_apply=on_apply, on_download=on_download,
+        )
+        dialog.exec()
+
+    def _save_mbmap_profile(self, profile):
+        name = str(profile.get("name") or "profile")
+        manufacturer = str(profile.get("manufacturer") or "").strip()
+        saved = dict(profile)
+        saved["created"] = saved["modified"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        path = unique_profile_path(f"{manufacturer} {name}".strip())
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(saved, f, indent=2)
+        self.refresh_local_profiles(reselect_path=path)
+        mw = self.parent_window
+        if mw is not None and hasattr(mw, "_log"):
+            mw._log(f"Saved mbmap '{name}' to Local profiles")
+        return path
+
+    def _import_mbmap_file(self):
+        """Local page: turn a .mbmap.json file on disk into a local profile."""
+        path, _ = QFileDialog.getOpenFileName(self, "Import .mbmap register map", "",
+                                              "mbmap register maps (*.mbmap.json *.json);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, "rb") as f:
+                profile, skipped = mbmap.load_profile(f.read(), one_based=self._tag_addresses_one_based(), source_path=path)
+        except (OSError, mbmap.MbmapError, UnicodeDecodeError) as e:
+            QMessageBox.warning(self, "Import .mbmap", f"Couldn't import that file:\n{e}")
+            return
+        self._save_mbmap_profile(profile)
+        self._mbmap_log_summary(profile, skipped)
 
     # -- local profile management ----------------------------------------
 
