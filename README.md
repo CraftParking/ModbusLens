@@ -18,6 +18,7 @@
 <p align="center">
   <a href="https://craftparking.github.io/ModbusLens/"><img src="assets/badge_website.svg" alt="Website"></a>
   <a href="https://github.com/CraftParking/ModbusLens/releases"><img src="assets/badge_releases.svg" alt="Releases"></a>
+  <a href="https://github.com/nobrega8/mbmap-library"><img src="assets/badge_mbmap.svg" alt=".mbmap: supported"></a>
 </p>
 
 ---
@@ -53,6 +54,7 @@
 - Save/Load Session: connection settings, Tags, Address Table range, and write bounds together in one file
 - Data Decoder: paste raw hex, see it decoded as U16 through F64/HEX/binary/ASCII/BCD/bits, in all four byte/word orderings - no connection needed
 - Device Profiles: save a device's Address Table range and Tags as one reusable template; browse, download, and share profiles with the Community - no account needed
+- .mbmap register maps: browse the open [mbmap library](https://github.com/nobrega8/mbmap-library) of device register maps from the Profiles tab and apply one as Tags, or import any `.mbmap.json` file
 - Raw Data: every transaction's real TX/RX wire bytes, decoded exceptions, latency and statistics, plus a Frame Viewer that decodes each frame field by field
 - Windows installer or portable exe, and a Linux AppImage
 
@@ -192,6 +194,8 @@
 - Local profiles live under your own Documents folder (`Documents/ModbusLens/Profiles`), one file per profile  
 - **Community**: browse and download profiles shared by other users - fetched over the network, no account needed. Apply and Download are independent inside the preview: import a profile's tags without ever saving it locally, download it without applying anything, both, or neither  
 - A downloaded profile shows a **Community** badge on its card, distinguishing it from a hand-made local one - the badge disappears once you edit it, since it's no longer literally the shared file at that point  
+- **mbmap Library**: search the open [.mbmap library](https://github.com/nobrega8/mbmap-library) of device register maps (meters, inverters, drives, I/O...) by vendor or model and open any map in the same preview - Apply its registers as Tags or Download it as a local profile. Names, groups, register type, data format (word order included), scale/offset, units, enum values and bit fields come over from the map; addresses follow the Tags table's current 1-based/0-based mode  
+- **Import .mbmap** (Local) turns a `.mbmap.json` file on disk into a local profile, carrying an **mbmap** badge on its card  
 - **Share to Community** submits a local profile for review in one click, no account required; a maintainer reviews every submission before it's published. Resubmitting the exact same, unchanged profile is silently skipped rather than sent twice  
 
 ### Raw Data
